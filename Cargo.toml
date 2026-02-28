@@ -1,0 +1,19 @@
+[package]
+name = "faultcore"
+version = "2026.2.28"
+edition = "2024"
+
+[lib]
+name = "_faultcore"
+path = "src/faultcore_core/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3 = { version = "0.27.2", features = ["abi3-py310"] }
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+opt-level = 3
+strip = true
+panic = "abort"
