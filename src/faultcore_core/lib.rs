@@ -1,5 +1,6 @@
 mod circuit_breaker;
 mod context;
+pub mod network;
 mod network_queue;
 mod policies;
 mod rate_limit;

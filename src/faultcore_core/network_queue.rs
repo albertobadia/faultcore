@@ -2,6 +2,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::network::context::PacketContext;
+use crate::network::layers::LayerResult;
+use crate::network::layers::l1_chaos::{ChaosConfig, ChaosLayer};
+use crate::network::pipeline::Pipeline;
+
 #[derive(Clone, Debug)]
 pub struct NetworkQueueConfig {
     pub rate: f64,
@@ -122,14 +127,35 @@ impl NetworkQueueCore {
             return Err(QueueError::FdLimitExceeded);
         }
 
-        if self.should_drop_packet() {
-            stats.dropped += 1;
-            return Err(QueueError::PacketDropped);
+        // Build dynamically the pipeline for this context
+        let mut pipeline = Pipeline::new();
+
+        // Add Chaos Layer (L1)
+        // (L2 QoS Token Bucket is currently handled before enqueue via try_acquire)
+        let chaos_config = ChaosConfig {
+            packet_loss_rate: self.config.packet_loss_rate,
+            latency_min_ms: self.config.latency_min_ms,
+            latency_max_ms: self.config.latency_max_ms,
+        };
+        pipeline.add_layer(Arc::new(ChaosLayer::new(chaos_config)));
+
+        // Process Packet Context
+        let mut pkt_ctx = PacketContext::new(vec![]);
+
+        match pipeline.process(&mut pkt_ctx) {
+            LayerResult::Drop => {
+                stats.dropped += 1;
+                return Err(QueueError::PacketDropped);
+            }
+            LayerResult::Error(_) => {
+                stats.dropped += 1;
+                return Err(QueueError::PacketDropped);
+            }
+            LayerResult::Continue => {}
         }
 
         *fd_count += 1;
         let enqueued_at = Instant::now();
-        let latency = self.calculate_latency();
 
         queue.push(QueueEntry {
             enqueued_at,
@@ -144,7 +170,7 @@ impl NetworkQueueCore {
             fd_count: self.fd_count.clone(),
             stats: self.stats.clone(),
             enqueued_at,
-            latency_ms: latency,
+            latency_ms: pkt_ctx.accumulated_delay_ms,
             strategy: self.config.strategy.clone(),
         })
     }
@@ -177,27 +203,6 @@ impl NetworkQueueCore {
 
     pub fn strategy(&self) -> &QueueStrategy {
         &self.config.strategy
-    }
-
-    fn should_drop_packet(&self) -> bool {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .subsec_nanos();
-        let random: f64 = (nanos as f64) / (u32::MAX as f64);
-        random < self.config.packet_loss_rate
-    }
-
-    fn calculate_latency(&self) -> u64 {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .subsec_nanos();
-        let range = self.config.latency_max_ms - self.config.latency_min_ms;
-        if range == 0 {
-            return self.config.latency_min_ms;
-        }
-        self.config.latency_min_ms + ((nanos as u64) % range)
     }
 }
 
