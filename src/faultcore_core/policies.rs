@@ -30,7 +30,6 @@ impl TimeoutPolicy {
         kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Py<PyAny>> {
         let start = Instant::now();
-
         let result = func.call(py, args, kwargs)?;
 
         if self.core.is_expired(start) {

@@ -39,6 +39,9 @@ select = [
 ]
 ignore = []
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
 [tool.ruff.lint.isort]
 known-first-party = ["faultcore"]
 combine-as-imports = true

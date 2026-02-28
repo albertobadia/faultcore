@@ -1,4 +1,6 @@
+import asyncio
 import functools
+import inspect
 
 from faultcore._faultcore import (
     CircuitBreakerPolicy,
@@ -9,126 +11,86 @@ from faultcore._faultcore import (
 )
 
 
+def _is_async(func):
+    return inspect.iscoroutinefunction(func)
+
+
+def _wrap_sync(policy, func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        return policy(func, args, kwargs)
+
+    wrapper._faultcore_policy = policy
+    return wrapper
+
+
+def _wrap_retry_async(max_retries, backoff_ms, retry_on, func):
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs):
+        last_error: Exception | None = None
+        for attempt in range(max_retries + 1):
+            try:
+                return await func(*args, **kwargs)
+            except Exception as e:
+                last_error = e
+                if retry_on is not None:
+                    should_retry = any(isinstance(last_error, type_to_check) for type_to_check in retry_on)
+                else:
+                    should_retry = True
+
+                if not should_retry or attempt == max_retries:
+                    raise last_error from last_error
+
+                await asyncio.sleep(backoff_ms / 1000.0)
+
+        raise last_error
+
+    wrapper._faultcore_policy = None
+    return wrapper
+
+
+def _wrap_async(policy, func):
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs):
+        return await policy(func, args, kwargs)
+
+    wrapper._faultcore_policy = policy
+    return wrapper
+
+
+def _make_wrapper(policy, func, retry_max_retries=None, retry_backoff_ms=None, retry_retry_on=None):
+    if _is_async(func):
+        if retry_max_retries is not None:
+            return _wrap_retry_async(retry_max_retries, retry_backoff_ms, retry_retry_on, func)
+        return _wrap_async(policy, func)
+    return _wrap_sync(policy, func)
+
+
 def timeout(timeout_ms: int):
-    """Decorator that applies a timeout to a function.
-
-    Args:
-        timeout_ms: Timeout in milliseconds.
-
-    Example:
-        @faultcore.timeout(5000)
-        def my_function():
-            ...
-    """
     policy = TimeoutPolicy(timeout_ms)
-
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            return policy(func, args, kwargs)
-
-        wrapper._faultcore_policy = policy
-        return wrapper
-
-    return decorator
+    return lambda func: _make_wrapper(policy, func)
 
 
 def retry(max_retries: int = 3, backoff_ms: int = 100, retry_on: list = None):
-    """Decorator that retries a function on failure.
+    if retry_on:
+        retry_on_tuple = tuple(retry_on)
+    else:
+        retry_on_tuple = None
 
-    Args:
-        max_retries: Maximum number of retries.
-        backoff_ms: Backoff time in milliseconds between retries.
-        retry_on: List of error classes to retry on.
-
-    Example:
-        @faultcore.retry(3, backoff_ms=500)
-        def my_function():
-            ...
-    """
     policy = RetryPolicy(max_retries, backoff_ms, retry_on)
-
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            return policy(func, args, kwargs)
-
-        wrapper._faultcore_policy = policy
-        return wrapper
-
-    return decorator
+    return lambda func: _make_wrapper(policy, func, max_retries, backoff_ms, retry_on_tuple)
 
 
 def fallback(fallback_func):
-    """Decorator that provides a fallback function on failure.
-
-    Args:
-        fallback_func: Function to call when the main function fails.
-
-    Example:
-        @faultcore.fallback(lambda: "default_value")
-        def my_function():
-            ...
-    """
     policy = FallbackPolicy(fallback_func)
-
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            return policy(func, args, kwargs)
-
-        wrapper._faultcore_policy = policy
-        return wrapper
-
-    return decorator
+    return lambda func: _make_wrapper(policy, func)
 
 
 def circuit_breaker(failure_threshold: int = 5, success_threshold: int = 2, timeout_ms: int = 30000):
-    """Decorator that implements a circuit breaker pattern.
-
-    Args:
-        failure_threshold: Number of failures before opening the circuit.
-        success_threshold: Number of successes needed to close the circuit from half-open.
-        timeout_ms: Time in milliseconds before attempting to close the circuit.
-
-    Example:
-        @faultcore.circuit_breaker(failure_threshold=5)
-        def my_function():
-            ...
-    """
     policy = CircuitBreakerPolicy(failure_threshold, success_threshold, timeout_ms)
-
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            return policy(func, args, kwargs)
-
-        wrapper._faultcore_policy = policy
-        return wrapper
-
-    return decorator
+    return lambda func: _make_wrapper(policy, func)
 
 
 def rate_limit(rate: float, capacity: int):
-    """Decorator that applies rate limiting to a function.
-
-    Args:
-        rate: Number of requests per second.
-        capacity: Maximum burst capacity.
-
-    Example:
-        @faultcore.rate_limit(10.0, 100)
-        def my_function():
-            ...
-    """
     policy = RateLimitPolicy(rate, capacity)
-
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            return policy(func, args, kwargs)
-
-        wrapper._faultcore_policy = policy
-        return wrapper
-
-    return decorator
+    return lambda func: _make_wrapper(policy, func)
