@@ -2,6 +2,7 @@ from faultcore._faultcore import (
     CircuitBreakerPolicy as CircuitBreaker,
     ContextManager,
     FallbackPolicy as Fallback,
+    NetworkQueuePolicy as NetworkQueue,
     RateLimitPolicy as RateLimit,
     RetryPolicy as Retry,
     TimeoutPolicy as Timeout,
@@ -14,6 +15,7 @@ from faultcore._faultcore import (
 from faultcore.decorator import (
     circuit_breaker,
     fallback,
+    network_queue,
     rate_limit,
     retry,
     timeout,
@@ -25,6 +27,7 @@ __all__ = [
     "Fallback",
     "CircuitBreaker",
     "RateLimit",
+    "NetworkQueue",
     "ContextManager",
     "classify_exception",
     "add_keys",
@@ -36,4 +39,5 @@ __all__ = [
     "fallback",
     "circuit_breaker",
     "rate_limit",
+    "network_queue",
 ]

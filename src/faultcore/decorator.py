@@ -5,6 +5,7 @@ import inspect
 from faultcore._faultcore import (
     CircuitBreakerPolicy,
     FallbackPolicy,
+    NetworkQueuePolicy,
     RateLimitPolicy,
     RetryPolicy,
     TimeoutPolicy,
@@ -93,4 +94,27 @@ def circuit_breaker(failure_threshold: int = 5, success_threshold: int = 2, time
 
 def rate_limit(rate: float, capacity: int):
     policy = RateLimitPolicy(rate, capacity)
+    return lambda func: _make_wrapper(policy, func)
+
+
+def network_queue(
+    rate: float = 100.0,
+    capacity: int = 100,
+    max_queue_size: int = 1000,
+    latency_min_ms: int = 0,
+    latency_max_ms: int = 100,
+    packet_loss_rate: float = 0.0,
+    strategy: str = "wait",
+    fd_limit: int = 1024,
+):
+    policy = NetworkQueuePolicy(
+        rate,
+        capacity,
+        max_queue_size,
+        latency_min_ms,
+        latency_max_ms,
+        packet_loss_rate,
+        strategy,
+        fd_limit,
+    )
     return lambda func: _make_wrapper(policy, func)

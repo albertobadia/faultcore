@@ -3,6 +3,9 @@ use pyo3::types::{PyDict, PyTuple};
 use std::time::Instant;
 
 use crate::circuit_breaker::{CircuitBreakerPolicy as CircuitBreakerCore, CircuitState};
+use crate::network_queue::{
+    NetworkQueueConfig, NetworkQueueCore as NetworkQueueCoreInner, QueueError, QueueStrategy,
+};
 use crate::rate_limit::RateLimitPolicy as RateLimitCore;
 use crate::retry::{ErrorClass, RetryPolicy as RetryCore};
 use crate::timeout::TimeoutPolicy as TimeoutCore;
@@ -267,6 +270,140 @@ impl RateLimitPolicy {
             self.core.rate(),
             self.core.capacity(),
             self.core.available_tokens()
+        )
+    }
+}
+
+#[pyclass]
+#[derive(Clone)]
+pub struct NetworkQueuePolicy {
+    core: NetworkQueueCoreInner,
+}
+
+#[pymethods]
+impl NetworkQueuePolicy {
+    #[new]
+    #[pyo3(signature = (rate=100.0, capacity=100, max_queue_size=1000, latency_min_ms=0, latency_max_ms=100, packet_loss_rate=0.0, strategy="wait", fd_limit=1024))]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        rate: f64,
+        capacity: u64,
+        max_queue_size: u64,
+        latency_min_ms: u64,
+        latency_max_ms: u64,
+        packet_loss_rate: f64,
+        strategy: &str,
+        fd_limit: u64,
+    ) -> PyResult<Self> {
+        let strategy = match strategy.to_lowercase().as_str() {
+            "reject" => QueueStrategy::Reject,
+            _ => QueueStrategy::Wait,
+        };
+
+        let config = NetworkQueueConfig::new(
+            rate,
+            capacity,
+            max_queue_size,
+            latency_min_ms,
+            latency_max_ms,
+            packet_loss_rate,
+            strategy,
+        )
+        .ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err("Invalid network queue configuration")
+        })?;
+
+        NetworkQueueCoreInner::new(config, fd_limit)
+            .map(|core| Self { core })
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("Failed to create network queue")
+            })
+    }
+
+    #[allow(clippy::collapsible_else_if)]
+    fn __call__(
+        &self,
+        py: Python,
+        func: Py<PyAny>,
+        args: &Bound<'_, PyTuple>,
+        kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Py<PyAny>> {
+        let core = self.core.clone();
+
+        if core.config.strategy == QueueStrategy::Wait {
+            while !core.try_acquire() {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        } else if !core.try_acquire() {
+            return Err(pyo3::exceptions::PyResourceWarning::new_err(
+                "Network rate limit exceeded",
+            ));
+        }
+
+        let ticket = core.enqueue();
+
+        match ticket {
+            Ok(ticket) => {
+                let result = func.call(py, args, kwargs);
+                ticket.wait_and_release();
+                result
+            }
+            Err(QueueError::QueueFull) => Err(pyo3::exceptions::PyResourceWarning::new_err(
+                "Network queue is full",
+            )),
+            Err(QueueError::FdLimitExceeded) => Err(pyo3::exceptions::PyResourceWarning::new_err(
+                "File descriptor limit exceeded",
+            )),
+            Err(QueueError::PacketDropped) => Err(pyo3::exceptions::PyConnectionError::new_err(
+                "Packet dropped by network simulation",
+            )),
+            Err(QueueError::Timeout) => Err(pyo3::exceptions::PyTimeoutError::new_err(
+                "Queue operation timed out",
+            )),
+        }
+    }
+
+    #[getter]
+    fn rate(&self) -> f64 {
+        self.core.rate()
+    }
+
+    #[getter]
+    fn capacity(&self) -> u64 {
+        self.core.capacity()
+    }
+
+    #[getter]
+    fn available_tokens(&self) -> f64 {
+        self.core.available_tokens()
+    }
+
+    #[getter]
+    fn queue_size(&self) -> u64 {
+        self.core.queue_size()
+    }
+
+    #[allow(deprecated)]
+    fn get_stats(&self) -> Py<PyAny> {
+        let stats = self.core.stats();
+        Python::with_gil(|py| {
+            let dict = pyo3::types::PyDict::new(py);
+            dict.set_item("enqueued", stats.enqueued).unwrap();
+            dict.set_item("dequeued", stats.dequeued).unwrap();
+            dict.set_item("rejected", stats.rejected).unwrap();
+            dict.set_item("dropped", stats.dropped).unwrap();
+            dict.set_item("current_queue_size", stats.current_queue_size)
+                .unwrap();
+            dict.into()
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "NetworkQueuePolicy(rate={}/s, capacity={}, queue_size={})",
+            self.core.rate(),
+            self.core.capacity(),
+            self.core.queue_size()
         )
     }
 }

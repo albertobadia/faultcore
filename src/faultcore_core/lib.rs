@@ -1,18 +1,21 @@
 mod circuit_breaker;
 mod context;
+mod network_queue;
 mod policies;
 mod rate_limit;
 mod retry;
 mod timeout;
 
 pub use circuit_breaker::{CircuitBreakerPolicy as CircuitBreakerCore, CircuitState};
+pub use network_queue::{NetworkQueueCore as NetworkQueueCoreInner, QueueError, QueueStats};
 pub use rate_limit::RateLimitPolicy as RateLimitCore;
 pub use retry::{ErrorClass, RetryPolicy as RetryCore};
 pub use timeout::TimeoutPolicy as TimeoutCore;
 
 pub use context::ContextManager;
 pub use policies::{
-    CircuitBreakerPolicy, FallbackPolicy, RateLimitPolicy, RetryPolicy, TimeoutPolicy,
+    CircuitBreakerPolicy, FallbackPolicy, NetworkQueuePolicy, RateLimitPolicy, RetryPolicy,
+    TimeoutPolicy,
 };
 
 use pyo3::prelude::*;
@@ -83,6 +86,7 @@ fn _faultcore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<FallbackPolicy>()?;
     m.add_class::<CircuitBreakerPolicy>()?;
     m.add_class::<RateLimitPolicy>()?;
+    m.add_class::<NetworkQueuePolicy>()?;
     m.add_class::<ContextManager>()?;
 
     Ok(())
