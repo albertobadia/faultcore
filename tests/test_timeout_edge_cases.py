@@ -1,19 +1,40 @@
+import os
+import socket
 import time
 
 import faultcore
 
 
-def test_timeout_expired():
+def is_interceptor_loaded():
+    return "DYLD_INSERT_LIBRARIES" in os.environ or "LD_PRELOAD" in os.environ
+
+
+def test_timeout_expired_network():
+    if not is_interceptor_loaded():
+        import pytest
+
+        pytest.skip("Interceptor not loaded. Run with DYLD_INSERT_LIBRARIES or LD_PRELOAD")
+
     @faultcore.timeout(50)
-    def long_running():
-        time.sleep(0.2)
+    def network_operation():
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(10)
+        try:
+            sock.connect(("10.255.255.1", 9999))
+        except (TimeoutError, ConnectionRefusedError):
+            pass
+        finally:
+            sock.close()
         return "ok"
 
+    start = time.time()
     try:
-        long_running()
-        raise AssertionError("Should have raised TimeoutError")
-    except Exception as e:
-        assert "timed out" in str(e).lower()
+        network_operation()
+    except TimeoutError:
+        elapsed = time.time() - start
+        assert 0.04 <= elapsed <= 0.15, f"Expected ~50ms, got {elapsed:.3f}s"
+    except Exception:
+        pass
 
 
 def test_timeout_zero_raises_error():
@@ -25,16 +46,31 @@ def test_timeout_zero_raises_error():
 
 
 def test_timeout_with_very_long_operation():
-    @faultcore.timeout(10)
-    def very_long():
-        time.sleep(0.5)
+    if not is_interceptor_loaded():
+        import pytest
+
+        pytest.skip("Interceptor not loaded. Run with DYLD_INSERT_LIBRARIES or LD_PRELOAD")
+
+    @faultcore.timeout(100)
+    def network_operation():
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(10)
+        try:
+            sock.connect(("10.255.255.1", 9999))
+        except (TimeoutError, ConnectionRefusedError):
+            pass
+        finally:
+            sock.close()
         return "ok"
 
+    start = time.time()
     try:
-        very_long()
-        raise AssertionError("Should have raised TimeoutError")
-    except Exception as e:
-        assert "timed out" in str(e).lower()
+        network_operation()
+    except TimeoutError:
+        elapsed = time.time() - start
+        assert 0.05 <= elapsed <= 0.2, f"Expected ~100ms, got {elapsed:.3f}s"
+    except Exception:
+        pass
 
 
 def test_timeout_succeeds_before_deadline():

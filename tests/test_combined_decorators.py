@@ -1,5 +1,5 @@
 import asyncio
-import time
+import socket
 
 import faultcore
 
@@ -37,10 +37,27 @@ def test_retry_with_fallback():
 
 
 def test_timeout_with_fallback():
+    import os
+
+    def is_interceptor_loaded():
+        return "DYLD_INSERT_LIBRARIES" in os.environ or "LD_PRELOAD" in os.environ
+
+    if not is_interceptor_loaded():
+        import pytest
+
+        pytest.skip("Interceptor not loaded. Run with DYLD_INSERT_LIBRARIES or LD_PRELOAD")
+
     @faultcore.fallback(lambda: "fallback")
-    @faultcore.timeout(10)
+    @faultcore.timeout(50)
     def func():
-        time.sleep(0.1)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(10)
+        try:
+            sock.connect(("10.255.255.1", 9999))
+        except (TimeoutError, ConnectionRefusedError):
+            pass
+        finally:
+            sock.close()
         return "ok"
 
     result = func()

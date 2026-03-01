@@ -8,7 +8,6 @@ The timeout is applied to socket connect() and recv() syscalls, not to Python fu
 Usage:
     # macOS:
     DYLD_INSERT_LIBRARIES=target/release/libfaultcore_interceptor.dylib uv run python examples/09_network_timeout.py
-    
     # Linux:
     LD_PRELOAD=target/release/libfaultcore_interceptor.so uv run python examples/09_network_timeout.py
 """
@@ -16,8 +15,6 @@ Usage:
 import ctypes
 import socket
 import time
-import subprocess
-import sys
 
 MAGIC_TIMEOUT = 0xFC
 
@@ -44,18 +41,18 @@ def test_connect_timeout():
     print("=" * 60)
     print(" Test 1: Connect Timeout (unreachable IP) ".center(60, "="))
     print("=" * 60)
-    
+
     setup_timeout(2, 2)
-    
+
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(10)  # Python-level backup timeout
-    
+
     try:
         start = time.time()
-        s.connect(('10.255.255.1', 9999))  # Unreachable IP
+        s.connect(("10.255.255.1", 9999))  # Unreachable IP
         elapsed = time.time() - start
         print(f"Connected after {elapsed:.3f}s (unexpected)")
-    except TimeoutError as e:
+    except TimeoutError:
         elapsed = time.time() - start
         print(f"TimeoutError after {elapsed:.3f}s (expected)")
     except Exception as e:
@@ -71,18 +68,18 @@ def test_no_timeout():
     print("\n" + "=" * 60)
     print(" Test 2: No Interceptor Timeout (Python timeout) ".center(60, "="))
     print("=" * 60)
-    
+
     clear_timeout()
-    
+
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(2)  # Python-level timeout
-    
+
     try:
         start = time.time()
-        s.connect(('10.255.255.1', 9999))
+        s.connect(("10.255.255.1", 9999))
         elapsed = time.time() - start
         print(f"Connected after {elapsed:.3f}s")
-    except TimeoutError as e:
+    except TimeoutError:
         elapsed = time.time() - start
         print(f"TimeoutError after {elapsed:.3f}s")
     except Exception as e:
@@ -97,18 +94,18 @@ def test_fast_timeout():
     print("\n" + "=" * 60)
     print(" Test 3: Fast Timeout (1 second) ".center(60, "="))
     print("=" * 60)
-    
+
     setup_timeout(1, 1)
-    
+
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(5)
-    
+
     try:
         start = time.time()
-        s.connect(('10.255.255.1', 9999))
+        s.connect(("10.255.255.1", 9999))
         elapsed = time.time() - start
         print(f"Connected after {elapsed:.3f}s")
-    except TimeoutError as e:
+    except TimeoutError:
         elapsed = time.time() - start
         print(f"TimeoutError after {elapsed:.3f}s")
     except Exception as e:
@@ -124,15 +121,15 @@ def test_connection_refused():
     print("\n" + "=" * 60)
     print(" Test 4: Connection Refused (no server) ".center(60, "="))
     print("=" * 60)
-    
+
     setup_timeout(5, 5)
-    
+
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(10)
-    
+
     try:
         start = time.time()
-        s.connect(('127.0.0.1', 9999))  # Nothing listening
+        s.connect(("127.0.0.1", 9999))  # Nothing listening
         elapsed = time.time() - start
         print(f"Connected after {elapsed:.3f}s")
     except ConnectionRefusedError:
@@ -159,13 +156,13 @@ if __name__ == "__main__":
     print("\nNetwork Timeout Examples using Interceptor")
     print("Make sure to run with DYLD_INSERT_LIBRARIES (macOS) or LD_PRELOAD (Linux)")
     print()
-    
+
     test_connect_timeout()
     test_no_timeout()
     test_fast_timeout()
     test_connection_refused()
     test_recv_timeout()
-    
+
     print("\n" + "=" * 60)
     print(" All tests completed! ".center(60, "="))
     print("=" * 60)

@@ -26,6 +26,19 @@ def _wrap_sync(policy, func):
 
 
 def _wrap_retry_async(max_retries, backoff_ms, retry_on, func):
+    import sys
+
+    retry_types = None
+    if retry_on is not None:
+        retry_types = []
+        builtins = sys.modules.get("builtins")
+        for type_or_str in retry_on:
+            if isinstance(type_or_str, str):
+                if builtins is not None and hasattr(builtins, type_or_str):
+                    retry_types.append(getattr(builtins, type_or_str))
+            else:
+                retry_types.append(type_or_str)
+
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
         last_error: Exception | None = None
@@ -34,8 +47,8 @@ def _wrap_retry_async(max_retries, backoff_ms, retry_on, func):
                 return await func(*args, **kwargs)
             except Exception as e:
                 last_error = e
-                if retry_on is not None:
-                    should_retry = any(isinstance(last_error, type_to_check) for type_to_check in retry_on)
+                if retry_types is not None:
+                    should_retry = any(isinstance(last_error, t) for t in retry_types)
                 else:
                     should_retry = True
 

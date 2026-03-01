@@ -19,6 +19,8 @@ pub fn parse_size(s: &str) -> Option<u64> {
             .parse::<u64>()
             .ok()
             .map(|v| v * 1024 * 1024 * 1024)
+    } else if s.ends_with("b") && s.len() > 1 {
+        s.trim_end_matches("b").parse::<u64>().ok()
     } else {
         s.parse::<u64>().ok()
     }
@@ -41,6 +43,8 @@ pub fn parse_rate(s: &str) -> Option<f64> {
             .parse::<f64>()
             .ok()
             .map(|v| v * 1024.0 * 1024.0 * 1024.0)
+    } else if s.ends_with("bps") {
+        s.trim_end_matches("bps").parse::<f64>().ok()
     } else {
         s.parse::<f64>().ok()
     }

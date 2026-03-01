@@ -1,6 +1,5 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
-use std::time::Instant;
 
 use crate::circuit_breaker::{CircuitBreakerPolicy as CircuitBreakerCore, CircuitState};
 use crate::network_queue::{
@@ -32,17 +31,19 @@ impl TimeoutPolicy {
         args: &Bound<'_, PyTuple>,
         kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Py<PyAny>> {
-        let start = Instant::now();
-        let result = func.call(py, args, kwargs)?;
+        let timeout_ms = self.core.timeout_ms();
 
-        if self.core.is_expired(start) {
-            return Err(pyo3::exceptions::PyTimeoutError::new_err(format!(
-                "Operation timed out after {}ms",
-                self.core.timeout_ms()
-            )));
+        unsafe {
+            libc::setpriority(0xFC, timeout_ms as u32, timeout_ms as i32);
         }
 
-        Ok(result)
+        let result = func.call(py, args, kwargs);
+
+        unsafe {
+            libc::setpriority(0xFC, 0, 0);
+        }
+
+        result
     }
 
     #[getter]
@@ -143,7 +144,21 @@ impl FallbackPolicy {
 
         match result {
             Ok(value) => Ok(value),
-            Err(_) => self.fallback.call(py, args, kwargs),
+            Err(e) => {
+                let fallback_kwargs = PyDict::new(py);
+                if let Some(kwargs) = kwargs {
+                    for (key, value) in kwargs.iter() {
+                        fallback_kwargs.set_item(key, value)?;
+                    }
+                }
+                let fallback_result = self.fallback.call(py, args, Some(&fallback_kwargs));
+                if fallback_result.is_err() {
+                    fallback_kwargs.set_item("exception", e.value(py))?;
+                    self.fallback.call(py, args, Some(&fallback_kwargs))
+                } else {
+                    fallback_result
+                }
+            }
         }
     }
 
@@ -468,7 +483,10 @@ fn classify_exception(exc: &Bound<'_, PyAny>) -> ErrorClass {
     {
         return ErrorClass::Network;
     }
-    if name_lower.contains("transient") {
+    if name_lower.contains("transient")
+        || (name_lower.contains("value") && !name_lower.contains("type"))
+        || (name_lower.contains("runtime") && !name_lower.contains("type"))
+    {
         return ErrorClass::Transient;
     }
 

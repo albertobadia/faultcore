@@ -34,9 +34,14 @@ impl RetryPolicy {
     pub fn new(max_retries: u32, backoff_ms: u64, retry_on: Option<Vec<String>>) -> Self {
         let retry_on = retry_on
             .map(|v| {
-                v.into_iter()
+                let mut classes: Vec<ErrorClass> = v
+                    .into_iter()
                     .map(|s| ErrorClass::from_error_str(&s))
-                    .collect()
+                    .collect();
+                if !classes.is_empty() && !classes.contains(&ErrorClass::Permanent) {
+                    classes.push(ErrorClass::Transient);
+                }
+                classes
             })
             .unwrap_or_else(|| {
                 vec![
@@ -55,6 +60,12 @@ impl RetryPolicy {
 
     pub fn should_retry(&self, error: &ErrorClass) -> bool {
         self.retry_on.contains(error)
+    }
+
+    pub fn is_custom_retry(&self) -> bool {
+        self.retry_on.iter().any(|e| {
+            *e != ErrorClass::Transient && *e != ErrorClass::Timeout && *e != ErrorClass::Network
+        })
     }
 
     pub fn backoff_duration(&self, attempt: u32) -> Duration {
