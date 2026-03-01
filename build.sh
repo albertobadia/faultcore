@@ -1,4 +1,6 @@
 #!/bin/bash
+# Build script for faultcore
+# Builds the Rust extension and workspace
 
 set -e
 

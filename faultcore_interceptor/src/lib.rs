@@ -1,9 +1,8 @@
 use libc::{c_int, c_short, c_void, pollfd, size_t, ssize_t};
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
-
-use std::cell::RefCell;
 
 #[derive(Debug, Clone, Copy)]
 struct LimitState {
@@ -42,19 +41,6 @@ pub fn get_current_tid() -> u64 {
     unsafe { libc::pthread_self() as u64 }
 }
 
-unsafe fn get_original_fn<T>(name: &str) -> T {
-    let symbol_name = std::ffi::CString::new(name).unwrap();
-    let fn_ptr = unsafe { libc::dlsym(libc::RTLD_NEXT, symbol_name.as_ptr()) };
-    if fn_ptr.is_null() {
-        let msg = b"[FAULTCORE ERROR] Failed to find original symbol\n";
-        unsafe {
-            libc::write(2, msg.as_ptr() as *const c_void, msg.len());
-            libc::abort();
-        }
-    }
-    unsafe { std::mem::transmute_copy(&fn_ptr) }
-}
-
 type SetPriorityFn = unsafe extern "C" fn(c_int, libc::id_t, c_int) -> c_int;
 type SendFn = unsafe extern "C" fn(c_int, *const c_void, size_t, c_int) -> ssize_t;
 type RecvFn = unsafe extern "C" fn(c_int, *mut c_void, size_t, c_int) -> ssize_t;
@@ -76,14 +62,81 @@ type RecvFromFn = unsafe extern "C" fn(
     *mut libc::socklen_t,
 ) -> ssize_t;
 
-lazy_static::lazy_static! {
-    static ref ORIG_SETPRIORITY: SetPriorityFn = unsafe { get_original_fn("setpriority") };
-    static ref ORIG_SEND: SendFn = unsafe { get_original_fn("send") };
-    static ref ORIG_RECV: RecvFn = unsafe { get_original_fn("recv") };
-    static ref ORIG_CONNECT: ConnectFn = unsafe { get_original_fn("connect") };
-    static ref ORIG_SENDTO: SendToFn = unsafe { get_original_fn("sendto") };
-    static ref ORIG_RECVFROM: RecvFromFn = unsafe { get_original_fn("recvfrom") };
+#[cfg(target_os = "macos")]
+mod platform {
+    use super::*;
+
+    lazy_static::lazy_static! {
+        pub static ref ORIG_SETPRIORITY: SetPriorityFn = unsafe { get_original_fn("setpriority") };
+        pub static ref ORIG_SEND: SendFn = unsafe { get_original_fn("send") };
+        pub static ref ORIG_RECV: RecvFn = unsafe { get_original_fn("recv") };
+        pub static ref ORIG_CONNECT: ConnectFn = unsafe { get_original_fn("connect") };
+        pub static ref ORIG_SENDTO: SendToFn = unsafe { get_original_fn("sendto") };
+        pub static ref ORIG_RECVFROM: RecvFromFn = unsafe { get_original_fn("recvfrom") };
+    }
+
+    unsafe fn get_original_fn<T>(name: &str) -> T {
+        let symbol_name = std::ffi::CString::new(name).unwrap();
+        let fn_ptr = unsafe { libc::dlsym(libc::RTLD_NEXT, symbol_name.as_ptr()) };
+        if fn_ptr.is_null() {
+            let msg = b"[FAULTCORE ERROR] Failed to find original symbol\n";
+            unsafe {
+                libc::write(2, msg.as_ptr() as *const c_void, msg.len());
+            }
+            unsafe {
+                libc::abort();
+            }
+        }
+        unsafe { std::mem::transmute_copy(&fn_ptr) }
+    }
+
+    pub fn get_errno() -> i32 {
+        unsafe { *libc::__error() }
+    }
+
+    pub fn set_errno(val: i32) {
+        unsafe { *libc::__error() = val }
+    }
 }
+
+#[cfg(not(target_os = "macos"))]
+mod platform {
+    use super::*;
+
+    lazy_static::lazy_static! {
+        pub static ref ORIG_SETPRIORITY: SetPriorityFn = unsafe { get_original_fn("setpriority") };
+        pub static ref ORIG_SEND: SendFn = unsafe { get_original_fn("send") };
+        pub static ref ORIG_RECV: RecvFn = unsafe { get_original_fn("recv") };
+        pub static ref ORIG_CONNECT: ConnectFn = unsafe { get_original_fn("connect") };
+        pub static ref ORIG_SENDTO: SendToFn = unsafe { get_original_fn("sendto") };
+        pub static ref ORIG_RECVFROM: RecvFromFn = unsafe { get_original_fn("recvfrom") };
+    }
+
+    unsafe fn get_original_fn<T>(name: &str) -> T {
+        let symbol_name = std::ffi::CString::new(name).unwrap();
+        let fn_ptr = unsafe { libc::dlsym(libc::RTLD_NEXT, symbol_name.as_ptr()) };
+        if fn_ptr.is_null() {
+            let msg = b"[FAULTCORE ERROR] Failed to find original symbol\n";
+            unsafe {
+                libc::write(2, msg.as_ptr() as *const c_void, msg.len());
+            }
+            unsafe {
+                libc::abort();
+            }
+        }
+        unsafe { std::mem::transmute_copy(&fn_ptr) }
+    }
+
+    pub fn get_errno() -> i32 {
+        unsafe { *libc::__errno_location() }
+    }
+
+    pub fn set_errno(val: i32) {
+        unsafe { *libc::__errno_location() = val }
+    }
+}
+
+use platform::*;
 
 lazy_static::lazy_static! {
     static ref RECURSION_GUARD_KEY: libc::pthread_key_t = unsafe {
@@ -115,6 +168,7 @@ const MAGIC_BANDWIDTH: c_int = 0xFB;
 const MAGIC_TIMEOUT: c_int = 0xFC;
 
 fn handle_setpriority(which: c_int, who: libc::id_t, prio: c_int) -> c_int {
+    unsafe { libc::write(2, b"[DEBUG] handle_setpriority called\n" as *const _ as *const c_void, 27); }
     if which == MAGIC_BANDWIDTH {
         if who == u32::MAX && prio >= 0 {
             let rate_bps = (prio as u64) * 1000;
@@ -184,7 +238,7 @@ fn handle_setpriority(which: c_int, who: libc::id_t, prio: c_int) -> c_int {
 fn initialize() {
     if !INITIALIZED.swap(true, Ordering::SeqCst) {
         unsafe {
-            let msg = "[FAULTCORE] Initializing interposer (Atomic Sync Mode)...\n";
+            let msg = "[FAULTCORE] Initializing interceptor...\n";
             libc::write(2, msg.as_ptr() as *const c_void, msg.len());
 
             lazy_static::initialize(&ORIG_SETPRIORITY);
@@ -300,7 +354,7 @@ fn apply_timeout_connect(
                 let res = (ORIG_CONNECT)(sock, addr, len);
 
                 if res < 0 {
-                    let err = *libc::__error();
+                    let err = get_errno();
                     if err != libc::EINPROGRESS && err != libc::EISCONN {
                         libc::fcntl(sock, libc::F_SETFL, orig_flags);
                         return Some(res);
@@ -320,7 +374,7 @@ fn apply_timeout_connect(
                     return Some(-1);
                 } else if poll_res == 0 {
                     libc::fcntl(sock, libc::F_SETFL, orig_flags);
-                    *libc::__error() = libc::ETIMEDOUT;
+                    set_errno(libc::ETIMEDOUT);
                     return Some(-1);
                 }
 
@@ -336,11 +390,11 @@ fn apply_timeout_connect(
                         &mut sock_err_len,
                     ) != 0
                     {
-                        *libc::__error() = libc::ECONNREFUSED;
+                        set_errno(libc::ECONNREFUSED);
                     } else if sock_err != 0 {
-                        *libc::__error() = sock_err;
+                        set_errno(sock_err);
                     } else {
-                        *libc::__error() = libc::ECONNREFUSED;
+                        set_errno(libc::ECONNREFUSED);
                     }
                     return Some(-1);
                 }
@@ -370,12 +424,12 @@ fn apply_timeout_recv(sock: c_int) -> Option<isize> {
                 if poll_res < 0 {
                     return Some(-1);
                 } else if poll_res == 0 {
-                    *libc::__error() = libc::ETIMEDOUT;
+                    set_errno(libc::ETIMEDOUT);
                     return Some(-1);
                 }
 
                 if (poll_fd.revents & POLLNVAL) != 0 {
-                    *libc::__error() = libc::EBADF;
+                    set_errno(libc::EBADF);
                     return Some(-1);
                 }
             }
@@ -384,7 +438,6 @@ fn apply_timeout_recv(sock: c_int) -> Option<isize> {
     None
 }
 
-// macOS Interpose
 #[cfg(target_os = "macos")]
 mod interpose {
     use super::*;
@@ -394,13 +447,13 @@ mod interpose {
     unsafe impl Sync for Interposer {}
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn faultcore_setpriority(wh: c_int, wh_val: libc::id_t, pr: c_int) -> c_int {
+    pub extern "C" fn setpriority(wh: c_int, wh_val: libc::id_t, pr: c_int) -> c_int {
         initialize();
         handle_setpriority(wh, wh_val, pr)
     }
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn faultcore_send(s: c_int, b: *const c_void, l: size_t, f: c_int) -> ssize_t {
+    pub extern "C" fn send(s: c_int, b: *const c_void, l: size_t, f: c_int) -> ssize_t {
         initialize();
         apply_bandwidth_throttle(l as u64);
         if !enter_hook() {
@@ -414,8 +467,9 @@ mod interpose {
         exit_hook();
         res
     }
+
     #[unsafe(no_mangle)]
-    pub extern "C" fn faultcore_recv(s: c_int, b: *mut c_void, l: size_t, f: c_int) -> ssize_t {
+    pub extern "C" fn recv(s: c_int, b: *mut c_void, l: size_t, f: c_int) -> ssize_t {
         initialize();
         if !enter_hook() {
             return unsafe { libc::recv(s, b, l, f) };
@@ -432,12 +486,9 @@ mod interpose {
         exit_hook();
         res
     }
+
     #[unsafe(no_mangle)]
-    pub extern "C" fn faultcore_connect(
-        s: c_int,
-        a: *const libc::sockaddr,
-        l: libc::socklen_t,
-    ) -> c_int {
+    pub extern "C" fn connect(s: c_int, a: *const libc::sockaddr, l: libc::socklen_t) -> c_int {
         initialize();
         if !enter_hook() {
             return unsafe { libc::connect(s, a, l) };
@@ -459,9 +510,7 @@ mod interpose {
         if let Some(e) = apply_chaos(s) {
             exit_hook();
             if e == -1 {
-                unsafe {
-                    *libc::__error() = libc::ECONNREFUSED;
-                }
+                set_errno(libc::ECONNREFUSED);
             }
             return e as c_int;
         }
@@ -473,8 +522,9 @@ mod interpose {
         exit_hook();
         res
     }
+
     #[unsafe(no_mangle)]
-    pub extern "C" fn faultcore_sendto(
+    pub extern "C" fn sendto(
         s: c_int,
         b: *const c_void,
         l: size_t,
@@ -509,24 +559,29 @@ mod interpose {
         exit_hook();
         res
     }
+
     #[unsafe(no_mangle)]
-    pub extern "C" fn faultcore_recvfrom(
+    pub extern "C" fn recvfrom(
         s: c_int,
         b: *mut c_void,
         l: size_t,
         f: c_int,
-        a: *mut libc::sockaddr,
-        al: *mut libc::socklen_t,
+        addr: *mut libc::sockaddr,
+        addr_len: *mut libc::socklen_t,
     ) -> ssize_t {
         initialize();
         if !enter_hook() {
-            return unsafe { libc::recvfrom(s, b, l, f, a, al) };
+            return unsafe { libc::recvfrom(s, b, l, f, addr, addr_len) };
         }
-        let res = if let Some(e) = apply_chaos(s) {
-            e
-        } else {
-            unsafe { libc::recvfrom(s, b, l, f, a, al) }
-        };
+        if let Some(e) = apply_chaos(s) {
+            exit_hook();
+            return e;
+        }
+        if let Some(e) = apply_timeout_recv(s) {
+            exit_hook();
+            return e;
+        }
+        let res = unsafe { libc::recvfrom(s, b, l, f, addr, addr_len) };
         exit_hook();
         res
     }
@@ -534,51 +589,68 @@ mod interpose {
     #[used]
     #[unsafe(link_section = "__DATA,__interpose")]
     static INTERPOSITIONS: [Interposer; 6] = [
-        Interposer(
-            faultcore_setpriority as *const (),
-            libc::setpriority as *const (),
-        ),
-        Interposer(faultcore_send as *const (), libc::send as *const ()),
-        Interposer(faultcore_recv as *const (), libc::recv as *const ()),
-        Interposer(faultcore_connect as *const (), libc::connect as *const ()),
-        Interposer(faultcore_sendto as *const (), libc::sendto as *const ()),
-        Interposer(faultcore_recvfrom as *const (), libc::recvfrom as *const ()),
+        Interposer(setpriority as *const (), libc::setpriority as *const ()),
+        Interposer(send as *const (), libc::send as *const ()),
+        Interposer(recv as *const (), libc::recv as *const ()),
+        Interposer(connect as *const (), libc::connect as *const ()),
+        Interposer(sendto as *const (), libc::sendto as *const ()),
+        Interposer(recvfrom as *const (), libc::recvfrom as *const ()),
     ];
 }
 
-// Linux Hooks
 #[cfg(not(target_os = "macos"))]
-mod linux {
+mod hooks {
     use super::*;
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn setpriority(wh: c_int, wh_val: c_int, pr: c_int) -> c_int {
+    pub extern "C" fn setpriority(wh: c_int, wh_val: libc::id_t, pr: c_int) -> c_int {
+        unsafe { libc::write(2, b"[DEBUG] setpriority Linux hook called\n" as *const _ as *const c_void, 36); }
         initialize();
         handle_setpriority(wh, wh_val, pr)
     }
+
     #[unsafe(no_mangle)]
     pub extern "C" fn send(s: c_int, b: *const c_void, l: size_t, f: c_int) -> ssize_t {
         initialize();
-        if let Some(e) = apply_chaos(s) {
-            return e;
+        apply_bandwidth_throttle(l as u64);
+        if !enter_hook() {
+            return unsafe { libc::send(s, b, l, f) };
         }
-        unsafe { (ORIG_SEND)(s, b, l, f) }
+        let res = if let Some(e) = apply_chaos(s) {
+            e
+        } else {
+            unsafe { libc::send(s, b, l, f) }
+        };
+        exit_hook();
+        res
     }
+
     #[unsafe(no_mangle)]
     pub extern "C" fn recv(s: c_int, b: *mut c_void, l: size_t, f: c_int) -> ssize_t {
         initialize();
+        if !enter_hook() {
+            return unsafe { libc::recv(s, b, l, f) };
+        }
         if let Some(e) = apply_chaos(s) {
+            exit_hook();
             return e;
         }
         if let Some(e) = apply_timeout_recv(s) {
+            exit_hook();
             return e;
         }
-        unsafe { (ORIG_RECV)(s, b, l, f) }
+        let res = unsafe { libc::recv(s, b, l, f) };
+        exit_hook();
+        res
     }
+
     #[unsafe(no_mangle)]
     pub extern "C" fn connect(s: c_int, a: *const libc::sockaddr, l: libc::socklen_t) -> c_int {
         initialize();
-        let limit = CURRENT_LIMIT.with(|l| {
+        if !enter_hook() {
+            return unsafe { libc::connect(s, a, l) };
+        }
+        let _limit = CURRENT_LIMIT.with(|l| {
             let mut limits = l.borrow_mut();
             let state = limits.take();
             if let Some(ref st) = state {
@@ -593,18 +665,21 @@ mod linux {
             state
         });
         if let Some(e) = apply_chaos(s) {
+            exit_hook();
             if e == -1 {
-                unsafe {
-                    *libc::__error() = libc::ECONNREFUSED;
-                }
+                set_errno(libc::ECONNREFUSED);
             }
             return e as c_int;
         }
         if let Some(e) = apply_timeout_connect(s, a, l) {
+            exit_hook();
             return e;
         }
-        unsafe { (ORIG_CONNECT)(s, a, l) }
+        let res = unsafe { libc::connect(s, a, l) };
+        exit_hook();
+        res
     }
+
     #[unsafe(no_mangle)]
     pub extern "C" fn sendto(
         s: c_int,
@@ -615,7 +690,11 @@ mod linux {
         dl: libc::socklen_t,
     ) -> ssize_t {
         initialize();
-        let limit = CURRENT_LIMIT.with(|l| {
+        apply_bandwidth_throttle(l as u64);
+        if !enter_hook() {
+            return unsafe { libc::sendto(s, b, l, f, d, dl) };
+        }
+        let _limit = CURRENT_LIMIT.with(|l| {
             let mut limits = l.borrow_mut();
             let state = limits.take();
             if let Some(ref st) = state {
@@ -629,24 +708,38 @@ mod linux {
             }
             state
         });
-        if let Some(e) = apply_chaos(s) {
-            return e;
-        }
-        unsafe { (ORIG_SENDTO)(s, b, l, f, d, dl) }
+        let res = if let Some(e) = apply_chaos(s) {
+            e
+        } else {
+            unsafe { libc::sendto(s, b, l, f, d, dl) }
+        };
+        exit_hook();
+        res
     }
+
     #[unsafe(no_mangle)]
     pub extern "C" fn recvfrom(
         s: c_int,
         b: *mut c_void,
         l: size_t,
         f: c_int,
-        a: *mut libc::sockaddr,
-        al: *mut libc::socklen_t,
+        addr: *mut libc::sockaddr,
+        addr_len: *mut libc::socklen_t,
     ) -> ssize_t {
         initialize();
+        if !enter_hook() {
+            return unsafe { libc::recvfrom(s, b, l, f, addr, addr_len) };
+        }
         if let Some(e) = apply_chaos(s) {
+            exit_hook();
             return e;
         }
-        unsafe { (ORIG_RECVFROM)(s, b, l, f, a, al) }
+        if let Some(e) = apply_timeout_recv(s) {
+            exit_hook();
+            return e;
+        }
+        let res = unsafe { libc::recvfrom(s, b, l, f, addr, addr_len) };
+        exit_hook();
+        res
     }
 }

@@ -1,0 +1,16 @@
+.git
+.github
+.gitignore
+*.md
+Cargo.lock
+target
+*.pyc
+__pycache__
+.pytest_cache
+.coverage
+htmlcov
+.venv
+venv
+*.egg-info
+.env
+.env.local

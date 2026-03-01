@@ -1,16 +1,4 @@
 #!/usr/bin/env python3
-"""
-Network Timeout Example using the interceptor.
-
-This example demonstrates timeout at the NETWORK LEVEL using LD_PRELOAD/DYLD_INSERT_LIBRARIES.
-The timeout is applied to socket connect() and recv() syscalls, not to Python functions.
-
-Usage:
-    # macOS:
-    DYLD_INSERT_LIBRARIES=target/release/libfaultcore_interceptor.dylib uv run python examples/09_network_timeout.py
-    # Linux:
-    LD_PRELOAD=target/release/libfaultcore_interceptor.so uv run python examples/09_network_timeout.py
-"""
 
 import ctypes
 import socket
@@ -22,7 +10,6 @@ libc = None
 
 
 def setup_timeout(connect_timeout: int, recv_timeout: int):
-    """Set network timeout via interceptor."""
     global libc
     if libc is None:
         libc = ctypes.CDLL(None)
@@ -30,14 +17,12 @@ def setup_timeout(connect_timeout: int, recv_timeout: int):
 
 
 def clear_timeout():
-    """Clear network timeout."""
     global libc
     if libc:
         libc.setpriority(MAGIC_TIMEOUT, 0, 0)
 
 
 def test_connect_timeout():
-    """Test connect timeout with unreachable IP."""
     print("=" * 60)
     print(" Test 1: Connect Timeout (unreachable IP) ".center(60, "="))
     print("=" * 60)
@@ -64,7 +49,6 @@ def test_connect_timeout():
 
 
 def test_no_timeout():
-    """Test without interceptor timeout (uses Python timeout)."""
     print("\n" + "=" * 60)
     print(" Test 2: No Interceptor Timeout (Python timeout) ".center(60, "="))
     print("=" * 60)
@@ -90,7 +74,6 @@ def test_no_timeout():
 
 
 def test_fast_timeout():
-    """Test with very short timeout."""
     print("\n" + "=" * 60)
     print(" Test 3: Fast Timeout (1 second) ".center(60, "="))
     print("=" * 60)
@@ -117,7 +100,6 @@ def test_fast_timeout():
 
 
 def test_connection_refused():
-    """Test with immediate connection refused."""
     print("\n" + "=" * 60)
     print(" Test 4: Connection Refused (no server) ".center(60, "="))
     print("=" * 60)
@@ -144,7 +126,6 @@ def test_connection_refused():
 
 
 def test_recv_timeout():
-    """Test recv timeout (requires server that sends slowly)."""
     print("\n" + "=" * 60)
     print(" Test 5: Recv Timeout ".center(60, "="))
     print("=" * 60)

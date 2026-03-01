@@ -1,14 +1,3 @@
-"""
-Network Timeout Tests using the interceptor.
-
-These tests verify timeout at the NETWORK LEVEL using LD_PRELOAD/DYLD_INSERT_LIBRARIES.
-They test the interceptor's ability to apply timeout to socket connect() and recv() syscalls.
-
-These tests require the interceptor to be loaded via environment variable:
-    macOS: DYLD_INSERT_LIBRARIES=target/release/libfaultcore_interceptor.dylib
-    Linux: LD_PRELOAD=target/release/libfaultcore_interceptor.so
-"""
-
 import ctypes
 import os
 import socket
@@ -21,25 +10,21 @@ MAGIC_TIMEOUT = 0xFC
 
 
 def setup_timeout(connect_timeout: int, recv_timeout: int):
-    """Set network timeout via interceptor."""
     libc = ctypes.CDLL(None)
     libc.setpriority(MAGIC_TIMEOUT, connect_timeout, recv_timeout)
 
 
 def clear_timeout():
-    """Clear network timeout."""
     libc = ctypes.CDLL(None)
     libc.setpriority(MAGIC_TIMEOUT, 0, 0)
 
 
 def is_interceptor_loaded():
-    """Check if the interceptor is loaded."""
     return "DYLD_INSERT_LIBRARIES" in os.environ or "LD_PRELOAD" in os.environ
 
 
 @pytest.fixture(autouse=True)
 def cleanup_timeout():
-    """Cleanup timeout after each test."""
     yield
     try:
         clear_timeout()
@@ -48,7 +33,6 @@ def cleanup_timeout():
 
 
 def test_interceptor_is_loaded():
-    """Verify interceptor is loaded for these tests."""
     if not is_interceptor_loaded():
         pytest.skip(
             "Interceptor not loaded. Run tests with:\n"
@@ -58,7 +42,6 @@ def test_interceptor_is_loaded():
 
 
 def test_connect_timeout_with_unreachable_ip():
-    """Test that connect timeout works with unreachable IP."""
     if not is_interceptor_loaded():
         pytest.skip("Interceptor not loaded")
 
@@ -86,7 +69,6 @@ def test_connect_timeout_with_unreachable_ip():
 
 
 def test_no_timeout_uses_python_timeout():
-    """Test that without interceptor timeout, Python timeout is used."""
     clear_timeout()
 
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -105,7 +87,6 @@ def test_no_timeout_uses_python_timeout():
 
 
 def test_short_timeout():
-    """Test with short timeout value."""
     if not is_interceptor_loaded():
         pytest.skip("Interceptor not loaded")
 
@@ -127,7 +108,6 @@ def test_short_timeout():
 
 
 def test_clear_timeout():
-    """Test that clearing timeout works."""
     # Set timeout
     setup_timeout(5, 5)
 
@@ -151,7 +131,6 @@ def test_clear_timeout():
 
 
 def test_connection_refused_fast():
-    """Test connection refused is handled quickly."""
     setup_timeout(5, 5)
 
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -173,7 +152,6 @@ def test_connection_refused_fast():
 
 
 def test_zero_timeout_clears():
-    """Test that setting timeout to 0 clears it."""
     if not is_interceptor_loaded():
         pytest.skip("Interceptor not loaded")
 

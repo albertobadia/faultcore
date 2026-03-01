@@ -1,6 +1,7 @@
 import asyncio
 import functools
 import inspect
+import sys
 
 from faultcore._faultcore import (
     CircuitBreakerPolicy,
@@ -26,8 +27,6 @@ def _wrap_sync(policy, func):
 
 
 def _wrap_retry_async(max_retries, backoff_ms, retry_on, func):
-    import sys
-
     retry_types = None
     if retry_on is not None:
         retry_types = []

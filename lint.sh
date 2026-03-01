@@ -1,4 +1,7 @@
 #!/bin/bash
+# Lint script for faultcore
+# Runs cargo fmt, cargo clippy, and ruff
+
 set -e
 
 uv run cargo fmt
