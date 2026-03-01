@@ -38,11 +38,9 @@ impl ChaosLayer {
         if self.config.packet_loss_rate <= 0.0 {
             return false;
         }
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .subsec_nanos();
-        let random: f64 = (nanos as f64) / (u32::MAX as f64);
+        use rand::RngExt;
+        let mut rng = rand::rng();
+        let random: f64 = rng.random();
         random < self.config.packet_loss_rate
     }
 }

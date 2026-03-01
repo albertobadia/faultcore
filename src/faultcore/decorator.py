@@ -50,12 +50,69 @@ def _wrap_retry_async(max_retries, backoff_ms, retry_on, func):
     return wrapper
 
 
+class AsyncChaosWrapper:
+    def __init__(self, coro, policy):
+        self.coro = coro
+        self.policy = policy
+        self._entered = False
+        self._has_context = hasattr(policy, "_enter_thread_context") and hasattr(policy, "_exit_thread_context")
+
+    def __await__(self):
+        return self
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return self.send(None)
+
+    def _enter_context(self):
+        if self._has_context and not self._entered:
+            self.policy._enter_thread_context()
+            self._entered = True
+
+    def _exit_context(self):
+        if self._has_context and self._entered:
+            self.policy._exit_thread_context()
+            self._entered = False
+
+    def send(self, value):
+        self._enter_context()
+        try:
+            result = self.coro.send(value)
+            self._exit_context()
+            return result
+        except StopIteration:
+            self._exit_context()
+            raise
+        except BaseException:
+            self._exit_context()
+            raise
+
+    def throw(self, typ, val=None, tb=None):
+        self._enter_context()
+        try:
+            result = self.coro.throw(typ, val, tb)
+            self._exit_context()
+            return result
+        except StopIteration:
+            self._exit_context()
+            raise
+        except BaseException:
+            self._exit_context()
+            raise
+
+    def close(self):
+        self._exit_context()
+        return self.coro.close()
+
+
 def _wrap_async(policy, func):
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
-        return await policy(func, args, kwargs)
+        coro = func(*args, **kwargs)
+        return await AsyncChaosWrapper(coro, policy)
 
-    wrapper._faultcore_policy = policy
     return wrapper
 
 
@@ -98,23 +155,13 @@ def rate_limit(rate: float, capacity: int):
 
 
 def network_queue(
-    rate: float = 100.0,
-    capacity: int = 100,
+    rate: str = "1gbps",
+    capacity: str = "10mb",
     max_queue_size: int = 1000,
-    latency_min_ms: int = 0,
-    latency_max_ms: int = 100,
-    packet_loss_rate: float = 0.0,
-    strategy: str = "wait",
-    fd_limit: int = 1024,
+    packet_loss: float = 0.0,
+    latency_ms: int = 0,
 ):
     policy = NetworkQueuePolicy(
-        rate,
-        capacity,
-        max_queue_size,
-        latency_min_ms,
-        latency_max_ms,
-        packet_loss_rate,
-        strategy,
-        fd_limit,
+        rate=rate, capacity=capacity, max_queue_size=max_queue_size, packet_loss=packet_loss, latency_ms=latency_ms
     )
     return lambda func: _make_wrapper(policy, func)

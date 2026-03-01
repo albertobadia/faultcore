@@ -13,7 +13,7 @@ struct Args {
     #[arg(short, long)]
     latency: Option<u64>,
 
-    #[arg(short, long)]
+    #[arg(long)]
     packet_loss: Option<f64>,
 
     #[arg(short, long)]
@@ -91,9 +91,9 @@ fn build_env_vars(profile: &NetworkProfile, args: &Args) -> HashMap<String, Stri
 
 fn preload_lib_name() -> Option<&'static str> {
     if cfg!(target_os = "linux") {
-        Some("libfaultcore_preload.so")
+        Some("libfaultcore_interceptor.so")
     } else if cfg!(target_os = "macos") {
-        Some("libfaultcore_preload.dylib")
+        Some("libfaultcore_interceptor.dylib")
     } else {
         None
     }
@@ -107,9 +107,10 @@ fn main() -> std::io::Result<()> {
         std::process::exit(1);
     }
 
-    let mut cmd = Command::new("uv");
-    cmd.arg("run");
-    cmd.args(&args.command);
+    let mut cmd = Command::new(&args.command[0]);
+    if args.command.len() > 1 {
+        cmd.args(&args.command[1..]);
+    }
     cmd.stdin(Stdio::inherit());
     cmd.stdout(Stdio::inherit());
     cmd.stderr(Stdio::inherit());
@@ -128,36 +129,37 @@ fn main() -> std::io::Result<()> {
         for (key, value) in &env_vars {
             println!("  {}={}", key, value);
         }
+    }
 
-        if let Some(preload_lib) = preload_lib_name() {
-            let current_path = std::env::current_dir()
-                .unwrap_or_default()
-                .join("target")
-                .join("release")
-                .join(preload_lib);
+    // Always inject the Faultcore Interceptor OS Hooks
+    if let Some(preload_lib) = preload_lib_name() {
+        let current_path = std::env::current_dir()
+            .unwrap_or_default()
+            .join("target")
+            .join("release")
+            .join(preload_lib);
 
-            if current_path.exists() {
-                let preload_path = current_path.to_string_lossy();
-                if cfg!(target_os = "linux") {
-                    cmd.env("LD_PRELOAD", preload_path.as_ref());
-                } else if cfg!(target_os = "macos") {
-                    cmd.env("DYLD_INSERT_LIBRARIES", preload_path.as_ref());
-                    let library_path = std::env::current_dir()
-                        .unwrap_or_default()
-                        .join("target")
-                        .join("release");
-                    cmd.env("DYLD_LIBRARY_PATH", library_path);
-                }
-                println!("[faultcore-run] Preload library: {}", preload_path);
-            } else {
-                println!(
-                    "[faultcore-run] Warning: Preload library not found at {}. Network simulation requires building the shared library.",
-                    current_path.display()
-                );
-                println!(
-                    "[faultcore-run] Run: gcc -shared -fPIC -o target/release/libfaultcore_preload.dylib faultcore_preload/src/preload.c -ldl -lpthread"
-                );
+        if current_path.exists() {
+            let preload_path = current_path.to_string_lossy();
+            if cfg!(target_os = "linux") {
+                cmd.env("LD_PRELOAD", preload_path.as_ref());
+            } else if cfg!(target_os = "macos") {
+                cmd.env("DYLD_INSERT_LIBRARIES", preload_path.as_ref());
+                let library_path = std::env::current_dir()
+                    .unwrap_or_default()
+                    .join("target")
+                    .join("release");
+                cmd.env("DYLD_LIBRARY_PATH", library_path);
             }
+            println!(
+                "[faultcore-run] OS Hardware Interceptor Injected: {}",
+                preload_path
+            );
+        } else {
+            println!(
+                "[faultcore-run] Warning: Preload library not found at {}. Run: cargo build --workspace --release",
+                current_path.display()
+            );
         }
     }
 

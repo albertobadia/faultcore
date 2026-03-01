@@ -41,8 +41,6 @@ impl Layer for QoSLayer {
             tokens.0 -= 1.0;
             LayerResult::Continue
         } else {
-            // For now, if we are out of tokens, we drop.
-            // Future iter: return a specific 'Wait' action or delay the packet context.
             LayerResult::Drop
         }
     }

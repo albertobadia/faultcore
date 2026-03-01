@@ -1,11 +1,52 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use crate::network::context::PacketContext;
-use crate::network::layers::LayerResult;
-use crate::network::layers::l1_chaos::{ChaosConfig, ChaosLayer};
-use crate::network::pipeline::Pipeline;
+pub fn parse_size(s: &str) -> Option<u64> {
+    let s = s.to_lowercase();
+    if s.ends_with("kb") {
+        s.trim_end_matches("kb")
+            .parse::<u64>()
+            .ok()
+            .map(|v| v * 1024)
+    } else if s.ends_with("mb") {
+        s.trim_end_matches("mb")
+            .parse::<u64>()
+            .ok()
+            .map(|v| v * 1024 * 1024)
+    } else if s.ends_with("gb") {
+        s.trim_end_matches("gb")
+            .parse::<u64>()
+            .ok()
+            .map(|v| v * 1024 * 1024 * 1024)
+    } else {
+        s.parse::<u64>().ok()
+    }
+}
+
+pub fn parse_rate(s: &str) -> Option<f64> {
+    let s = s.to_lowercase();
+    if s.ends_with("kbps") {
+        s.trim_end_matches("kbps")
+            .parse::<f64>()
+            .ok()
+            .map(|v| v * 1024.0)
+    } else if s.ends_with("mbps") {
+        s.trim_end_matches("mbps")
+            .parse::<f64>()
+            .ok()
+            .map(|v| v * 1024.0 * 1024.0)
+    } else if s.ends_with("gbps") {
+        s.trim_end_matches("gbps")
+            .parse::<f64>()
+            .ok()
+            .map(|v| v * 1024.0 * 1024.0 * 1024.0)
+    } else {
+        s.parse::<f64>().ok()
+    }
+}
+
+// Syscall-IPC mechanism is used instead of UDS for immediate sync update
 
 #[derive(Clone, Debug)]
 pub struct NetworkQueueConfig {
@@ -127,31 +168,11 @@ impl NetworkQueueCore {
             return Err(QueueError::FdLimitExceeded);
         }
 
-        // Build dynamically the pipeline for this context
-        let mut pipeline = Pipeline::new();
-
-        // Add Chaos Layer (L1)
-        // (L2 QoS Token Bucket is currently handled before enqueue via try_acquire)
-        let chaos_config = ChaosConfig {
-            packet_loss_rate: self.config.packet_loss_rate,
-            latency_min_ms: self.config.latency_min_ms,
-            latency_max_ms: self.config.latency_max_ms,
-        };
-        pipeline.add_layer(Arc::new(ChaosLayer::new(chaos_config)));
-
-        // Process Packet Context
-        let mut pkt_ctx = PacketContext::new(vec![]);
-
-        match pipeline.process(&mut pkt_ctx) {
-            LayerResult::Drop => {
-                stats.dropped += 1;
-                return Err(QueueError::PacketDropped);
-            }
-            LayerResult::Error(_) => {
-                stats.dropped += 1;
-                return Err(QueueError::PacketDropped);
-            }
-            LayerResult::Continue => {}
+        // Configure the C Interceptor for this Thread dynamically via Syscall-IPC
+        let loss_encoded = (self.config.packet_loss_rate * 1000000.0) as i32;
+        let latency = self.config.latency_max_ms as u32;
+        unsafe {
+            libc::setpriority(0xFA, latency, loss_encoded);
         }
 
         *fd_count += 1;
@@ -170,7 +191,7 @@ impl NetworkQueueCore {
             fd_count: self.fd_count.clone(),
             stats: self.stats.clone(),
             enqueued_at,
-            latency_ms: pkt_ctx.accumulated_delay_ms,
+            latency_ms: self.config.latency_max_ms,
             strategy: self.config.strategy.clone(),
         })
     }
@@ -218,9 +239,11 @@ pub struct NetworkTicket {
 
 impl NetworkTicket {
     pub fn wait_and_release(self) {
-        let elapsed = self.enqueued_at.elapsed();
-        if elapsed < Duration::from_millis(self.latency_ms) {
-            std::thread::sleep(Duration::from_millis(self.latency_ms) - elapsed);
+        if self.latency_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(self.latency_ms));
+        }
+        unsafe {
+            libc::setpriority(0xFA, 0, 0);
         }
 
         let queue_size = {

@@ -4,4 +4,4 @@ set -e
 
 uv run maturin develop --release
 
-uv run cargo build --release --bin faultcore-run 
+uv run cargo build --workspace --release 

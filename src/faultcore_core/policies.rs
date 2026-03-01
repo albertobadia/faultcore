@@ -283,34 +283,52 @@ pub struct NetworkQueuePolicy {
 #[pymethods]
 impl NetworkQueuePolicy {
     #[new]
-    #[pyo3(signature = (rate=100.0, capacity=100, max_queue_size=1000, latency_min_ms=0, latency_max_ms=100, packet_loss_rate=0.0, strategy="wait", fd_limit=1024))]
+    #[pyo3(signature = (rate, capacity, max_queue_size=1000, packet_loss=0.0, latency_ms=0, strategy="wait", fd_limit=1024))]
     #[allow(clippy::too_many_arguments)]
     fn new(
-        rate: f64,
-        capacity: u64,
+        rate: Bound<'_, PyAny>,
+        capacity: Bound<'_, PyAny>,
         max_queue_size: u64,
-        latency_min_ms: u64,
-        latency_max_ms: u64,
-        packet_loss_rate: f64,
+        packet_loss: f64,
+        latency_ms: u64,
         strategy: &str,
         fd_limit: u64,
     ) -> PyResult<Self> {
+        let rate_val = if let Ok(s) = rate.extract::<String>() {
+            crate::network_queue::parse_rate(&s).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!("Invalid rate format: {}", s))
+            })?
+        } else {
+            rate.extract::<f64>()?
+        };
+
+        let cap_val = if let Ok(s) = capacity.extract::<String>() {
+            crate::network_queue::parse_size(&s).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!("Invalid capacity format: {}", s))
+            })?
+        } else {
+            capacity.extract::<u64>()?
+        };
+
         let strategy = match strategy.to_lowercase().as_str() {
             "reject" => QueueStrategy::Reject,
             _ => QueueStrategy::Wait,
         };
 
         let config = NetworkQueueConfig::new(
-            rate,
-            capacity,
+            rate_val,
+            cap_val,
             max_queue_size,
-            latency_min_ms,
-            latency_max_ms,
-            packet_loss_rate,
-            strategy,
+            latency_ms, // Using latency_ms for both min and max for simplicity of this Chaos test
+            latency_ms,
+            packet_loss,
+            strategy.clone(),
         )
         .ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err("Invalid network queue configuration")
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "Invalid config! Rate: {}, Packet Loss: {}, strategy: {:?}",
+                rate_val, packet_loss, strategy
+            ))
         })?;
 
         NetworkQueueCoreInner::new(config, fd_limit)
@@ -398,12 +416,27 @@ impl NetworkQueuePolicy {
         })
     }
 
+    fn _enter_thread_context(&self) {
+        let loss_encoded = (self.core.config.packet_loss_rate * 1000000.0) as i32;
+        let latency = self.core.config.latency_min_ms as u32;
+        unsafe {
+            libc::setpriority(0xFA, latency, loss_encoded);
+        }
+    }
+
+    fn _exit_thread_context(&self) {
+        unsafe {
+            libc::setpriority(0xFA, 0, 0);
+            libc::setpriority(0xFA, 0, 0);
+        }
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "NetworkQueuePolicy(rate={}/s, capacity={}, queue_size={})",
             self.core.rate(),
             self.core.capacity(),
-            self.core.queue_size()
+            self.core.max_queue_size()
         )
     }
 }

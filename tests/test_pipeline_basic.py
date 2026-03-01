@@ -4,7 +4,7 @@ from faultcore import network_queue
 
 
 def test_qos_and_chaos():
-    queue = network_queue(rate=100.0, capacity=100, latency_min_ms=50, latency_max_ms=50, packet_loss_rate=0.0)
+    queue = network_queue(rate="100", capacity="100", latency_ms=50, packet_loss=0.0)
 
     start = time.time()
 
