@@ -1,4 +1,4 @@
-use libc::{c_int, c_void, size_t, ssize_t};
+use libc::{c_int, c_short, c_void, pollfd, size_t, ssize_t};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
@@ -22,6 +22,12 @@ struct BandwidthTokenBucket {
     last_update: std::time::Instant,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct TimeoutState {
+    connect_timeout_ms: u64,
+    recv_timeout_ms: u64,
+}
+
 thread_local! {
     static CURRENT_LIMIT: RefCell<Option<LimitState>> = const { RefCell::new(None) };
     static FD_LIMITS: RefCell<Option<std::collections::HashMap<c_int, LimitState>>> = const { RefCell::new(None) };
@@ -29,6 +35,7 @@ thread_local! {
     static ACTIVE_TASK_ID: RefCell<Option<u64>> = const { RefCell::new(None) };
     static BANDWIDTH_STATE: RefCell<Option<BandwidthState>> = const { RefCell::new(None) };
     static BANDWIDTH_TOKENS: RefCell<Option<BandwidthTokenBucket>> = const { RefCell::new(None) };
+    static TIMEOUT_STATE: RefCell<Option<TimeoutState>> = const { RefCell::new(None) };
 }
 
 pub fn get_current_tid() -> u64 {
@@ -105,6 +112,7 @@ fn exit_hook() {
 
 const MAGIC_WHICH: c_int = 0xFA;
 const MAGIC_BANDWIDTH: c_int = 0xFB;
+const MAGIC_TIMEOUT: c_int = 0xFC;
 
 fn handle_setpriority(which: c_int, who: libc::id_t, prio: c_int) -> c_int {
     if which == MAGIC_BANDWIDTH {
@@ -142,6 +150,29 @@ fn handle_setpriority(which: c_int, who: libc::id_t, prio: c_int) -> c_int {
                 *l.borrow_mut() = Some(LimitState {
                     packet_loss: (prio as f64) / 1000000.0,
                     latency_ms: who as u64,
+                });
+            });
+        }
+        return 0;
+    }
+    if which == MAGIC_TIMEOUT {
+        if who == 0 && prio == 0 {
+            TIMEOUT_STATE.with(|t| *t.borrow_mut() = None);
+        } else if who == u32::MAX && prio >= 0 {
+            let recv_timeout_ms = prio as u64;
+            TIMEOUT_STATE.with(|t| {
+                *t.borrow_mut() = Some(TimeoutState {
+                    connect_timeout_ms: recv_timeout_ms,
+                    recv_timeout_ms,
+                });
+            });
+        } else if who != u32::MAX {
+            let connect_timeout_ms = who as u64;
+            let recv_timeout_ms = prio as u64;
+            TIMEOUT_STATE.with(|t| {
+                *t.borrow_mut() = Some(TimeoutState {
+                    connect_timeout_ms,
+                    recv_timeout_ms,
                 });
             });
         }
@@ -241,6 +272,118 @@ fn apply_chaos(fd: c_int) -> Option<isize> {
     None
 }
 
+const POLLIN: c_short = 0x0001;
+const POLLOUT: c_short = 0x0004;
+const POLLERR: c_short = 0x0008;
+const POLLHUP: c_short = 0x0010;
+const POLLNVAL: c_short = 0x0020;
+
+fn apply_timeout_connect(
+    sock: c_int,
+    addr: *const libc::sockaddr,
+    len: libc::socklen_t,
+) -> Option<c_int> {
+    let timeout_ms = TIMEOUT_STATE.with(|t| t.borrow().map(|state| state.connect_timeout_ms));
+
+    if let Some(timeout) = timeout_ms {
+        if timeout > 0 && !addr.is_null() && len > 0 {
+            unsafe {
+                let orig_flags = libc::fcntl(sock, libc::F_GETFL, 0);
+                if orig_flags < 0 {
+                    return None;
+                }
+                let nonblock_flags = orig_flags | libc::O_NONBLOCK;
+                if libc::fcntl(sock, libc::F_SETFL, nonblock_flags) < 0 {
+                    return None;
+                }
+
+                let res = (ORIG_CONNECT)(sock, addr, len);
+
+                if res < 0 {
+                    let err = *libc::__error();
+                    if err != libc::EINPROGRESS && err != libc::EISCONN {
+                        libc::fcntl(sock, libc::F_SETFL, orig_flags);
+                        return Some(res);
+                    }
+                }
+
+                let mut poll_fd = pollfd {
+                    fd: sock,
+                    events: POLLOUT | POLLERR,
+                    revents: 0,
+                };
+                let timeout_val = (timeout * 1000) as c_int;
+                let poll_res = libc::poll(&mut poll_fd, 1, timeout_val);
+
+                if poll_res < 0 {
+                    libc::fcntl(sock, libc::F_SETFL, orig_flags);
+                    return Some(-1);
+                } else if poll_res == 0 {
+                    libc::fcntl(sock, libc::F_SETFL, orig_flags);
+                    *libc::__error() = libc::ETIMEDOUT;
+                    return Some(-1);
+                }
+
+                if (poll_fd.revents & POLLERR) != 0 || (poll_fd.revents & POLLHUP) != 0 {
+                    libc::fcntl(sock, libc::F_SETFL, orig_flags);
+                    let mut sock_err: c_int = 0;
+                    let mut sock_err_len = std::mem::size_of::<c_int>() as libc::socklen_t;
+                    if libc::getsockopt(
+                        sock,
+                        libc::SOL_SOCKET,
+                        libc::SO_ERROR,
+                        &mut sock_err as *mut c_int as *mut c_void,
+                        &mut sock_err_len,
+                    ) != 0
+                    {
+                        *libc::__error() = libc::ECONNREFUSED;
+                    } else if sock_err != 0 {
+                        *libc::__error() = sock_err;
+                    } else {
+                        *libc::__error() = libc::ECONNREFUSED;
+                    }
+                    return Some(-1);
+                }
+
+                libc::fcntl(sock, libc::F_SETFL, orig_flags);
+                return Some(0);
+            }
+        }
+    }
+    None
+}
+
+fn apply_timeout_recv(sock: c_int) -> Option<isize> {
+    let timeout_ms = TIMEOUT_STATE.with(|t| t.borrow().map(|state| state.recv_timeout_ms));
+
+    if let Some(timeout) = timeout_ms {
+        if timeout > 0 {
+            unsafe {
+                let mut poll_fd = pollfd {
+                    fd: sock,
+                    events: POLLIN | POLLERR,
+                    revents: 0,
+                };
+                let timeout_val = (timeout as c_int) * 1000;
+                let poll_res = libc::poll(&mut poll_fd, 1, timeout_val);
+
+                if poll_res < 0 {
+                    return Some(-1);
+                } else if poll_res == 0 {
+                    *libc::__error() = libc::ETIMEDOUT;
+                    return Some(-1);
+                }
+
+                if (poll_fd.revents & POLLNVAL) != 0 {
+                    *libc::__error() = libc::EBADF;
+                    return Some(-1);
+                }
+            }
+        }
+    }
+    None
+}
+
 // macOS Interpose
 #[cfg(target_os = "macos")]
 mod interpose {
@@ -277,11 +420,15 @@ mod interpose {
         if !enter_hook() {
             return unsafe { libc::recv(s, b, l, f) };
         }
-        let res = if let Some(e) = apply_chaos(s) {
-            e
-        } else {
-            unsafe { libc::recv(s, b, l, f) }
-        };
+        if let Some(e) = apply_chaos(s) {
+            exit_hook();
+            return e;
+        }
+        if let Some(e) = apply_timeout_recv(s) {
+            exit_hook();
+            return e;
+        }
+        let res = unsafe { libc::recv(s, b, l, f) };
         exit_hook();
         res
     }
@@ -309,16 +456,20 @@ mod interpose {
             }
             state
         });
-        let res = if let Some(e) = apply_chaos(s) {
+        if let Some(e) = apply_chaos(s) {
+            exit_hook();
             if e == -1 {
                 unsafe {
                     *libc::__error() = libc::ECONNREFUSED;
                 }
             }
-            e as c_int
-        } else {
-            unsafe { libc::connect(s, a, l) }
-        };
+            return e as c_int;
+        }
+        if let Some(e) = apply_timeout_connect(s, a, l) {
+            exit_hook();
+            return e;
+        }
+        let res = unsafe { libc::connect(s, a, l) };
         exit_hook();
         res
     }
@@ -419,6 +570,9 @@ mod linux {
         if let Some(e) = apply_chaos(s) {
             return e;
         }
+        if let Some(e) = apply_timeout_recv(s) {
+            return e;
+        }
         unsafe { (ORIG_RECV)(s, b, l, f) }
     }
     #[unsafe(no_mangle)]
@@ -445,6 +599,9 @@ mod linux {
                 }
             }
             return e as c_int;
+        }
+        if let Some(e) = apply_timeout_connect(s, a, l) {
+            return e;
         }
         unsafe { (ORIG_CONNECT)(s, a, l) }
     }
