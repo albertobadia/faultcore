@@ -6,7 +6,6 @@ pub mod l2_qos;
 pub mod l3_routing;
 pub mod l4_transport;
 
-/// Result of a single layer processing the context.
 #[derive(Debug)]
 pub enum LayerResult {
     /// The layer successfully processed the context, proceed to the next layer.

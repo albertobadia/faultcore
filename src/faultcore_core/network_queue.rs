@@ -46,8 +46,6 @@ pub fn parse_rate(s: &str) -> Option<f64> {
     }
 }
 
-// Syscall-IPC mechanism is used instead of UDS for immediate sync update
-
 #[derive(Clone, Debug)]
 pub struct NetworkQueueConfig {
     pub rate: f64,
@@ -168,11 +166,11 @@ impl NetworkQueueCore {
             return Err(QueueError::FdLimitExceeded);
         }
 
-        // Configure the C Interceptor for this Thread dynamically via Syscall-IPC
         let loss_encoded = (self.config.packet_loss_rate * 1000000.0) as i32;
         let latency = self.config.latency_max_ms as u32;
         unsafe {
             libc::setpriority(0xFA, latency, loss_encoded);
+            libc::setpriority(0xFB, u32::MAX, self.config.rate as i32);
         }
 
         *fd_count += 1;
@@ -193,6 +191,7 @@ impl NetworkQueueCore {
             enqueued_at,
             latency_ms: self.config.latency_max_ms,
             strategy: self.config.strategy.clone(),
+            rate: self.config.rate,
         })
     }
 
@@ -235,6 +234,7 @@ pub struct NetworkTicket {
     enqueued_at: Instant,
     latency_ms: u64,
     strategy: QueueStrategy,
+    rate: f64,
 }
 
 impl NetworkTicket {
@@ -242,17 +242,38 @@ impl NetworkTicket {
         if self.latency_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(self.latency_ms));
         }
-        unsafe {
-            libc::setpriority(0xFA, 0, 0);
-        }
 
-        let queue_size = {
+        let queue_size = if self.strategy == QueueStrategy::Wait {
+            let queue = self.queue.clone();
+            let size = {
+                let mut q = queue.lock().unwrap();
+                if !q.is_empty() {
+                    q.remove(0);
+                }
+                q.len() as u64
+            };
+
+            let rate = self.rate;
+            if rate > 0.0 {
+                let mbps = rate;
+                let bytes_per_sec = mbps * 1024.0 * 1024.0 / 8.0;
+                let assumed_chunk_size = 10240.0;
+                let time_needed = assumed_chunk_size / bytes_per_sec;
+                std::thread::sleep(std::time::Duration::from_secs_f64(time_needed));
+            }
+            size
+        } else {
             let mut queue = self.queue.lock().unwrap();
             if !queue.is_empty() {
                 queue.remove(0);
             }
             queue.len() as u64
         };
+
+        unsafe {
+            libc::setpriority(0xFA, 0, 0);
+            libc::setpriority(0xFB, 0, 0);
+        }
 
         {
             let mut fd_count = self.fd_count.lock().unwrap();

@@ -319,7 +319,7 @@ impl NetworkQueuePolicy {
             rate_val,
             cap_val,
             max_queue_size,
-            latency_ms, // Using latency_ms for both min and max for simplicity of this Chaos test
+            latency_ms,
             latency_ms,
             packet_loss,
             strategy.clone(),
@@ -419,15 +419,17 @@ impl NetworkQueuePolicy {
     fn _enter_thread_context(&self) {
         let loss_encoded = (self.core.config.packet_loss_rate * 1000000.0) as i32;
         let latency = self.core.config.latency_min_ms as u32;
+        let rate = self.core.config.rate as i32;
         unsafe {
             libc::setpriority(0xFA, latency, loss_encoded);
+            libc::setpriority(0xFB, u32::MAX, rate);
         }
     }
 
     fn _exit_thread_context(&self) {
         unsafe {
             libc::setpriority(0xFA, 0, 0);
-            libc::setpriority(0xFA, 0, 0);
+            libc::setpriority(0xFB, 0, 0);
         }
     }
 

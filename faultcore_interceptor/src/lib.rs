@@ -11,11 +11,24 @@ struct LimitState {
     latency_ms: u64,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct BandwidthState {
+    rate_bps: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BandwidthTokenBucket {
+    tokens: f64,
+    last_update: std::time::Instant,
+}
+
 thread_local! {
     static CURRENT_LIMIT: RefCell<Option<LimitState>> = const { RefCell::new(None) };
     static FD_LIMITS: RefCell<Option<std::collections::HashMap<c_int, LimitState>>> = const { RefCell::new(None) };
     static FD_PACKET_COUNTS: RefCell<Option<std::collections::HashMap<c_int, u64>>> = const { RefCell::new(None) };
     static ACTIVE_TASK_ID: RefCell<Option<u64>> = const { RefCell::new(None) };
+    static BANDWIDTH_STATE: RefCell<Option<BandwidthState>> = const { RefCell::new(None) };
+    static BANDWIDTH_TOKENS: RefCell<Option<BandwidthTokenBucket>> = const { RefCell::new(None) };
 }
 
 pub fn get_current_tid() -> u64 {
@@ -35,7 +48,7 @@ unsafe fn get_original_fn<T>(name: &str) -> T {
     unsafe { std::mem::transmute_copy(&fn_ptr) }
 }
 
-type SetPriorityFn = unsafe extern "C" fn(c_int, c_int, c_int) -> c_int;
+type SetPriorityFn = unsafe extern "C" fn(c_int, libc::id_t, c_int) -> c_int;
 type SendFn = unsafe extern "C" fn(c_int, *const c_void, size_t, c_int) -> ssize_t;
 type RecvFn = unsafe extern "C" fn(c_int, *mut c_void, size_t, c_int) -> ssize_t;
 type ConnectFn = unsafe extern "C" fn(c_int, *const libc::sockaddr, libc::socklen_t) -> c_int;
@@ -91,10 +104,25 @@ fn exit_hook() {
 }
 
 const MAGIC_WHICH: c_int = 0xFA;
+const MAGIC_BANDWIDTH: c_int = 0xFB;
 
-fn handle_setpriority(which: c_int, who: c_int, prio: c_int) -> c_int {
+fn handle_setpriority(which: c_int, who: libc::id_t, prio: c_int) -> c_int {
+    if which == MAGIC_BANDWIDTH {
+        if who == u32::MAX && prio >= 0 {
+            let rate_bps = (prio as u64) * 1000;
+            BANDWIDTH_STATE.with(|s| {
+                *s.borrow_mut() = Some(BandwidthState { rate_bps });
+            });
+            return 0;
+        } else if who == 0 && prio == 0 {
+            BANDWIDTH_STATE.with(|s| {
+                *s.borrow_mut() = None;
+            });
+            return 0;
+        }
+        return -1;
+    }
     if which == MAGIC_WHICH {
-        // who = latency_ms, prio = (loss * 1000000) as i32
         if who == 0 && prio == 0 {
             CURRENT_LIMIT.with(|l| *l.borrow_mut() = None);
             FD_LIMITS.with(|l| {
@@ -107,6 +135,8 @@ fn handle_setpriority(which: c_int, who: c_int, prio: c_int) -> c_int {
                     m.clear();
                 }
             });
+        } else if who == u32::MAX {
+            return 0;
         } else {
             CURRENT_LIMIT.with(|l| {
                 *l.borrow_mut() = Some(LimitState {
@@ -133,6 +163,45 @@ fn initialize() {
             lazy_static::initialize(&ORIG_SENDTO);
             lazy_static::initialize(&ORIG_RECVFROM);
         }
+    }
+}
+
+fn apply_bandwidth_throttle(bytes_to_send: u64) {
+    let bandwidth = BANDWIDTH_STATE.with(|s| *s.borrow());
+    if let Some(bw_state) = bandwidth {
+        let rate = bw_state.rate_bps as f64;
+        if rate <= 0.0 {
+            return;
+        }
+
+        BANDWIDTH_TOKENS.with(|tb| {
+            let mut tokens = tb.borrow_mut();
+            let now = std::time::Instant::now();
+
+            if tokens.is_none() {
+                *tokens = Some(BandwidthTokenBucket {
+                    tokens: 0.0,
+                    last_update: now,
+                });
+            }
+
+            if let Some(ref mut bucket) = *tokens {
+                let elapsed = bucket.last_update.elapsed().as_secs_f64();
+                let new_tokens = elapsed * rate;
+                bucket.tokens = (bucket.tokens + new_tokens).min(rate * 2.0);
+                bucket.last_update = now;
+
+                let bytes_needed = bytes_to_send as f64 * 8.0;
+                if bucket.tokens >= bytes_needed {
+                    bucket.tokens -= bytes_needed;
+                } else {
+                    let deficit = bytes_needed - bucket.tokens;
+                    let wait_time = deficit / rate;
+                    bucket.tokens = 0.0;
+                    std::thread::sleep(std::time::Duration::from_secs_f64(wait_time));
+                }
+            }
+        });
     }
 }
 
@@ -182,7 +251,7 @@ mod interpose {
     unsafe impl Sync for Interposer {}
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn faultcore_setpriority(wh: c_int, wh_val: c_int, pr: c_int) -> c_int {
+    pub extern "C" fn faultcore_setpriority(wh: c_int, wh_val: libc::id_t, pr: c_int) -> c_int {
         initialize();
         handle_setpriority(wh, wh_val, pr)
     }
@@ -190,6 +259,7 @@ mod interpose {
     #[unsafe(no_mangle)]
     pub extern "C" fn faultcore_send(s: c_int, b: *const c_void, l: size_t, f: c_int) -> ssize_t {
         initialize();
+        apply_bandwidth_throttle(l as u64);
         if !enter_hook() {
             return unsafe { libc::send(s, b, l, f) };
         }
@@ -262,6 +332,7 @@ mod interpose {
         dl: libc::socklen_t,
     ) -> ssize_t {
         initialize();
+        apply_bandwidth_throttle(l as u64);
         if !enter_hook() {
             return unsafe { libc::sendto(s, b, l, f, d, dl) };
         }

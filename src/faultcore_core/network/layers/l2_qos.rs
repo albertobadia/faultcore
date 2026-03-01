@@ -6,8 +6,8 @@ use std::time::Instant;
 /// Configuration for shaping traffic.
 #[derive(Clone, Debug)]
 pub struct QoSConfig {
-    pub rate: f64,     // tokens per second
-    pub capacity: f64, // max tokens
+    pub rate: f64,
+    pub capacity: f64,
 }
 
 /// L2 Layer implementing a simple Token Bucket for QoS.

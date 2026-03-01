@@ -4,7 +4,7 @@ use crate::network::context::PacketContext;
 /// Configuration for the Chaos layer.
 #[derive(Clone, Debug)]
 pub struct ChaosConfig {
-    pub packet_loss_rate: f64, // 0.0 to 1.0
+    pub packet_loss_rate: f64,
     pub latency_min_ms: u64,
     pub latency_max_ms: u64,
 }

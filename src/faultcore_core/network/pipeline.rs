@@ -1,7 +1,6 @@
 use super::context::PacketContext;
 use super::layers::{LayerResult, SharedLayer};
 
-/// The Pipeline Runner orchestrates passing a context through all configured layers.
 pub struct Pipeline {
     layers: Vec<SharedLayer>,
 }
