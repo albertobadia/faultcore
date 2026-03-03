@@ -13,7 +13,7 @@ from faultcore._faultcore import (
     add_keys,
     classify_exception,
     clear_keys,
-    get_feature_flag_manager,
+    get_feature_flag_manager as _get_feature_flag_manager,
     get_keys,
     remove_key,
 )
@@ -26,6 +26,15 @@ from faultcore.decorator import (
     retry,
     timeout,
 )
+
+_cached_feature_flag_manager: FeatureFlagManager | None = None
+
+
+def get_feature_flag_manager() -> FeatureFlagManager:
+    global _cached_feature_flag_manager
+    if _cached_feature_flag_manager is None:
+        _cached_feature_flag_manager = _get_feature_flag_manager()
+    return _cached_feature_flag_manager
 
 
 def is_interceptor_loaded() -> bool:

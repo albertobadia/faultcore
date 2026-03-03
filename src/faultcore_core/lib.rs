@@ -23,6 +23,7 @@ pub use policies::{
     TimeoutPolicy,
 };
 
+use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 
 #[pyfunction]
@@ -79,12 +80,9 @@ fn clear_keys() {
 }
 
 #[pyfunction]
-#[allow(deprecated)]
-fn get_feature_flag_manager() -> PyResult<Py<PyAny>> {
-    Python::with_gil(|py| {
-        let manager = feature_flag::get_feature_flag_manager();
-        manager.clone().into_pyobject(py).map(|b| b.into())
-    })
+fn get_feature_flag_manager(py: Python<'_>) -> PyResult<Py<PyAny>> {
+    let manager = feature_flag::get_feature_flag_manager();
+    manager.clone().into_py_any(py)
 }
 
 #[pymodule]

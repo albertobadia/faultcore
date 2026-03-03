@@ -12,6 +12,16 @@ def get_default_data():
 @fallback(get_default_data)
 @circuit_breaker(failure_threshold=3, success_threshold=1, timeout_ms=1000)
 def unreliable_api_call():
+    """
+    Execution order (innermost to outermost):
+    1. circuit_breaker wraps the function first
+    2. fallback wraps circuit_breaker result
+    3. timeout wraps fallback result
+    4. retry wraps timeout result (executes first)
+
+    Note: Python decorators apply bottom-to-top. The decorator closest to
+    the function definition executes first (closest to the actual function).
+    """
     import random
 
     if random.random() < 0.7:

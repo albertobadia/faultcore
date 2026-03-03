@@ -3,6 +3,16 @@ use parking_lot::RwLock;
 use std::ptr;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[macro_export]
+macro_rules! shm_error {
+    ($($arg:tt)*) => { eprintln!("faultcore: {}", format!($($arg)*)) };
+}
+
+#[macro_export]
+macro_rules! shm_info {
+    ($($arg:tt)*) => { eprintln!("faultcore: {}", format!($($arg)*)) };
+}
+
 pub fn get_thread_id() -> u64 {
     unsafe { libc::syscall(libc::SYS_gettid) as u64 }
 }
@@ -83,10 +93,12 @@ pub fn try_open_shm() -> bool {
     unsafe {
         let fd = shm_open(name_cstr.as_ptr(), O_RDWR, 0o600);
         if fd < 0 {
+            shm_error!("shm_open failed for {}", shm_name);
             return false;
         }
 
         if ftruncate(fd, FAULTCORE_SHM_SIZE as i64) < 0 {
+            shm_error!("ftruncate failed for {}", shm_name);
             libc::close(fd);
             return false;
         }
@@ -103,11 +115,13 @@ pub fn try_open_shm() -> bool {
         libc::close(fd);
 
         if addr as isize == -1isize {
+            shm_error!("mmap failed for {}", shm_name);
             return false;
         }
 
         *SHM_POINTER.write() = addr as usize;
         SHM_OPEN.store(1, Ordering::SeqCst);
+        shm_info!("SHM opened successfully");
 
         true
     }

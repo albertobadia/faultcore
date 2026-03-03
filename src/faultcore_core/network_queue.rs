@@ -172,7 +172,20 @@ impl NetworkQueueCore {
             return Err(QueueError::FdLimitExceeded);
         }
 
-        let latency_ms = self.config.latency_max_ms;
+        let latency_ms = {
+            let min = self.config.latency_min_ms;
+            let max = self.config.latency_max_ms;
+            if min == max {
+                min
+            } else {
+                let range = max.saturating_sub(min);
+                let nanos = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .subsec_nanos();
+                min + ((nanos as u64) % range)
+            }
+        };
         let packet_loss_ppm = (self.config.packet_loss_rate * 1_000_000.0) as u64;
         let bandwidth_bps = self.config.rate as u64;
 
@@ -201,7 +214,7 @@ impl NetworkQueueCore {
             fd_count: self.fd_count.clone(),
             stats: self.stats.clone(),
             enqueued_at,
-            latency_ms: self.config.latency_max_ms,
+            latency_ms,
             strategy: self.config.strategy.clone(),
             rate: self.config.rate,
         })

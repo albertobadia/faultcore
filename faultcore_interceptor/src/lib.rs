@@ -22,6 +22,14 @@ thread_local! {
     static BANDWIDTH_TOKENS: RefCell<Option<BandwidthTokenBucket>> = const { RefCell::new(None) };
     static TIMEOUT_STATE: RefCell<Option<TimeoutState>> = const { RefCell::new(None) };
     static LATENCY_START: RefCell<std::collections::HashMap<c_int, std::time::Instant>> = RefCell::new(std::collections::HashMap::new());
+    static XORSHIFT_STATE: RefCell<u32> = const { RefCell::new(0xDEADBEEF) };
+}
+
+fn xorshift32(state: &mut u32) -> u32 {
+    *state ^= *state << 13;
+    *state ^= *state >> 17;
+    *state ^= *state << 5;
+    *state
 }
 
 type SendFn = unsafe extern "C" fn(c_int, *const c_void, size_t, c_int) -> ssize_t;
@@ -197,11 +205,13 @@ fn apply_chaos_from_shm(fd: c_int) -> Option<isize> {
     if config.packet_loss_ppm > 0 {
         let drop_threshold = 1_000_000.0 / config.packet_loss_ppm as f64;
         let mut should_drop = false;
-        let hash = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_micros();
-        if (hash as f64) % drop_threshold < 1.0 {
+        let random = XORSHIFT_STATE.with(|s| {
+            let mut state = *s.borrow();
+            let result = xorshift32(&mut state);
+            *s.borrow_mut() = state;
+            result
+        });
+        if (random as f64) % drop_threshold < 1.0 {
             should_drop = true;
         }
         if should_drop {
