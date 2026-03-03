@@ -177,3 +177,88 @@ def network_queue(
         rate=rate, capacity=capacity, max_queue_size=max_queue_size, packet_loss=packet_loss, latency_ms=latency_ms
     )
     return lambda func: _make_wrapper(policy, func)
+
+
+def apply_policy(key: str):
+    from faultcore._faultcore import get_feature_flag_manager
+
+    manager = get_feature_flag_manager()
+
+    def decorator(func):
+        return _DynamicPolicyWrapper(func, key, manager)
+
+    return decorator
+
+
+class _DynamicPolicyWrapper:
+    def __init__(self, func, key, manager):
+        self._func = func
+        self._key = key
+        self._manager = manager
+        self._policies = []
+
+    def _build_policies(self):
+        config = self._manager.get(self._key)
+        if config is None:
+            raise ValueError(f"Policy bundle '{self._key}' not found")
+
+        policies = []
+
+        if config.get("timeout_ms"):
+            policies.append(TimeoutPolicy(config["timeout_ms"]))
+
+        if config.get("retry_max_retries") is not None:
+            policies.append(
+                RetryPolicy(
+                    config["retry_max_retries"],
+                    config.get("retry_backoff_ms", 100),
+                    config.get("retry_on"),
+                )
+            )
+
+        if config.get("circuit_breaker_failure_threshold") is not None:
+            policies.append(
+                CircuitBreakerPolicy(
+                    config["circuit_breaker_failure_threshold"],
+                    config.get("circuit_breaker_success_threshold", 2),
+                    config.get("circuit_breaker_timeout_ms", 30000),
+                )
+            )
+
+        if config.get("rate_limit_rate") is not None:
+            policies.append(
+                RateLimitPolicy(
+                    config["rate_limit_rate"],
+                    config.get("rate_limit_capacity", 100),
+                )
+            )
+
+        return policies
+
+    def _apply_policies(self, func, args, kwargs):
+        if not self._manager.is_enabled(self._key):
+            return func(*args, **kwargs)
+
+        policies = self._build_policies()
+        if not policies:
+            return func(*args, **kwargs)
+
+        result = None
+        error = None
+        for policy in policies:
+            try:
+                result = policy(func, args, kwargs)
+                error = None
+                break
+            except Exception as e:
+                error = e
+
+        if error:
+            raise error
+        return result
+
+    def __call__(self, *args, **kwargs):
+        return self._apply_policies(self._func, args, kwargs)
+
+    def __get__(self, obj, objtype=None):
+        return self

@@ -5,6 +5,7 @@ from faultcore._faultcore import (
     CircuitBreakerPolicy as CircuitBreaker,
     ContextManager,
     FallbackPolicy as Fallback,
+    FeatureFlagManager,
     NetworkQueuePolicy as NetworkQueue,
     RateLimitPolicy as RateLimit,
     RetryPolicy as Retry,
@@ -12,10 +13,12 @@ from faultcore._faultcore import (
     add_keys,
     classify_exception,
     clear_keys,
+    get_feature_flag_manager,
     get_keys,
     remove_key,
 )
 from faultcore.decorator import (
+    apply_policy,
     circuit_breaker,
     fallback,
     network_queue,
@@ -40,6 +43,60 @@ def get_interceptor_path() -> str | None:
     return None
 
 
+def register_policy_bundle(
+    key: str,
+    timeout_ms: int | None = None,
+    retry_max_retries: int | None = None,
+    retry_backoff_ms: int | None = None,
+    retry_on: list[str] | None = None,
+    circuit_breaker_failure_threshold: int | None = None,
+    circuit_breaker_success_threshold: int | None = None,
+    circuit_breaker_timeout_ms: int | None = None,
+    rate_limit_rate: float | None = None,
+    rate_limit_capacity: int | None = None,
+) -> None:
+    manager = get_feature_flag_manager()
+    manager.register(
+        key,
+        timeout_ms,
+        retry_max_retries,
+        retry_backoff_ms,
+        retry_on,
+        circuit_breaker_failure_threshold,
+        circuit_breaker_success_threshold,
+        circuit_breaker_timeout_ms,
+        rate_limit_rate,
+        rate_limit_capacity,
+    )
+
+
+def update_policy_bundle(
+    key: str,
+    timeout_ms: int | None = None,
+    retry_max_retries: int | None = None,
+    retry_backoff_ms: int | None = None,
+    retry_on: list[str] | None = None,
+    circuit_breaker_failure_threshold: int | None = None,
+    circuit_breaker_success_threshold: int | None = None,
+    circuit_breaker_timeout_ms: int | None = None,
+    rate_limit_rate: float | None = None,
+    rate_limit_capacity: int | None = None,
+) -> bool:
+    manager = get_feature_flag_manager()
+    return manager.update(
+        key,
+        timeout_ms,
+        retry_max_retries,
+        retry_backoff_ms,
+        retry_on,
+        circuit_breaker_failure_threshold,
+        circuit_breaker_success_threshold,
+        circuit_breaker_timeout_ms,
+        rate_limit_rate,
+        rate_limit_capacity,
+    )
+
+
 __all__ = [
     "Timeout",
     "Retry",
@@ -48,16 +105,21 @@ __all__ = [
     "RateLimit",
     "NetworkQueue",
     "ContextManager",
+    "FeatureFlagManager",
     "classify_exception",
     "add_keys",
     "get_keys",
     "remove_key",
     "clear_keys",
+    "get_feature_flag_manager",
+    "register_policy_bundle",
+    "update_policy_bundle",
     "timeout",
     "retry",
     "fallback",
     "circuit_breaker",
     "rate_limit",
     "network_queue",
+    "apply_policy",
     "is_interceptor_loaded",
 ]

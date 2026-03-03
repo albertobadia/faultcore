@@ -8,6 +8,9 @@ mod retry;
 mod shm;
 mod timeout;
 
+mod feature_flag;
+pub use feature_flag::FeatureFlagManager;
+
 pub use circuit_breaker::{CircuitBreakerPolicy as CircuitBreakerCore, CircuitState};
 pub use network_queue::{NetworkQueueCore as NetworkQueueCoreInner, QueueError, QueueStats};
 pub use rate_limit::RateLimitPolicy as RateLimitCore;
@@ -75,6 +78,15 @@ fn clear_keys() {
     context::clear_context_keys();
 }
 
+#[pyfunction]
+#[allow(deprecated)]
+fn get_feature_flag_manager() -> PyResult<Py<PyAny>> {
+    Python::with_gil(|py| {
+        let manager = feature_flag::get_feature_flag_manager();
+        manager.clone().into_pyobject(py).map(|b| b.into())
+    })
+}
+
 #[pymodule]
 fn _faultcore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(classify_exception, m)?)?;
@@ -82,6 +94,7 @@ fn _faultcore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_keys, m)?)?;
     m.add_function(wrap_pyfunction!(remove_key, m)?)?;
     m.add_function(wrap_pyfunction!(clear_keys, m)?)?;
+    m.add_function(wrap_pyfunction!(get_feature_flag_manager, m)?)?;
 
     m.add_class::<TimeoutPolicy>()?;
     m.add_class::<RetryPolicy>()?;
@@ -90,6 +103,7 @@ fn _faultcore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RateLimitPolicy>()?;
     m.add_class::<NetworkQueuePolicy>()?;
     m.add_class::<ContextManager>()?;
+    m.add_class::<feature_flag::FeatureFlagManager>()?;
 
     Ok(())
 }
