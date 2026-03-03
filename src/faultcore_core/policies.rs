@@ -7,6 +7,7 @@ use crate::network_queue::{
 };
 use crate::rate_limit::RateLimitPolicy as RateLimitCore;
 use crate::retry::{ErrorClass, RetryPolicy as RetryCore};
+use crate::shm;
 use crate::timeout::TimeoutPolicy as TimeoutCore;
 
 #[pyclass]
@@ -33,17 +34,20 @@ impl TimeoutPolicy {
     ) -> PyResult<Py<PyAny>> {
         let timeout_ms = self.core.timeout_ms();
 
-        unsafe {
-            libc::setpriority(0xFC, timeout_ms as u32, timeout_ms as i32);
+        if !shm::is_shm_open() {
+            let pid = unsafe { libc::getpid() } as u32;
+            let _ = shm::create_shm(pid);
         }
 
-        let result = func.call(py, args, kwargs);
-
-        unsafe {
-            libc::setpriority(0xFC, 0, 0);
+        if shm::is_shm_open() {
+            let tid = shm::get_thread_id();
+            let _ = shm::write_timeouts(tid, timeout_ms, timeout_ms);
+            let result = func.call(py, args, kwargs);
+            let _ = shm::clear_config(tid);
+            result
+        } else {
+            func.call(py, args, kwargs)
         }
-
-        result
     }
 
     #[getter]
@@ -432,20 +436,23 @@ impl NetworkQueuePolicy {
     }
 
     fn _enter_thread_context(&self) {
-        let loss_encoded = (self.core.config.packet_loss_rate * 1000000.0) as i32;
-        let latency = self.core.config.latency_min_ms as u32;
-        let rate = self.core.config.rate as i32;
-        unsafe {
-            libc::setpriority(0xFA, latency, loss_encoded);
-            libc::setpriority(0xFB, u32::MAX, rate);
+        let latency_ms = self.core.config.latency_min_ms;
+        let packet_loss_ppm = (self.core.config.packet_loss_rate * 1_000_000.0) as u64;
+        let bandwidth_bps = self.core.config.rate as u64;
+
+        if !shm::is_shm_open() {
+            let pid = unsafe { libc::getpid() } as u32;
+            let _ = shm::create_shm(pid);
         }
+        let tid = shm::get_thread_id();
+        let _ = shm::write_latency(tid, latency_ms);
+        let _ = shm::write_packet_loss(tid, packet_loss_ppm);
+        let _ = shm::write_bandwidth(tid, bandwidth_bps);
     }
 
     fn _exit_thread_context(&self) {
-        unsafe {
-            libc::setpriority(0xFA, 0, 0);
-            libc::setpriority(0xFB, 0, 0);
-        }
+        let tid = shm::get_thread_id();
+        let _ = shm::clear_config(tid);
     }
 
     fn __repr__(&self) -> String {

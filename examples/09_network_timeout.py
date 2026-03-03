@@ -1,40 +1,26 @@
 #!/usr/bin/env python3
+"""
+Network Timeout Examples using faultcore.
+Requires running with LD_PRELOAD on Linux.
+"""
 
-import ctypes
 import socket
 import time
 
-MAGIC_TIMEOUT = 0xFC
-
-libc = None
+import faultcore
 
 
-def setup_timeout(connect_timeout: int, recv_timeout: int):
-    global libc
-    if libc is None:
-        libc = ctypes.CDLL(None)
-    libc.setpriority(MAGIC_TIMEOUT, connect_timeout, recv_timeout)
-
-
-def clear_timeout():
-    global libc
-    if libc:
-        libc.setpriority(MAGIC_TIMEOUT, 0, 0)
-
-
+@faultcore.timeout(timeout_ms=2000)
 def test_connect_timeout():
-    print("=" * 60)
     print(" Test 1: Connect Timeout (unreachable IP) ".center(60, "="))
-    print("=" * 60)
-
-    setup_timeout(2, 2)
 
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(10)  # Python-level backup timeout
+    s.settimeout(10)
+    start = 0
 
     try:
         start = time.time()
-        s.connect(("10.255.255.1", 9999))  # Unreachable IP
+        s.connect(("10.255.255.1", 9999))
         elapsed = time.time() - start
         print(f"Connected after {elapsed:.3f}s (unexpected)")
     except TimeoutError:
@@ -45,18 +31,14 @@ def test_connect_timeout():
         print(f"Error: {type(e).__name__}: {e} after {elapsed:.3f}s")
     finally:
         s.close()
-        clear_timeout()
 
 
 def test_no_timeout():
-    print("\n" + "=" * 60)
-    print(" Test 2: No Interceptor Timeout (Python timeout) ".center(60, "="))
-    print("=" * 60)
-
-    clear_timeout()
+    print("\n Test 2: No Interceptor Timeout (Python timeout) ".center(60, "="))
 
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(2)  # Python-level timeout
+    s.settimeout(2)
+    start = 0
 
     try:
         start = time.time()
@@ -73,15 +55,13 @@ def test_no_timeout():
         s.close()
 
 
+@faultcore.timeout(timeout_ms=1000)
 def test_fast_timeout():
-    print("\n" + "=" * 60)
-    print(" Test 3: Fast Timeout (1 second) ".center(60, "="))
-    print("=" * 60)
-
-    setup_timeout(1, 1)
+    print("\n Test 3: Fast Timeout (1 second) ".center(60, "="))
 
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(5)
+    start = 0
 
     try:
         start = time.time()
@@ -96,22 +76,19 @@ def test_fast_timeout():
         print(f"Error: {type(e).__name__}: {e} after {elapsed:.3f}s")
     finally:
         s.close()
-        clear_timeout()
 
 
+@faultcore.timeout(timeout_ms=5000)
 def test_connection_refused():
-    print("\n" + "=" * 60)
-    print(" Test 4: Connection Refused (no server) ".center(60, "="))
-    print("=" * 60)
-
-    setup_timeout(5, 5)
+    print("\n Test 4: Connection Refused (no server) ".center(60, "="))
 
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(10)
+    start = 0
 
     try:
         start = time.time()
-        s.connect(("127.0.0.1", 9999))  # Nothing listening
+        s.connect(("127.0.0.1", 9999))
         elapsed = time.time() - start
         print(f"Connected after {elapsed:.3f}s")
     except ConnectionRefusedError:
@@ -122,20 +99,18 @@ def test_connection_refused():
         print(f"Error: {type(e).__name__}: {e} after {elapsed:.3f}s")
     finally:
         s.close()
-        clear_timeout()
 
 
 def test_recv_timeout():
-    print("\n" + "=" * 60)
-    print(" Test 5: Recv Timeout ".center(60, "="))
-    print("=" * 60)
+    print("\n Test 5: Recv Timeout ".center(60, "="))
     print("Note: This test requires a server that accepts but doesn't send data")
     print("Skipping for demonstration purposes\n")
 
 
 if __name__ == "__main__":
-    print("\nNetwork Timeout Examples using Interceptor")
-    print("Make sure to run with DYLD_INSERT_LIBRARIES (macOS) or LD_PRELOAD (Linux)")
+    print("\nNetwork Timeout Examples using faultcore")
+    print("Uses @faultcore.timeout decorator with SHM communication")
+    print("Make sure to run with LD_PRELOAD (Linux)")
     print()
 
     test_connect_timeout()

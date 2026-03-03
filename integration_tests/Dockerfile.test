@@ -5,6 +5,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     python3 \
     python3-venv \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /root/.local/bin/
@@ -12,21 +13,20 @@ ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /workspace
 
-COPY faultcore_interceptor/Cargo.toml /workspace/faultcore_interceptor/
-COPY faultcore_interceptor/src /workspace/faultcore_interceptor/src
+# Copy all project files
+COPY . .
 
-RUN cd /workspace/faultcore_interceptor && cargo build --release
+# Build Rust interceptor
+RUN cd faultcore_interceptor && cargo build --release
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /root/.local/bin/
-
+# Setup Python environment with maturin
 RUN uv venv .venv && \
     . .venv/bin/activate && \
-    uv pip install pytest requests
+    uv pip install maturin pytest requests
 
-COPY integration_tests/ /workspace/integration_tests/
-COPY tests/ /workspace/tests/
+# Build faultcore Python module (MUST be after COPY . . to use copied sources)
+RUN . .venv/bin/activate && maturin develop
 
-ENV LD_PRELOAD=/workspace/faultcore_interceptor/target/release/libfaultcore_interceptor.so
 ENV PATH="/workspace/.venv/bin:$PATH"
 ENV PYTHONPATH=/workspace
 

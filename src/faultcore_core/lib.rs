@@ -5,6 +5,7 @@ mod network_queue;
 mod policies;
 mod rate_limit;
 mod retry;
+mod shm;
 mod timeout;
 
 pub use circuit_breaker::{CircuitBreakerPolicy as CircuitBreakerCore, CircuitState};

@@ -1,189 +1,98 @@
-import ctypes
-import os
 import socket
-import sys
 import time
 
 import pytest
 
-MAGIC_TIMEOUT = 0xFC
+import faultcore
 
 
-def setup_timeout(connect_timeout: int, recv_timeout: int):
-    libc = ctypes.CDLL(None)
-    libc.setpriority(MAGIC_TIMEOUT, connect_timeout, recv_timeout)
+class TestNetworkTimeout:
+    """Tests for network timeout via SHM"""
 
+    def test_interceptor_is_loaded(self):
+        if not faultcore.is_interceptor_loaded():
+            pytest.skip(
+                "Interceptor not loaded. Run tests with:\n"
+                "  Linux: LD_PRELOAD=target/release/libfaultcore_interceptor.so pytest tests/"
+            )
 
-def clear_timeout():
-    libc = ctypes.CDLL(None)
-    libc.setpriority(MAGIC_TIMEOUT, 0, 0)
+    @faultcore.timeout(timeout_ms=2000)
+    def test_connect_timeout_with_unreachable_ip(self):
+        if not faultcore.is_interceptor_loaded():
+            pytest.skip("Interceptor not loaded")
 
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-def is_interceptor_loaded():
-    return "DYLD_INSERT_LIBRARIES" in os.environ or "LD_PRELOAD" in os.environ
+        start = time.time()
+        try:
+            s.connect(("10.255.255.1", 9999))
+            elapsed = time.time() - start
+            pytest.fail(f"Should have raised TimeoutError, got connection after {elapsed:.2f}s")
+        except (TimeoutError, BlockingIOError):
+            elapsed = time.time() - start
+            assert 1.5 <= elapsed <= 3.0, f"Expected ~2s, got {elapsed:.2f}s"
+        except ConnectionRefusedError:
+            elapsed = time.time() - start
+            assert elapsed < 1.0, f"Connection refused too slow: {elapsed:.2f}s"
+        finally:
+            s.close()
 
+    def test_no_timeout_uses_python_timeout(self):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(2)
 
-@pytest.fixture(autouse=True)
-def cleanup_timeout():
-    yield
-    try:
-        clear_timeout()
-    except Exception:
-        pass
+        start = time.time()
+        try:
+            s.connect(("10.255.255.1", 9999))
+            pytest.fail("Should have raised TimeoutError")
+        except TimeoutError:
+            elapsed = time.time() - start
+            assert 1.5 <= elapsed <= 3.0, f"Expected ~2s, got {elapsed:.2f}s"
+        finally:
+            s.close()
 
+    @faultcore.timeout(timeout_ms=1000)
+    def test_short_timeout(self):
+        if not faultcore.is_interceptor_loaded():
+            pytest.skip("Interceptor not loaded")
 
-def test_interceptor_is_loaded():
-    if not is_interceptor_loaded():
-        pytest.skip(
-            "Interceptor not loaded. Run tests with:\n"
-            "  macOS: DYLD_INSERT_LIBRARIES=target/release/libfaultcore_interceptor.dylib pytest tests/\n"
-            "  Linux: LD_PRELOAD=target/release/libfaultcore_interceptor.so pytest tests/"
-        )
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
+        start = time.time()
+        try:
+            s.connect(("10.255.255.1", 9999))
+            pytest.fail("Should have raised TimeoutError")
+        except (TimeoutError, BlockingIOError):
+            elapsed = time.time() - start
+            assert 0.5 <= elapsed <= 2.0, f"Expected ~1s, got {elapsed:.2f}s"
+        finally:
+            s.close()
 
-def test_connect_timeout_with_unreachable_ip():
-    if not is_interceptor_loaded():
-        pytest.skip("Interceptor not loaded")
+    @faultcore.timeout(timeout_ms=5000)
+    def test_connection_refused_fast(self):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(10)
 
-    setup_timeout(2, 2)
-
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(10)  # Python backup timeout
-
-    start = time.time()
-    try:
-        s.connect(("10.255.255.1", 9999))
-        elapsed = time.time() - start
-        pytest.fail(f"Should have raised TimeoutError or ConnectionRefusedError, got connection after {elapsed:.2f}s")
-    except TimeoutError:
-        elapsed = time.time() - start
-        # Should be around 2 seconds (interceptor timeout)
-        assert 1.5 <= elapsed <= 3.0, f"Expected ~2s, got {elapsed:.2f}s"
-    except ConnectionRefusedError:
-        # Some networks route 10.x.x.x to local services
-        elapsed = time.time() - start
-        # Connection refused should be fast
-        assert elapsed < 1.0, f"Connection refused too slow: {elapsed:.2f}s"
-    finally:
-        s.close()
-
-
-def test_no_timeout_uses_python_timeout():
-    clear_timeout()
-
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(2)  # Python timeout
-
-    start = time.time()
-    try:
-        s.connect(("10.255.255.1", 9999))
-        pytest.fail("Should have raised TimeoutError")
-    except TimeoutError:
-        elapsed = time.time() - start
-        # Should be around 2 seconds (Python timeout)
-        assert 1.5 <= elapsed <= 3.0, f"Expected ~2s, got {elapsed:.2f}s"
-    finally:
-        s.close()
-
-
-def test_short_timeout():
-    if not is_interceptor_loaded():
-        pytest.skip("Interceptor not loaded")
-
-    setup_timeout(1, 1)
-
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(5)
-
-    start = time.time()
-    try:
-        s.connect(("10.255.255.1", 9999))
-        pytest.fail("Should have raised TimeoutError")
-    except TimeoutError:
-        elapsed = time.time() - start
-        # Should be around 1 second
-        assert 0.5 <= elapsed <= 2.0, f"Expected ~1s, got {elapsed:.2f}s"
-    finally:
-        s.close()
-
-
-def test_clear_timeout():
-    # Set timeout
-    setup_timeout(5, 5)
-
-    # Clear timeout
-    clear_timeout()
-
-    # Now should use Python timeout
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(1)
-
-    start = time.time()
-    try:
-        s.connect(("10.255.255.1", 9999))
-        pytest.fail("Should have raised TimeoutError")
-    except TimeoutError:
-        elapsed = time.time() - start
-        # Should be around 1 second (Python timeout)
-        assert 0.5 <= elapsed <= 2.0, f"Expected ~1s, got {elapsed:.2f}s"
-    finally:
-        s.close()
-
-
-def test_connection_refused_fast():
-    setup_timeout(5, 5)
-
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(10)
-
-    start = time.time()
-    try:
-        s.connect(("127.0.0.1", 9999))  # Nothing listening on this port
-    except ConnectionRefusedError:
-        elapsed = time.time() - start
-        # Should be very fast (< 1 second)
-        assert elapsed < 1.0, f"Connection refused took too long: {elapsed:.2f}s"
-    except TimeoutError:
-        elapsed = time.time() - start
-        # If timeout kicks in first, still valid
-        assert elapsed >= 4.5, f"Timeout too early: {elapsed:.2f}s"
-    finally:
-        s.close()
-
-
-def test_zero_timeout_clears():
-    if not is_interceptor_loaded():
-        pytest.skip("Interceptor not loaded")
-
-    setup_timeout(3, 3)
-    setup_timeout(0, 0)  # Clear
-
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(1)
-
-    start = time.time()
-    try:
-        s.connect(("10.255.255.1", 9999))
-        pytest.fail("Should have raised TimeoutError")
-    except TimeoutError:
-        elapsed = time.time() - start
-        # Should use Python timeout (1s)
-        assert 0.5 <= elapsed <= 2.0, f"Expected ~1s (Python), got {elapsed:.2f}s"
-    finally:
-        s.close()
+        start = time.time()
+        try:
+            s.connect(("127.0.0.1", 9999))
+        except ConnectionRefusedError:
+            elapsed = time.time() - start
+            assert elapsed < 1.0, f"Connection refused took too long: {elapsed:.2f}s"
+        except TimeoutError:
+            elapsed = time.time() - start
+            assert elapsed >= 4.5, f"Timeout too early: {elapsed:.2f}s"
+        finally:
+            s.close()
 
 
 if __name__ == "__main__":
-    if not is_interceptor_loaded():
+    if not faultcore.is_interceptor_loaded():
+        import sys
+
         print("WARNING: Interceptor not loaded!")
         print("Run tests with:")
-        if sys.platform == "darwin":
-            lib = "DYLD_INSERT_LIBRARIES"
-            ext = "dylib"
-        else:
-            lib = "LD_PRELOAD"
-            ext = "so"
-        print(f"  {lib}=target/release/libfaultcore_interceptor.{ext} pytest tests/test_network_timeout.py")
+        print("  LD_PRELOAD=target/release/libfaultcore_interceptor.so pytest tests/test_network_timeout.py")
         sys.exit(1)
 
     pytest.main([__file__, "-v"])

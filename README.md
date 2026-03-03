@@ -157,7 +157,32 @@ See the [`examples/`](examples/) directory for more detailed usage:
 
 - **Python decorators** - User-facing API
 - **Rust core** - High-performance policy implementation using PyO3
-- **Interceptor** - Optional process-level network interception
+- **Interceptor** - Optional process-level network interception (Linux only)
+
+## Network Interceptor (Linux Only)
+
+The interceptor provides transparent network-level fault injection. It works at the OS level by intercepting socket calls.
+
+**Requirements:**
+- Linux only
+- Requires `LD_PRELOAD`
+
+**Usage:**
+```bash
+# Build the interceptor
+cargo build --package faultcore_interceptor --release
+
+# Run with interceptor
+LD_PRELOAD=target/release/libfaultcore_interceptor.so python your_script.py
+```
+
+The interceptor enables:
+- Network timeouts (connect, recv)
+- Latency injection
+- Packet loss simulation
+- Bandwidth throttling
+
+When interceptor is not available, use `@faultcore.timeout` decorator instead.
 
 ## License
 

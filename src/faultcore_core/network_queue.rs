@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use crate::shm;
+
 pub fn parse_size(s: &str) -> Option<u64> {
     let s = s.to_lowercase();
     if s.ends_with("kb") {
@@ -170,12 +172,18 @@ impl NetworkQueueCore {
             return Err(QueueError::FdLimitExceeded);
         }
 
-        let loss_encoded = (self.config.packet_loss_rate * 1000000.0) as i32;
-        let latency = self.config.latency_max_ms as u32;
-        unsafe {
-            libc::setpriority(0xFA, latency, loss_encoded);
-            libc::setpriority(0xFB, u32::MAX, self.config.rate as i32);
+        let latency_ms = self.config.latency_max_ms;
+        let packet_loss_ppm = (self.config.packet_loss_rate * 1_000_000.0) as u64;
+        let bandwidth_bps = self.config.rate as u64;
+
+        if !shm::is_shm_open() {
+            let pid = unsafe { libc::getpid() } as u32;
+            let _ = shm::create_shm(pid);
         }
+        let tid = shm::get_thread_id();
+        let _ = shm::write_latency(tid, latency_ms);
+        let _ = shm::write_packet_loss(tid, packet_loss_ppm);
+        let _ = shm::write_bandwidth(tid, bandwidth_bps);
 
         *fd_count += 1;
         let enqueued_at = Instant::now();
@@ -274,10 +282,8 @@ impl NetworkTicket {
             queue.len() as u64
         };
 
-        unsafe {
-            libc::setpriority(0xFA, 0, 0);
-            libc::setpriority(0xFB, 0, 0);
-        }
+        let tid = shm::get_thread_id();
+        let _ = shm::clear_config(tid);
 
         {
             let mut fd_count = self.fd_count.lock().unwrap();

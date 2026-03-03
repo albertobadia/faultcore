@@ -1,3 +1,6 @@
+import os
+from pathlib import Path
+
 from faultcore._faultcore import (
     CircuitBreakerPolicy as CircuitBreaker,
     ContextManager,
@@ -21,6 +24,22 @@ from faultcore.decorator import (
     timeout,
 )
 
+
+def is_interceptor_loaded() -> bool:
+    return "LD_PRELOAD" in os.environ
+
+
+def get_interceptor_path() -> str | None:
+    filename = "libfaultcore_interceptor.so"
+
+    for base in [Path.cwd(), Path(__file__).parent.parent]:
+        for subpath in ["", "target/release/", "target/debug/"]:
+            path = base / subpath / filename
+            if path.exists():
+                return str(path)
+    return None
+
+
 __all__ = [
     "Timeout",
     "Retry",
@@ -40,4 +59,5 @@ __all__ = [
     "circuit_breaker",
     "rate_limit",
     "network_queue",
+    "is_interceptor_loaded",
 ]

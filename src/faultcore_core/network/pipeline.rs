@@ -14,7 +14,6 @@ impl Pipeline {
         self.layers.push(layer);
     }
 
-    /// Process the context through all layers in order.
     pub fn process(&self, ctx: &mut PacketContext) -> LayerResult {
         for layer in &self.layers {
             match layer.process(ctx) {

@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-"""
-FaultCore Interceptor Integration Tests
-
-These tests verify the interceptor functionality in a Linux environment.
-They require the interceptor to be loaded via LD_PRELOAD.
-"""
 
 import ctypes
 import os
@@ -37,10 +31,7 @@ def setpriority(which, who, prio):
 
 
 class TestInterceptorLatency:
-    """Tests for latency injection"""
-
     def test_baseline_latency(self):
-        """Test baseline latency without interceptor"""
         latencies = []
 
         for _ in range(5):
@@ -58,7 +49,6 @@ class TestInterceptorLatency:
         assert avg_latency < 100, f"Baseline latency too high: {avg_latency}ms"
 
     def test_latency_injection(self):
-        """Test latency injection via setpriority magic values"""
         MAGIC_WHICH = 0xFA
         MAGIC_WHO = 100
         MAGIC_PRIO = 0
@@ -84,10 +74,7 @@ class TestInterceptorLatency:
 
 
 class TestInterceptorBandwidth:
-    """Tests for bandwidth throttling"""
-
     def test_baseline_bandwidth(self):
-        """Test baseline bandwidth without throttling"""
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(10.0)
         sock.connect((ECHO_SERVER_HOST, ECHO_SERVER_PORT))
@@ -107,7 +94,6 @@ class TestInterceptorBandwidth:
         assert bps > 100000, f"Baseline bandwidth too low: {bps} bps"
 
     def test_bandwidth_throttle(self):
-        """Test bandwidth throttling via setpriority magic values"""
         MAGIC_BANDWIDTH = 0xFB
         RATE_KBPS = 10
 
@@ -136,10 +122,7 @@ class TestInterceptorBandwidth:
 
 
 class TestInterceptorTimeout:
-    """Tests for timeout functionality"""
-
     def test_connect_timeout(self):
-        """Test connect timeout via setpriority magic values"""
         MAGIC_TIMEOUT = 0xFC
         CONNECT_TIMEOUT_MS = 2000
 
@@ -164,7 +147,6 @@ class TestInterceptorTimeout:
         )
 
     def test_recv_timeout(self):
-        """Test receive timeout via setpriority magic values"""
         MAGIC_TIMEOUT = 0xFC
         RECV_TIMEOUT_MS = 2000
 
@@ -193,10 +175,7 @@ class TestInterceptorTimeout:
 
 
 class TestInterceptorChaos:
-    """Tests for chaos injection (packet loss)"""
-
     def test_packet_loss(self):
-        """Test packet loss injection via setpriority magic values"""
         MAGIC_WHICH = 0xFA
         LATENCY_MS = 0
         PACKET_LOSS_PCT = 50
@@ -230,10 +209,7 @@ class TestInterceptorChaos:
 
 
 class TestHTTPIntegration:
-    """Tests for HTTP server integration"""
-
     def test_http_health(self):
-        """Test HTTP server health endpoint"""
         import urllib.request
 
         response = urllib.request.urlopen(f"http://{HTTP_SERVER_HOST}:{HTTP_SERVER_PORT}/health", timeout=5)
@@ -242,7 +218,6 @@ class TestHTTPIntegration:
         assert b"healthy" in data
 
     def test_http_echo(self):
-        """Test HTTP echo endpoint"""
         import urllib.request
 
         response = urllib.request.urlopen(f"http://{HTTP_SERVER_HOST}:{HTTP_SERVER_PORT}/echo/test_message", timeout=5)
@@ -251,7 +226,6 @@ class TestHTTPIntegration:
         assert b"test_message" in data
 
     def test_http_upload(self):
-        """Test HTTP upload endpoint"""
         import json
         import urllib.request
 

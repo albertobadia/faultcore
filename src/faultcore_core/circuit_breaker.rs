@@ -35,12 +35,19 @@ impl CircuitBreakerPolicy {
         self.state == CircuitState::Open
     }
 
-    pub fn can_attempt(&self) -> bool {
+    pub fn can_attempt(&mut self) -> bool {
         match self.state {
             CircuitState::Closed => true,
             CircuitState::Open => {
                 if let Some(last_time) = self.last_failure_time {
-                    last_time.elapsed() > self.timeout
+                    if last_time.elapsed() > self.timeout {
+                        self.state = CircuitState::HalfOpen;
+                        self.failure_count = 0;
+                        self.success_count = 0;
+                        true
+                    } else {
+                        false
+                    }
                 } else {
                     false
                 }
@@ -62,8 +69,15 @@ impl CircuitBreakerPolicy {
         self.failure_count += 1;
         self.last_failure_time = Some(Instant::now());
 
-        if self.failure_count >= self.failure_threshold {
-            self.state = CircuitState::Open;
+        match self.state {
+            CircuitState::HalfOpen => {
+                self.state = CircuitState::Open;
+            }
+            _ => {
+                if self.failure_count >= self.failure_threshold {
+                    self.state = CircuitState::Open;
+                }
+            }
         }
     }
 

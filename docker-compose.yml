@@ -49,13 +49,6 @@ services:
     image: faultcore/test-runner:latest
     container_name: faultcore-test-runner
     command: ["sh", "-c", "tail -f /dev/null"]
-    environment:
-      - LD_PRELOAD=/workspace/faultcore_interceptor/target/release/libfaultcore_interceptor.so
-    volumes:
-      - ./tests:/workspace/tests
-      - ./examples:/workspace/examples
-      - ./integration_tests:/workspace/integration_tests
-      - ./faultcore_interceptor:/workspace/faultcore_interceptor
     networks:
       - faultcore-net
     depends_on:

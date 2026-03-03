@@ -22,7 +22,7 @@ echo ""
 
 test_latency() {
     echo ">>> Testing Latency"
-    python3 "$PROJECT_DIR/integration_tests/clients/test_latency.py" \
+    python3 "$PROJECT_DIR/clients/test_latency.py" \
         --host "$ECHO_SERVER_HOST" \
         --port "$ECHO_SERVER_PORT" \
         --message "Test latency" \
@@ -32,7 +32,7 @@ test_latency() {
 
 test_bandwidth() {
     echo ">>> Testing Bandwidth"
-    python3 "$PROJECT_DIR/integration_tests/clients/test_bandwidth.py" \
+    python3 "$PROJECT_DIR/clients/test_bandwidth.py" \
         --host "$ECHO_SERVER_HOST" \
         --port "$ECHO_SERVER_PORT" \
         --mode send \
@@ -43,7 +43,7 @@ test_bandwidth() {
 
 test_throughput() {
     echo ">>> Testing Throughput"
-    python3 "$PROJECT_DIR/integration_tests/clients/test_bandwidth.py" \
+    python3 "$PROJECT_DIR/clients/test_bandwidth.py" \
         --host "$ECHO_SERVER_HOST" \
         --port "$ECHO_SERVER_PORT" \
         --mode throughput \
@@ -53,7 +53,7 @@ test_throughput() {
 
 test_timeout_connect() {
     echo ">>> Testing Connect Timeout"
-    python3 "$PROJECT_DIR/integration_tests/clients/test_timeout.py" \
+    python3 "$PROJECT_DIR/clients/test_timeout.py" \
         --host "$ECHO_SERVER_HOST" \
         --port "$ECHO_SERVER_PORT" \
         --mode connect \
@@ -63,7 +63,7 @@ test_timeout_connect() {
 
 test_timeout_recv() {
     echo ">>> Testing Receive Timeout"
-    python3 "$PROJECT_DIR/integration_tests/clients/test_timeout.py" \
+    python3 "$PROJECT_DIR/clients/test_timeout.py" \
         --host "$ECHO_SERVER_HOST" \
         --port "$ECHO_SERVER_PORT" \
         --mode recv \
@@ -97,13 +97,13 @@ if [ "${1:-}" = "--with-servers" ]; then
     echo "Starting test servers..."
     
     echo "Starting TCP Echo Server..."
-    python3 "$PROJECT_DIR/integration_tests/servers/tcp_echo_server.py" \
+    python3 "$PROJECT_DIR/servers/tcp_echo_server.py" \
         --host "0.0.0.0" \
         --port 9000 &
     ECHO_PID=$!
     
     echo "Starting HTTP Server..."
-    python3 "$PROJECT_DIR/integration_tests/servers/http_server.py" &
+    python3 "$PROJECT_DIR/servers/http_server.py" &
     HTTP_PID=$!
     
     sleep 2
