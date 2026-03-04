@@ -4,6 +4,7 @@ pub mod network;
 mod network_queue;
 mod policies;
 mod rate_limit;
+mod registry;
 mod retry;
 mod shm;
 mod timeout;
@@ -22,6 +23,8 @@ pub use policies::{
     CircuitBreakerPolicy, FallbackPolicy, NetworkQueuePolicy, RateLimitPolicy, RetryPolicy,
     TimeoutPolicy,
 };
+
+pub use registry::PolicyRegistry;
 
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
@@ -102,6 +105,7 @@ fn _faultcore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<NetworkQueuePolicy>()?;
     m.add_class::<ContextManager>()?;
     m.add_class::<feature_flag::FeatureFlagManager>()?;
+    m.add_class::<registry::PolicyRegistry>()?;
 
     Ok(())
 }

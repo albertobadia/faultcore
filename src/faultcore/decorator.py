@@ -153,7 +153,6 @@ def _wrap_async_network_queue(policy, func):
             raise ticket_info
 
         latency_ms = ticket_info.get("latency_ms", 0)
-        _ = ticket_info.get("rate", 0)
 
         policy._enter_thread_context()
 
@@ -174,7 +173,6 @@ def _make_wrapper(policy, func, retry_max_retries=None, retry_backoff_ms=None, r
     if _is_async(func):
         if retry_max_retries is not None:
             return _wrap_retry_async(retry_max_retries, retry_backoff_ms, retry_retry_on, func)
-        # Special handling for NetworkQueuePolicy with async functions
         if hasattr(policy, "_prepare_async_ticket"):
             return _wrap_async_network_queue(policy, func)
         return _wrap_async(policy, func)
@@ -307,3 +305,61 @@ class _DynamicPolicyWrapper:
 
     def __get__(self, obj, objtype=None):
         return self
+
+
+def fault(policy_name: str):
+    """Decorator that applies a policy from the PolicyRegistry."""
+    from faultcore._faultcore import PolicyRegistry
+
+    registry = PolicyRegistry()
+
+    def decorator(func):
+        if _is_async(func):
+            return _FaultAsyncWrapper(func, policy_name, registry)
+        return _FaultSyncWrapper(func, policy_name, registry)
+
+    return decorator
+
+
+class _FaultSyncWrapper:
+    def __init__(self, func, policy_name, registry):
+        self._func = func
+        self._policy_name = policy_name
+        self._registry = registry
+
+    def __call__(self, *args, **kwargs):
+        policy = self._registry.get_policy(self._policy_name)
+        if policy is None:
+            return self._func(*args, **kwargs)
+
+        policy_lock = policy
+        with policy_lock as p:
+            if not p.enabled:
+                return self._func(*args, **kwargs)
+
+        return self._func(*args, **kwargs)
+
+    def __repr__(self):
+        return f"<FaultSyncWrapper({self._policy_name}) for {self._func}>"
+
+
+class _FaultAsyncWrapper:
+    def __init__(self, func, policy_name, registry):
+        self._func = func
+        self._policy_name = policy_name
+        self._registry = registry
+
+    async def __call__(self, *args, **kwargs):
+        policy = self._registry.get_policy(self._policy_name)
+        if policy is None:
+            return await self._func(*args, **kwargs)
+
+        policy_lock = policy
+        with policy_lock as p:
+            if not p.enabled:
+                return await self._func(*args, **kwargs)
+
+        return await self._func(*args, **kwargs)
+
+    def __repr__(self):
+        return f"<FaultAsyncWrapper({self._policy_name}) for {self._func}>"
