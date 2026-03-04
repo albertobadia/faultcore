@@ -167,7 +167,6 @@ pub fn get_config_for_fd(fd: c_int) -> Option<FaultcoreConfig> {
     None
 }
 
-#[allow(clippy::collapsible_if)]
 pub fn assign_rule_to_fd(fd: c_int, tid: usize) {
     if fd < 0 {
         return;
@@ -175,10 +174,10 @@ pub fn assign_rule_to_fd(fd: c_int, tid: usize) {
     unsafe {
         if let Some(tid_ptr) = get_config_ptr(tid, true) {
             let tid_cfg = tid_ptr.read();
-            if tid_cfg.is_valid() {
-                if let Some(fd_ptr) = get_config_ptr(fd as usize, false) {
-                    fd_ptr.write(tid_cfg);
-                }
+            if tid_cfg.is_valid()
+                && let Some(fd_ptr) = get_config_ptr(fd as usize, false)
+            {
+                fd_ptr.write(tid_cfg);
             }
         }
     }

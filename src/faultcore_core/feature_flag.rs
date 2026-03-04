@@ -1,10 +1,9 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
 
-#[allow(deprecated)]
 #[derive(Clone)]
 pub struct PolicyBundle {
     pub timeout_ms: Option<u64>,
@@ -20,22 +19,6 @@ pub struct PolicyBundle {
 }
 
 impl PolicyBundle {
-    #[allow(dead_code)]
-    fn new() -> Self {
-        Self {
-            timeout_ms: None,
-            retry_max_retries: None,
-            retry_backoff_ms: None,
-            retry_on: None,
-            circuit_breaker_failure_threshold: None,
-            circuit_breaker_success_threshold: None,
-            circuit_breaker_timeout_ms: None,
-            rate_limit_rate: None,
-            rate_limit_capacity: None,
-            enabled: Arc::new(AtomicBool::new(true)),
-        }
-    }
-
     fn is_enabled(&self) -> bool {
         self.enabled.load(Ordering::SeqCst)
     }
@@ -200,15 +183,14 @@ impl FeatureFlagManager {
         }
     }
 
-    #[allow(deprecated)]
-    fn get(&self, key: String) -> PyResult<Option<Py<PyDict>>> {
+    fn get(&self, key: String) -> PyResult<Option<Py<PyAny>>> {
         let bundles = self
             .bundles
             .lock()
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
         if let Some(bundle) = bundles.get(&key) {
-            let dict: Py<PyDict> = Python::with_gil(|py| {
+            let dict: Py<PyAny> = Python::attach(|py| {
                 let dict = pyo3::types::PyDict::new(py);
                 if let Some(v) = bundle.timeout_ms {
                     dict.set_item("timeout_ms", v).unwrap();
@@ -240,7 +222,7 @@ impl FeatureFlagManager {
                     dict.set_item("rate_limit_capacity", v).unwrap();
                 }
                 dict.set_item("enabled", bundle.is_enabled()).unwrap();
-                dict.into()
+                dict.into_py_any(py).unwrap()
             });
             Ok(Some(dict))
         } else {

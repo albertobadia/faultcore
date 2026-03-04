@@ -87,6 +87,18 @@ lazy_static::lazy_static! {
         libc::pthread_key_create(&mut key, None);
         key
     };
+    static ref DEFAULT_CONNECT_TIMEOUT_MS: u64 = {
+        std::env::var("FAULTCORE_DEFAULT_CONNECT_TIMEOUT_MS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(5000)  // Default 5 seconds if not set
+    };
+    static ref DEFAULT_RECV_TIMEOUT_MS: u64 = {
+        std::env::var("FAULTCORE_DEFAULT_RECV_TIMEOUT_MS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(5000)  // Default 5 seconds if not set
+    };
 }
 
 fn enter_hook() -> bool {
@@ -240,7 +252,16 @@ const POLLNVAL: c_short = 0x0020;
 fn apply_timeout_connect(sock: c_int, addr: *const sockaddr, len: socklen_t) -> Option<c_int> {
     let timeout_ms = TIMEOUT_STATE
         .with(|t| t.borrow().map(|state| state.connect_timeout_ms))
-        .or_else(|| shm::get_config_for_fd(sock).map(|c| c.connect_timeout_ms))?;
+        .or_else(|| shm::get_config_for_fd(sock).map(|c| c.connect_timeout_ms))
+        .unwrap_or_else(|| {
+            if !shm::is_shm_open() {
+                shm_error!(
+                    "SHM not available, using default connect timeout: {}ms",
+                    *DEFAULT_CONNECT_TIMEOUT_MS
+                );
+            }
+            *DEFAULT_CONNECT_TIMEOUT_MS
+        });
 
     if timeout_ms > 0 && !addr.is_null() && len > 0 {
         unsafe {
@@ -284,7 +305,16 @@ fn apply_timeout_connect(sock: c_int, addr: *const sockaddr, len: socklen_t) -> 
 fn apply_timeout_recv(sock: c_int) -> Option<isize> {
     let timeout_ms = TIMEOUT_STATE
         .with(|t| t.borrow().map(|state| state.recv_timeout_ms))
-        .or_else(|| shm::get_config_for_fd(sock).map(|c| c.recv_timeout_ms))?;
+        .or_else(|| shm::get_config_for_fd(sock).map(|c| c.recv_timeout_ms))
+        .unwrap_or_else(|| {
+            if !shm::is_shm_open() {
+                shm_error!(
+                    "SHM not available, using default recv timeout: {}ms",
+                    *DEFAULT_RECV_TIMEOUT_MS
+                );
+            }
+            *DEFAULT_RECV_TIMEOUT_MS
+        });
 
     if timeout_ms > 0 {
         unsafe {

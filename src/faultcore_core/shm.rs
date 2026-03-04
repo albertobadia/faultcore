@@ -6,8 +6,6 @@ pub fn get_thread_id() -> u64 {
 }
 
 pub const FAULTCORE_MAGIC: u32 = 0xFACC0DE;
-// To support FDs up to 65536 and 1024 TIDs.
-// Size needed: (65536 + 1024) * sizeof(FaultcoreConfig) = ~3MB
 pub const MAX_FDS: usize = 65536;
 pub const MAX_TIDS: usize = 1024;
 pub const FAULTCORE_SHM_SIZE: usize = (MAX_FDS + MAX_TIDS) * std::mem::size_of::<FaultcoreConfig>();
@@ -36,12 +34,11 @@ fn get_shm_name(pid: u32) -> String {
     format!("{}/faultcore_{}_config", get_shm_prefix(), pid)
 }
 
-#[allow(clippy::collapsible_if)]
 pub fn get_shm_name_env() -> String {
-    if let Ok(name) = std::env::var("FAULTCORE_CONFIG_SHM") {
-        if !name.is_empty() {
-            return name;
-        }
+    if let Ok(name) = std::env::var("FAULTCORE_CONFIG_SHM")
+        && !name.is_empty()
+    {
+        return name;
     }
     get_shm_name(unsafe { libc::getpid() } as u32)
 }
@@ -86,7 +83,6 @@ pub fn create_shm(_pid: u32) -> Result<(), String> {
             ));
         }
 
-        // Initialize the memory
         std::ptr::write_bytes(addr as *mut u8, 0, FAULTCORE_SHM_SIZE);
 
         SHM_POINTER.store(addr as usize, Ordering::SeqCst);
@@ -100,9 +96,6 @@ pub fn is_shm_open() -> bool {
     SHM_OPEN.load(Ordering::SeqCst)
 }
 
-// Memory layout:
-// [0 .. MAX_FDS]: FD array
-// [MAX_FDS .. MAX_FDS + MAX_TIDS]: TID array
 unsafe fn get_config_ptr(tid_or_fd: usize, is_tid: bool) -> Option<*mut FaultcoreConfig> {
     let base_ptr = SHM_POINTER.load(Ordering::SeqCst);
     if base_ptr == 0 {
@@ -113,7 +106,7 @@ unsafe fn get_config_ptr(tid_or_fd: usize, is_tid: bool) -> Option<*mut Faultcor
         MAX_FDS + (tid_or_fd % MAX_TIDS)
     } else {
         if tid_or_fd >= MAX_FDS {
-            return None; // Exceeds array size
+            return None;
         }
         tid_or_fd
     };
@@ -185,7 +178,7 @@ pub fn clear_config(tid: u64) -> Result<(), String> {
     unsafe {
         if let Some(config_ptr) = get_config_ptr(tid as usize, true) {
             let mut cfg = config_ptr.read();
-            cfg.magic = 0; // Invalidate magic to mark as empty
+            cfg.magic = 0;
             cfg.latency_ns = 0;
             cfg.packet_loss_ppm = 0;
             cfg.bandwidth_bps = 0;
@@ -195,7 +188,6 @@ pub fn clear_config(tid: u64) -> Result<(), String> {
             config_ptr.write(cfg);
             Ok(())
         } else {
-            // Already 0 or not open
             Ok(())
         }
     }

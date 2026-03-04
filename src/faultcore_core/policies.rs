@@ -1,3 +1,4 @@
+use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
@@ -173,7 +174,6 @@ impl FallbackPolicy {
 
 #[pyclass]
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct CircuitBreakerPolicy {
     core: CircuitBreakerCore,
 }
@@ -357,7 +357,6 @@ impl NetworkQueuePolicy {
             })
     }
 
-    #[allow(clippy::collapsible_else_if)]
     fn __call__(
         &self,
         py: Python,
@@ -365,7 +364,7 @@ impl NetworkQueuePolicy {
         args: &Bound<'_, PyTuple>,
         kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Py<PyAny>> {
-        let core = self.core.clone();
+        let core = &self.core;
 
         if core.config.strategy == QueueStrategy::Wait {
             while !core.try_acquire() {
@@ -420,10 +419,9 @@ impl NetworkQueuePolicy {
         self.core.queue_size()
     }
 
-    #[allow(deprecated)]
     fn get_stats(&self) -> Py<PyAny> {
         let stats = self.core.stats();
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let dict = pyo3::types::PyDict::new(py);
             dict.set_item("enqueued", stats.enqueued).unwrap();
             dict.set_item("dequeued", stats.dequeued).unwrap();
@@ -431,7 +429,7 @@ impl NetworkQueuePolicy {
             dict.set_item("dropped", stats.dropped).unwrap();
             dict.set_item("current_queue_size", stats.current_queue_size)
                 .unwrap();
-            dict.into()
+            dict.into_py_any(py).unwrap()
         })
     }
 
@@ -453,6 +451,57 @@ impl NetworkQueuePolicy {
     fn _exit_thread_context(&self) {
         let tid = shm::get_thread_id();
         let _ = shm::clear_config(tid);
+    }
+
+    fn _get_latency_ms(&self) -> u64 {
+        self.core.config.latency_min_ms
+    }
+
+    fn _get_rate(&self) -> f64 {
+        self.core.config.rate
+    }
+
+    fn _get_packet_loss(&self) -> f64 {
+        self.core.config.packet_loss_rate
+    }
+
+    fn _prepare_async_ticket(&self) -> PyResult<Py<PyAny>> {
+        let core = &self.core;
+
+        if core.config.strategy == QueueStrategy::Wait {
+            while !core.try_acquire() {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        } else if !core.try_acquire() {
+            return Err(pyo3::exceptions::PyResourceWarning::new_err(
+                "Network rate limit exceeded",
+            ));
+        }
+
+        let ticket = core.enqueue();
+
+        match ticket {
+            Ok(ticket) => Ok(Python::attach(|py| {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("latency_ms", ticket.latency_ms).unwrap();
+                dict.set_item("rate", ticket.rate).unwrap();
+                dict.set_item("strategy", format!("{:?}", ticket.strategy))
+                    .unwrap();
+                dict.into_py_any(py).unwrap()
+            })),
+            Err(QueueError::QueueFull) => Err(pyo3::exceptions::PyResourceWarning::new_err(
+                "Network queue is full",
+            )),
+            Err(QueueError::FdLimitExceeded) => Err(pyo3::exceptions::PyResourceWarning::new_err(
+                "File descriptor limit exceeded",
+            )),
+            Err(QueueError::PacketDropped) => Err(pyo3::exceptions::PyConnectionError::new_err(
+                "Packet dropped by network simulation",
+            )),
+            Err(QueueError::Timeout) => Err(pyo3::exceptions::PyTimeoutError::new_err(
+                "Queue operation timed out",
+            )),
+        }
     }
 
     fn __repr__(&self) -> String {

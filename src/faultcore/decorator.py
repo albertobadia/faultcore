@@ -63,9 +63,10 @@ def _wrap_retry_async(max_retries, backoff_ms, retry_on, func):
 
 
 class AsyncChaosWrapper:
-    def __init__(self, coro, policy):
+    def __init__(self, coro, policy, ticket=None):
         self.coro = coro
         self.policy = policy
+        self.ticket = ticket
         self._entered = False
         self._has_context = hasattr(policy, "_enter_thread_context") and hasattr(policy, "_exit_thread_context")
 
@@ -101,6 +102,16 @@ class AsyncChaosWrapper:
             self._exit_context()
             raise
 
+    async def _apply_latency_async(self):
+        if self.ticket is not None:
+            latency_ms = getattr(self.ticket, "latency_ms", 0)
+            if latency_ms and latency_ms > 0:
+                await asyncio.sleep(latency_ms / 1000.0)
+                if hasattr(self.ticket, "_release_async"):
+                    await self.ticket._release_async()
+                elif hasattr(self.ticket, "wait_and_release"):
+                    self.ticket.wait_and_release()
+
     def throw(self, typ, val=None, tb=None):
         self._enter_context()
         try:
@@ -123,7 +134,38 @@ def _wrap_async(policy, func):
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
         coro = func(*args, **kwargs)
-        return await AsyncChaosWrapper(coro, policy)
+
+        ticket = None
+        if hasattr(policy, "_get_async_ticket"):
+            ticket = policy._get_async_ticket()
+
+        return await AsyncChaosWrapper(coro, policy, ticket)
+
+    return wrapper
+
+
+def _wrap_async_network_queue(policy, func):
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs):
+        ticket_info = policy._prepare_async_ticket()
+
+        if isinstance(ticket_info, Exception):
+            raise ticket_info
+
+        latency_ms = ticket_info.get("latency_ms", 0)
+        _ = ticket_info.get("rate", 0)
+
+        policy._enter_thread_context()
+
+        try:
+            result = await func(*args, **kwargs)
+
+            if latency_ms > 0:
+                await asyncio.sleep(latency_ms / 1000.0)
+
+            return result
+        finally:
+            policy._exit_thread_context()
 
     return wrapper
 
@@ -132,6 +174,9 @@ def _make_wrapper(policy, func, retry_max_retries=None, retry_backoff_ms=None, r
     if _is_async(func):
         if retry_max_retries is not None:
             return _wrap_retry_async(retry_max_retries, retry_backoff_ms, retry_retry_on, func)
+        # Special handling for NetworkQueuePolicy with async functions
+        if hasattr(policy, "_prepare_async_ticket"):
+            return _wrap_async_network_queue(policy, func)
         return _wrap_async(policy, func)
     return _wrap_sync(policy, func)
 

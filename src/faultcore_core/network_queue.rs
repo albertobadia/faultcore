@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -111,11 +110,7 @@ pub struct NetworkQueueCore {
 }
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
-struct QueueEntry {
-    enqueued_at: Instant,
-    data: Option<Vec<u8>>,
-}
+pub struct QueueEntry {}
 
 #[derive(Clone, Debug, Default)]
 pub struct QueueStats {
@@ -201,10 +196,7 @@ impl NetworkQueueCore {
         *fd_count += 1;
         let enqueued_at = Instant::now();
 
-        queue.push(QueueEntry {
-            enqueued_at,
-            data: None,
-        });
+        queue.push(QueueEntry {});
 
         stats.enqueued += 1;
         stats.current_queue_size = queue.len() as u64;
@@ -251,15 +243,14 @@ impl NetworkQueueCore {
     }
 }
 
-#[allow(dead_code)]
 pub struct NetworkTicket {
-    queue: Arc<Mutex<Vec<QueueEntry>>>,
-    fd_count: Arc<Mutex<u64>>,
-    stats: Arc<Mutex<QueueStats>>,
-    enqueued_at: Instant,
-    latency_ms: u64,
-    strategy: QueueStrategy,
-    rate: f64,
+    pub queue: Arc<Mutex<Vec<QueueEntry>>>,
+    pub fd_count: Arc<Mutex<u64>>,
+    pub stats: Arc<Mutex<QueueStats>>,
+    pub enqueued_at: Instant,
+    pub latency_ms: u64,
+    pub strategy: QueueStrategy,
+    pub rate: f64,
 }
 
 impl NetworkTicket {
@@ -331,6 +322,3 @@ impl std::fmt::Display for QueueError {
 }
 
 impl std::error::Error for QueueError {}
-
-#[allow(dead_code)]
-pub type NetworkQueueMap = HashMap<String, Arc<Mutex<Option<NetworkQueueCore>>>>;
