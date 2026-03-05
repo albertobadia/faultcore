@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use crate::registry::context::CallContext;
 use crate::registry::layers::circuit_breaker::CircuitBreakerLayer;
+use crate::registry::layers::fallback::FallbackLayer;
 use crate::registry::layers::rate_limit::RateLimitQosLayer;
 use crate::registry::layers::retry::RetryTransportLayer;
 use crate::registry::layers::timeout::TimeoutLayer;
@@ -201,6 +202,28 @@ impl PolicyRegistry {
         self._get_thread_policy()
     }
 
+    fn execute_policy(&self, py: Python<'_>, name: String, func: Py<PyAny>) -> PyResult<Py<PyAny>> {
+        let policy = self.get_or_create(&name);
+        let p = policy.read().unwrap();
+        p.execute(&CallContext::default(), func, py)
+    }
+
+    fn execute_policy_with_fallback(
+        &self,
+        py: Python<'_>,
+        name: String,
+        func: Py<PyAny>,
+        _fallback: Py<PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        let policy = self.get_or_create(&name);
+        let p = policy.read().unwrap();
+        let ctx = CallContext {
+            fallback_func: Some(_fallback),
+            ..Default::default()
+        };
+        p.execute(&ctx, func, py)
+    }
+
     fn add_rule(
         &self,
         policy_name: String,
@@ -355,6 +378,16 @@ impl PolicyRegistry {
         Ok(())
     }
 
+    fn register_fallback_layer(&self, policy_name: &str, fallback_func: Py<PyAny>) -> PyResult<()> {
+        let policy = self.create_fresh(policy_name);
+        let mut p = policy
+            .write()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        p.add_transport_layer(Arc::new(FallbackLayer { fallback_func }));
+        Ok(())
+    }
+
     fn register_circuit_breaker_layer(
         &self,
         policy_name: &str,
@@ -367,7 +400,7 @@ impl PolicyRegistry {
             .write()
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        use crate::circuit_breaker::CircuitBreakerPolicy as CircuitBreakerCore;
+        use crate::policies::circuit_breaker::CircuitBreakerPolicy as CircuitBreakerCore;
         let core = Arc::new(RwLock::new(CircuitBreakerCore::new(
             failure_threshold,
             success_threshold,

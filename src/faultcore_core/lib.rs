@@ -1,30 +1,23 @@
-mod circuit_breaker;
-mod context;
+pub mod features;
 pub mod network;
-mod network_queue;
-mod policies;
-mod rate_limit;
-mod registry;
-mod retry;
-mod shm;
-mod timeout;
+pub mod policies;
+pub mod registry;
+pub mod system;
 
-mod feature_flag;
-pub use feature_flag::FeatureFlagManager;
+pub use features::flag::FeatureFlagManager;
+pub use network::queue::{NetworkQueueCore as NetworkQueueCoreInner, QueueError, QueueStats};
+pub use policies::circuit_breaker::{CircuitBreakerPolicy as CircuitBreakerCore, CircuitState};
+pub use policies::rate_limit::RateLimitPolicy as RateLimitCore;
+pub use policies::retry::{ErrorClass, RetryPolicy as RetryCore};
+pub use policies::timeout::TimeoutPolicy as TimeoutCore;
 
-pub use circuit_breaker::{CircuitBreakerPolicy as CircuitBreakerCore, CircuitState};
-pub use network_queue::{NetworkQueueCore as NetworkQueueCoreInner, QueueError, QueueStats};
-pub use rate_limit::RateLimitPolicy as RateLimitCore;
-pub use retry::{ErrorClass, RetryPolicy as RetryCore};
-pub use timeout::TimeoutPolicy as TimeoutCore;
-
-pub use context::ContextManager;
 pub use policies::{
     CircuitBreakerPolicy, FallbackPolicy, NetworkQueuePolicy, RateLimitPolicy, RetryPolicy,
     TimeoutPolicy,
 };
 
 pub use registry::PolicyRegistry;
+pub use system::context::ContextManager;
 
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
@@ -64,34 +57,34 @@ fn classify_exception(exc: &Bound<'_, PyAny>) -> String {
 
 #[pyfunction]
 fn add_keys(keys: Vec<String>) {
-    context::add_context_keys(keys);
+    system::context::add_context_keys(keys);
 }
 
 #[pyfunction]
 fn get_keys() -> Vec<String> {
-    context::get_context_keys()
+    system::context::get_context_keys()
 }
 
 #[pyfunction]
 fn remove_key(key: String) -> bool {
-    context::remove_context_key(&key)
+    system::context::remove_context_key(&key)
 }
 
 #[pyfunction]
 fn clear_keys() {
-    context::clear_context_keys();
+    system::context::clear_context_keys();
 }
 
 #[pyfunction]
 fn get_feature_flag_manager(py: Python<'_>) -> PyResult<Py<PyAny>> {
-    let manager = feature_flag::get_feature_flag_manager();
+    let manager = features::flag::get_feature_flag_manager();
     manager.clone().into_py_any(py)
 }
 
 #[pyfunction]
 fn get_policy_registry(py: Python<'_>) -> PyResult<Py<registry::PolicyRegistry>> {
-    let registry = registry::get_policy_registry();
-    Py::new(py, registry.clone())
+    let registry = crate::registry::get_policy_registry();
+    Py::new(py, (*registry).clone())
 }
 
 #[pyfunction]
@@ -117,7 +110,7 @@ fn _faultcore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RateLimitPolicy>()?;
     m.add_class::<NetworkQueuePolicy>()?;
     m.add_class::<ContextManager>()?;
-    m.add_class::<feature_flag::FeatureFlagManager>()?;
+    m.add_class::<features::flag::FeatureFlagManager>()?;
     m.add_class::<registry::PolicyRegistry>()?;
 
     Ok(())

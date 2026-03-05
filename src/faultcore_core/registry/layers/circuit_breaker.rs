@@ -1,4 +1,4 @@
-use crate::circuit_breaker::CircuitBreakerPolicy as CircuitBreakerCore;
+use crate::policies::circuit_breaker::CircuitBreakerPolicy as CircuitBreakerCore;
 use crate::registry::context::{CallContext, PolicyResult};
 use crate::registry::layer::{Next, TransportLayer};
 use std::sync::{Arc, RwLock};

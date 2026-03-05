@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::shm;
+use crate::system::shm;
 
 pub fn parse_size(s: &str) -> Option<u64> {
     let s = s.to_lowercase();

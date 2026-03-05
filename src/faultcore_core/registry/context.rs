@@ -4,7 +4,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Clone, Debug)]
 pub struct CallContext {
     pub function_name: String,
     pub thread_id: u64,
@@ -13,6 +12,40 @@ pub struct CallContext {
     pub path: Option<String>,
     pub method: Option<String>,
     pub headers: HashMap<String, String>,
+    pub fallback_func: Option<pyo3::Py<pyo3::PyAny>>,
+}
+
+impl Clone for CallContext {
+    fn clone(&self) -> Self {
+        Python::attach(|py| Self {
+            function_name: self.function_name.clone(),
+            thread_id: self.thread_id,
+            call_id: self.call_id,
+            host: self.host.clone(),
+            path: self.path.clone(),
+            method: self.method.clone(),
+            headers: self.headers.clone(),
+            fallback_func: self.fallback_func.as_ref().map(|f| f.clone_ref(py)),
+        })
+    }
+}
+
+impl std::fmt::Debug for CallContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CallContext")
+            .field("function_name", &self.function_name)
+            .field("thread_id", &self.thread_id)
+            .field("call_id", &self.call_id)
+            .field("host", &self.host)
+            .field("path", &self.path)
+            .field("method", &self.method)
+            .field("headers", &self.headers)
+            .field(
+                "fallback_func",
+                &self.fallback_func.as_ref().map(|_| "Py<PyAny>"),
+            )
+            .finish()
+    }
 }
 
 impl CallContext {
@@ -27,7 +60,14 @@ impl CallContext {
             path: None,
             method: None,
             headers: HashMap::new(),
+            fallback_func: None,
         }
+    }
+}
+
+impl Default for CallContext {
+    fn default() -> Self {
+        Self::new("unknown".to_string())
     }
 }
 

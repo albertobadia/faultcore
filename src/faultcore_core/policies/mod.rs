@@ -1,17 +1,22 @@
+pub mod circuit_breaker;
+pub mod rate_limit;
+pub mod retry;
+pub mod timeout;
+
 use std::sync::{Arc, RwLock};
 
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
-use crate::circuit_breaker::{CircuitBreakerPolicy as CircuitBreakerCore, CircuitState};
-use crate::network_queue::{
+use crate::network::queue::{
     NetworkQueueConfig, NetworkQueueCore as NetworkQueueCoreInner, QueueError, QueueStrategy,
 };
-use crate::rate_limit::RateLimitPolicy as RateLimitCore;
-use crate::retry::{ErrorClass, RetryPolicy as RetryCore};
-use crate::shm;
-use crate::timeout::TimeoutPolicy as TimeoutCore;
+use crate::policies::circuit_breaker::{CircuitBreakerPolicy as CircuitBreakerCore, CircuitState};
+use crate::policies::rate_limit::RateLimitPolicy as RateLimitCore;
+use crate::policies::retry::{ErrorClass, RetryPolicy as RetryCore};
+use crate::policies::timeout::TimeoutPolicy as TimeoutCore;
+use crate::system::shm;
 
 #[pyclass]
 #[derive(Clone)]
@@ -325,7 +330,7 @@ impl NetworkQueuePolicy {
         fd_limit: u64,
     ) -> PyResult<Self> {
         let rate_val = if let Ok(s) = rate.extract::<String>() {
-            crate::network_queue::parse_rate(&s).ok_or_else(|| {
+            crate::network::queue::parse_rate(&s).ok_or_else(|| {
                 pyo3::exceptions::PyValueError::new_err(format!("Invalid rate format: {}", s))
             })?
         } else {
@@ -333,7 +338,7 @@ impl NetworkQueuePolicy {
         };
 
         let cap_val = if let Ok(s) = capacity.extract::<String>() {
-            crate::network_queue::parse_size(&s).ok_or_else(|| {
+            crate::network::queue::parse_size(&s).ok_or_else(|| {
                 pyo3::exceptions::PyValueError::new_err(format!("Invalid capacity format: {}", s))
             })?
         } else {

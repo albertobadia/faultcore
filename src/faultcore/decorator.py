@@ -59,8 +59,6 @@ def timeout(timeout_ms: int):
         func_id = id(func)
         policy_name = f"_timeout_{func_id}"
         registry.register_timeout_layer(policy_name, timeout_ms)
-        if _is_async(func):
-            return _FaultWrapper(func, policy_name, registry)
         return _FaultWrapper(func, policy_name, registry)
 
     return decorator
@@ -293,14 +291,40 @@ class _FaultFallbackWrapper:
         if self._is_async:
             return self._async_call(*args, **kwargs)
 
+        def fallback_closure(**extra_kwargs):
+            # Try original args + original kwargs
+            try:
+                return self._fallback_func(*args, **kwargs)
+            except Exception:
+                pass
+            
+            # Try everything
+            full_kwargs = {**kwargs, **extra_kwargs}
+            try:
+                return self._fallback_func(*args, **full_kwargs)
+            except TypeError:
+                pass
+            
+            # Just exception
+            if "exception" in extra_kwargs:
+                try:
+                    return self._fallback_func(extra_kwargs["exception"])
+                except TypeError:
+                    pass
+            
+            # Nothing
+            try:
+                return self._fallback_func()
+            except TypeError:
+                pass
+            
+            # Final attempt
+            return self._fallback_func(*args, **full_kwargs)
+
         if self._policy_name == "auto" or not self._policy_name:
 
             def func_to_call():
                 return self._func(*args, **kwargs)
-
-            def fallback_closure(**extra_kwargs):
-                merged_kwargs = {**kwargs, **extra_kwargs}
-                return self._fallback_func(*args, **merged_kwargs)
 
             return self._registry.execute_policy_with_fallback(self._policy_name, func_to_call, fallback_closure)
 
@@ -310,22 +334,43 @@ class _FaultFallbackWrapper:
         def func_to_call():
             return self._func(*args, **kwargs)
 
-        def fallback_closure(**extra_kwargs):
-            # extra_kwargs may include 'exception' injected by FallbackTransportLayer on retry
-            merged_kwargs = {**kwargs, **extra_kwargs}
-            return self._fallback_func(*args, **merged_kwargs)
-
         return self._registry.execute_policy_with_fallback(self._policy_name, func_to_call, fallback_closure)
 
     async def _async_call(self, *args, **kwargs):
+        def fallback_closure(**extra_kwargs):
+            # Try original args + original kwargs
+            try:
+                return self._fallback_func(*args, **kwargs)
+            except Exception:
+                pass
+            
+            # Try everything
+            full_kwargs = {**kwargs, **extra_kwargs}
+            try:
+                return self._fallback_func(*args, **full_kwargs)
+            except TypeError:
+                pass
+            
+            # Just exception
+            if "exception" in extra_kwargs:
+                try:
+                    return self._fallback_func(extra_kwargs["exception"])
+                except TypeError:
+                    pass
+            
+            # Nothing
+            try:
+                return self._fallback_func()
+            except TypeError:
+                pass
+            
+            # Final attempt
+            return self._fallback_func(*args, **full_kwargs)
+
         if self._policy_name == "auto" or not self._policy_name:
 
             def func_to_call():
                 return self._func(*args, **kwargs)
-
-            def fallback_closure(**extra_kwargs):
-                merged_kwargs = {**kwargs, **extra_kwargs}
-                return self._fallback_func(*args, **merged_kwargs)
 
             return await self._registry.execute_policy_with_fallback(self._policy_name, func_to_call, fallback_closure)
 
@@ -334,11 +379,6 @@ class _FaultFallbackWrapper:
 
         def func_to_call():
             return self._func(*args, **kwargs)
-
-        def fallback_closure(**extra_kwargs):
-            # extra_kwargs may include 'exception' injected by FallbackTransportLayer on retry
-            merged_kwargs = {**kwargs, **extra_kwargs}
-            return self._fallback_func(*args, **merged_kwargs)
 
         return await self._registry.execute_policy_with_fallback(self._policy_name, func_to_call, fallback_closure)
 
