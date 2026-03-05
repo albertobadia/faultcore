@@ -1,9 +1,16 @@
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+
+use crate::circuit_breaker::CircuitBreakerPolicy as CircuitBreakerCore;
+
+thread_local! {
+    static FALLBACK_FN: RefCell<Option<Py<PyAny>>> = const { RefCell::new(None) };
+}
 
 static CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -352,6 +359,20 @@ impl PolicyRegistry {
         policy
     }
 
+    /// Always creates a fresh policy, replacing any existing one.
+    /// Used by decorator register_*_layer methods to avoid layer accumulation
+    /// when Python reuses memory addresses (id(func)) between test runs.
+    pub fn create_fresh(&self, name: &str) -> Arc<RwLock<Policy>> {
+        let policy = Policy::new(name.to_string());
+        let policy = Arc::new(RwLock::new(policy));
+
+        if let Ok(mut policies) = self.policies.lock() {
+            policies.insert(name.to_string(), policy.clone());
+        }
+
+        policy
+    }
+
     pub fn enable(&self, name: &str) -> bool {
         self._get_policy(name)
             .map(|p| {
@@ -417,7 +438,7 @@ impl PolicyRegistry {
     }
 
     fn register_timeout_layer(&self, policy_name: &str, timeout_ms: u64) -> PyResult<()> {
-        let policy = self.get_or_create(policy_name);
+        let policy = self.create_fresh(policy_name);
         let mut p = policy
             .write()
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
@@ -456,7 +477,7 @@ impl PolicyRegistry {
         backoff_ms: u64,
         retry_on: Option<Vec<String>>,
     ) -> PyResult<()> {
-        let policy = self.get_or_create(policy_name);
+        let policy = self.create_fresh(policy_name);
         let mut p = policy
             .write()
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
@@ -488,10 +509,58 @@ impl PolicyRegistry {
                     match result {
                         PolicyResult::Ok(_) => return result,
                         PolicyResult::Error { message, exception } => {
-                            let should_retry = self
-                                .retry_on
-                                .iter()
-                                .any(|exc| message.to_lowercase().contains(&exc.to_lowercase()));
+                            // message format is "ExcTypeName: message"
+                            // retry_on can contain type names (e.g. "ValueError") or
+                            // category keywords (e.g. "timeout", "network")
+                            let msg_lower = message.to_lowercase();
+                            // Extract the exception type name (before the colon)
+                            let exc_type = msg_lower.split(':').next().unwrap_or("").trim();
+
+                            // Semantic classification: map exception type names to categories
+                            let categories: Vec<&str> = {
+                                let mut cats = vec![];
+                                if exc_type.contains("timeout") || exc_type.contains("timedout") {
+                                    cats.push("timeout");
+                                }
+                                if exc_type.contains("connection")
+                                    || exc_type.contains("network")
+                                    || exc_type.contains("remote")
+                                    || exc_type.contains("disconnected")
+                                    || exc_type.contains("protocol")
+                                {
+                                    cats.push("network");
+                                    cats.push("connection");
+                                }
+                                if exc_type.contains("ratelimit") || exc_type.contains("throttle") {
+                                    cats.push("ratelimit");
+                                }
+                                // Default: transient covers most runtime errors
+                                if cats.is_empty()
+                                    || exc_type.contains("transient")
+                                    || exc_type.contains("runtime")
+                                    || exc_type.contains("value")
+                                    || exc_type.contains("os")
+                                    || exc_type.contains("io")
+                                    || exc_type.contains("file")
+                                    || exc_type.contains("attribute")
+                                    || exc_type.contains("key")
+                                    || exc_type.contains("permission")
+                                {
+                                    cats.push("transient");
+                                    cats.push("error");
+                                    cats.push("exception");
+                                }
+                                cats
+                            };
+
+                            let should_retry = self.retry_on.iter().any(|exc| {
+                                let exc_lower = exc.to_lowercase();
+                                // Direct type name match
+                                exc_type.starts_with(&exc_lower)
+                                    || exc_type.contains(&exc_lower)
+                                    // Semantic category match
+                                    || categories.contains(&exc_lower.as_str())
+                            });
 
                             if !should_retry {
                                 return PolicyResult::Error { message, exception };
@@ -499,17 +568,16 @@ impl PolicyRegistry {
 
                             last_error = Some((message, exception));
                             if attempt < self.max_retries {
-                                std::thread::sleep(std::time::Duration::from_millis(
-                                    self.backoff_ms,
-                                ));
+                                // Exponential backoff: backoff_ms * 2^attempt
+                                let delay_ms = self.backoff_ms * (1u64 << attempt);
+                                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
                             }
                         }
                         PolicyResult::Drop { reason } => {
                             last_error = Some((reason.to_string(), None));
                             if attempt < self.max_retries {
-                                std::thread::sleep(std::time::Duration::from_millis(
-                                    self.backoff_ms,
-                                ));
+                                let delay_ms = self.backoff_ms * (1u64 << attempt);
+                                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
                             }
                         }
                     }
@@ -544,7 +612,7 @@ impl PolicyRegistry {
         rate: f64,
         capacity: u64,
     ) -> PyResult<()> {
-        let policy = self.get_or_create(policy_name);
+        let policy = self.create_fresh(policy_name);
         let mut p = policy
             .write()
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
@@ -586,6 +654,151 @@ impl PolicyRegistry {
             capacity: capacity as f64,
             tokens: Arc::new(Mutex::new((capacity as f64, Instant::now()))),
         }));
+        Ok(())
+    }
+
+    fn register_circuit_breaker_layer(
+        &self,
+        policy_name: &str,
+        failure_threshold: u32,
+        success_threshold: u32,
+        timeout_ms: u64,
+    ) -> PyResult<()> {
+        let policy = self.create_fresh(policy_name);
+        let mut p = policy
+            .write()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        struct CircuitBreakerTransportLayer {
+            core: Arc<RwLock<CircuitBreakerCore>>,
+        }
+
+        impl TransportLayer for CircuitBreakerTransportLayer {
+            fn execute(&self, _ctx: &CallContext, next: Next) -> PolicyResult {
+                {
+                    let mut guard = self.core.write().unwrap();
+                    if guard.is_open() && !guard.can_attempt() {
+                        return PolicyResult::Error {
+                            message: "RuntimeError: Circuit breaker is OPEN".to_string(),
+                            exception: None,
+                        };
+                    }
+                }
+
+                let result = next();
+
+                let is_ok = result.is_ok();
+                {
+                    let mut guard = self.core.write().unwrap();
+                    if is_ok {
+                        guard.record_success();
+                    } else {
+                        guard.record_failure();
+                    }
+                }
+                result
+            }
+
+            fn name(&self) -> &str {
+                "CircuitBreakerTransport"
+            }
+        }
+
+        let core = Arc::new(RwLock::new(CircuitBreakerCore::new(
+            failure_threshold,
+            success_threshold,
+            timeout_ms,
+        )));
+
+        p.add_transport_layer(Arc::new(CircuitBreakerTransportLayer { core }));
+        Ok(())
+    }
+
+    fn register_fallback_layer(&self, policy_name: &str, _fallback: Py<PyAny>) -> PyResult<()> {
+        let policy = self.create_fresh(policy_name);
+        let mut p = policy
+            .write()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        struct FallbackTransportLayer;
+
+        impl TransportLayer for FallbackTransportLayer {
+            fn execute(&self, _ctx: &CallContext, next: Next) -> PolicyResult {
+                let result = next();
+
+                // Extract original exception before consuming result
+                let orig_exc: Option<Py<PyAny>> = match &result {
+                    PolicyResult::Error {
+                        exception: Some(exc),
+                        ..
+                    } => Python::attach(|py| Some(exc.clone_ref(py))),
+                    _ => None,
+                };
+
+                let should_fallback = matches!(
+                    &result,
+                    PolicyResult::Error { .. } | PolicyResult::Drop { .. }
+                );
+
+                if !should_fallback {
+                    return result;
+                }
+
+                // Get the fallback closure injected by execute_policy_with_fallback
+                let fallback_opt: Option<Py<PyAny>> = FALLBACK_FN.with(|f| {
+                    f.borrow()
+                        .as_ref()
+                        .map(|fb| Python::attach(|py| fb.clone_ref(py)))
+                });
+
+                if let Some(fallback) = fallback_opt {
+                    Python::attach(|py| {
+                        // First attempt: call fallback without exception kwarg
+                        match fallback.call(py, (), None) {
+                            Ok(value) => PolicyResult::Ok(value),
+                            Err(_fb_err) => {
+                                // Second attempt: inject the original exception
+                                let kwargs = pyo3::types::PyDict::new(py);
+                                if let Some(exc) = orig_exc {
+                                    let _ = kwargs.set_item("exception", exc.into_bound(py));
+                                }
+                                match fallback.call(py, (), Some(&kwargs)) {
+                                    Ok(value) => PolicyResult::Ok(value),
+                                    Err(e) => {
+                                        let err_type: String = e
+                                            .get_type(py)
+                                            .name()
+                                            .map(|s: pyo3::Bound<'_, pyo3::types::PyString>| {
+                                                s.to_string()
+                                            })
+                                            .unwrap_or_else(|_| "RuntimeError".to_string());
+                                        let err_msg: String = e
+                                            .value(py)
+                                            .str()
+                                            .map(|s: pyo3::Bound<'_, pyo3::types::PyString>| {
+                                                s.to_string()
+                                            })
+                                            .unwrap_or_else(|_| e.to_string());
+                                        PolicyResult::Error {
+                                            message: format!("{}: {}", err_type, err_msg),
+                                            exception: Some(e.into_py_any(py).unwrap()),
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    })
+                } else {
+                    result
+                }
+            }
+
+            fn name(&self) -> &str {
+                "FallbackTransport"
+            }
+        }
+
+        p.add_transport_layer(Arc::new(FallbackTransportLayer));
         Ok(())
     }
 
@@ -651,6 +864,38 @@ impl PolicyRegistry {
         let ctx = CallContext::new("execute".to_string());
 
         p.execute(&ctx, func, py)
+    }
+
+    fn execute_policy_with_fallback(
+        &self,
+        py: Python<'_>,
+        policy_name: &str,
+        func: Py<PyAny>,
+        fallback: Py<PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        let policy = self._get_policy(policy_name).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(format!("Policy '{}' not found", policy_name))
+        })?;
+
+        let p = policy
+            .read()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let ctx = CallContext::new("execute".to_string());
+
+        // Inject the fallback closure via thread_local so FallbackTransportLayer can access it
+        FALLBACK_FN.with(|f| {
+            *f.borrow_mut() = Some(fallback);
+        });
+
+        let result = p.execute(&ctx, func, py);
+
+        // Clean up the thread_local
+        FALLBACK_FN.with(|f| {
+            *f.borrow_mut() = None;
+        });
+
+        result
     }
 
     fn add_layer(&self, policy_name: &str, layer_type: &str, layer_name: String) -> PyResult<()> {
