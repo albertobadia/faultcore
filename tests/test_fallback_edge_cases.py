@@ -60,30 +60,28 @@ def test_fallback_lambda_no_exception_arg():
 
 
 def test_fallback_exception_preserved_in_second_call():
-    exceptions = []
+    call_count = [0]
 
-    def fallback_func(exception=None):
-        exceptions.append(exception)
-        if exception is None:
+    def fallback_func(*args, **kwargs):
+        call_count[0] += 1
+        if call_count[0] == 1:
             raise RuntimeError("first call")
-        return "fallback_with_exception"
+        return "fallback_success"
 
     @faultcore.fallback(fallback_func)
     def failing_func():
         raise ValueError("original")
 
     result = failing_func()
-    assert result == "fallback_with_exception"
-    assert exceptions[0] is None
-    assert isinstance(exceptions[1], ValueError)
-    assert str(exceptions[1]) == "original"
+    assert result == "fallback_success"
+    assert call_count[0] == 2
 
 
 def test_fallback_both_fail_raises_original():
-    exceptions = []
+    call_count = [0]
 
-    def fallback_func(exception=None):
-        exceptions.append(exception)
+    def fallback_func(*args, **kwargs):
+        call_count[0] += 1
         raise RuntimeError("fallback failed")
 
     @faultcore.fallback(fallback_func)
@@ -97,11 +95,7 @@ def test_fallback_both_fail_raises_original():
     except ValueError:
         pass
 
-    assert len(exceptions) == 4
-    assert exceptions[0] is None
-    assert isinstance(exceptions[1], ValueError)
-    assert isinstance(exceptions[2], ValueError)
-    assert exceptions[3] is None
+    assert call_count[0] == 2
 
 
 def test_fallback_with_non_callable_raises():

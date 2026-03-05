@@ -280,18 +280,6 @@ class _FaultFallbackWrapper:
             except Exception as e:
                 last_fallback_exception = e
 
-            full_kwargs = {**kwargs, **extra_kwargs}
-            try:
-                return self._fallback_func(*args, **full_kwargs)
-            except Exception as e:
-                last_fallback_exception = e
-
-            if "exception" in extra_kwargs:
-                try:
-                    return self._fallback_func(extra_kwargs["exception"])
-                except Exception as e:
-                    last_fallback_exception = e
-
             try:
                 return self._fallback_func()
             except Exception as e:
@@ -300,7 +288,7 @@ class _FaultFallbackWrapper:
             if last_fallback_exception is not None:
                 raise last_fallback_exception
 
-            return self._fallback_func(*args, **full_kwargs)
+            return None
 
         def func_to_call():
             return self._func(*args, **kwargs)
@@ -316,18 +304,6 @@ class _FaultFallbackWrapper:
             except Exception as e:
                 last_fallback_exception = e
 
-            full_kwargs = {**kwargs, **extra_kwargs}
-            try:
-                return self._fallback_func(*args, **full_kwargs)
-            except Exception as e:
-                last_fallback_exception = e
-
-            if "exception" in extra_kwargs:
-                try:
-                    return self._fallback_func(extra_kwargs["exception"])
-                except Exception as e:
-                    last_fallback_exception = e
-
             try:
                 return self._fallback_func()
             except Exception as e:
@@ -336,7 +312,7 @@ class _FaultFallbackWrapper:
             if last_fallback_exception is not None:
                 raise last_fallback_exception
 
-            return self._fallback_func(*args, **full_kwargs)
+            return None
 
         def func_to_call():
             return self._func(*args, **kwargs)
