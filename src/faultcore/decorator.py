@@ -226,17 +226,17 @@ def fault(policy_name: str = "auto"):
 
 
 class _FaultWrapper:
-    _wrapper_attrs = ('__doc__', '__name__', '__module__', '__annotations__', '__wrapped__')
+    _wrapper_attrs = ("__doc__", "__name__", "__module__", "__annotations__", "__wrapped__")
 
     def __init__(self, func, policy_name, registry):
-        object.__setattr__(self, '_func', func)
-        object.__setattr__(self, '_policy_name', policy_name)
-        object.__setattr__(self, '_registry', registry)
-        object.__setattr__(self, '_is_async', _is_async(func))
+        object.__setattr__(self, "_func", func)
+        object.__setattr__(self, "_policy_name", policy_name)
+        object.__setattr__(self, "_registry", registry)
+        object.__setattr__(self, "_is_async", _is_async(func))
 
     def __getattribute__(self, name):
-        if name in object.__getattribute__(self, '_wrapper_attrs'):
-            return getattr(object.__getattribute__(self, '_func'), name)
+        if name in object.__getattribute__(self, "_wrapper_attrs"):
+            return getattr(object.__getattribute__(self, "_func"), name)
         return object.__getattribute__(self, name)
 
     def __call__(self, *args, **kwargs):
@@ -273,27 +273,32 @@ class _FaultFallbackWrapper:
             return self._async_call(*args, **kwargs)
 
         def fallback_closure(**extra_kwargs):
+            last_fallback_exception = None
+
             try:
                 return self._fallback_func(*args, **kwargs)
-            except Exception:
-                pass
+            except Exception as e:
+                last_fallback_exception = e
 
             full_kwargs = {**kwargs, **extra_kwargs}
             try:
                 return self._fallback_func(*args, **full_kwargs)
-            except TypeError:
-                pass
+            except Exception as e:
+                last_fallback_exception = e
 
             if "exception" in extra_kwargs:
                 try:
                     return self._fallback_func(extra_kwargs["exception"])
-                except TypeError:
-                    pass
+                except Exception as e:
+                    last_fallback_exception = e
 
             try:
                 return self._fallback_func()
-            except TypeError:
-                pass
+            except Exception as e:
+                last_fallback_exception = e
+
+            if last_fallback_exception is not None:
+                raise last_fallback_exception
 
             return self._fallback_func(*args, **full_kwargs)
 
@@ -304,27 +309,32 @@ class _FaultFallbackWrapper:
 
     async def _async_call(self, *args, **kwargs):
         def fallback_closure(**extra_kwargs):
+            last_fallback_exception = None
+
             try:
                 return self._fallback_func(*args, **kwargs)
-            except Exception:
-                pass
+            except Exception as e:
+                last_fallback_exception = e
 
             full_kwargs = {**kwargs, **extra_kwargs}
             try:
                 return self._fallback_func(*args, **full_kwargs)
-            except TypeError:
-                pass
+            except Exception as e:
+                last_fallback_exception = e
 
             if "exception" in extra_kwargs:
                 try:
                     return self._fallback_func(extra_kwargs["exception"])
-                except TypeError:
-                    pass
+                except Exception as e:
+                    last_fallback_exception = e
 
             try:
                 return self._fallback_func()
-            except TypeError:
-                pass
+            except Exception as e:
+                last_fallback_exception = e
+
+            if last_fallback_exception is not None:
+                raise last_fallback_exception
 
             return self._fallback_func(*args, **full_kwargs)
 

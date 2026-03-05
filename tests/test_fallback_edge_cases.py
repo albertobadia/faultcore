@@ -97,9 +97,11 @@ def test_fallback_both_fail_raises_original():
     except ValueError:
         pass
 
-    assert len(exceptions) == 2
+    assert len(exceptions) == 4
     assert exceptions[0] is None
     assert isinstance(exceptions[1], ValueError)
+    assert isinstance(exceptions[2], ValueError)
+    assert exceptions[3] is None
 
 
 def test_fallback_with_non_callable_raises():
