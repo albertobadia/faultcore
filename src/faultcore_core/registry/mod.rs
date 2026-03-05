@@ -143,7 +143,34 @@ impl PolicyRegistry {
             .unwrap_or(false)
     }
 
-    pub fn match_policy(&self, ctx: &CallContext) -> Option<String> {
+    pub fn _set_thread_policy(&self, name: Option<String>) {
+        THREAD_POLICY.with(|p| {
+            *p.borrow_mut() = name;
+        });
+    }
+
+    pub fn _get_thread_policy(&self) -> Option<String> {
+        THREAD_POLICY.with(|p| p.borrow().clone())
+    }
+}
+
+impl Default for PolicyRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[pymethods]
+impl PolicyRegistry {
+    fn set_thread_policy(&self, name: Option<String>) {
+        self._set_thread_policy(name);
+    }
+
+    fn get_thread_policy(&self) -> Option<String> {
+        self._get_thread_policy()
+    }
+
+    fn match_policy(&self, ctx: &CallContext) -> Option<String> {
         let rules = self.rules.read().ok()?;
         let mut best_rule: Option<&MatchingRule> = None;
 
@@ -175,37 +202,19 @@ impl PolicyRegistry {
         best_rule.map(|r| r.policy_name.clone())
     }
 
-    pub fn _set_thread_policy(&self, name: Option<String>) {
-        THREAD_POLICY.with(|p| {
-            *p.borrow_mut() = name;
-        });
-    }
-
-    pub fn _get_thread_policy(&self) -> Option<String> {
-        THREAD_POLICY.with(|p| p.borrow().clone())
-    }
-}
-
-impl Default for PolicyRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[pymethods]
-impl PolicyRegistry {
-    fn set_thread_policy(&self, name: Option<String>) {
-        self._set_thread_policy(name);
-    }
-
-    fn get_thread_policy(&self) -> Option<String> {
-        self._get_thread_policy()
-    }
-
     fn execute_policy(&self, py: Python<'_>, name: String, func: Py<PyAny>) -> PyResult<Py<PyAny>> {
-        let policy = self.get_or_create(&name);
+        let mut final_name = self._get_thread_policy().unwrap_or(name);
+        let ctx = CallContext::default();
+
+        if final_name == "auto"
+            && let Some(matched) = self.match_policy(&ctx)
+        {
+            final_name = matched;
+        }
+
+        let policy = self.get_or_create(&final_name);
         let p = policy.read().unwrap();
-        p.execute(&CallContext::default(), func, py)
+        p.execute(&ctx, func, py)
     }
 
     fn execute_policy_with_fallback(
@@ -215,12 +224,20 @@ impl PolicyRegistry {
         func: Py<PyAny>,
         _fallback: Py<PyAny>,
     ) -> PyResult<Py<PyAny>> {
-        let policy = self.get_or_create(&name);
-        let p = policy.read().unwrap();
+        let mut final_name = self._get_thread_policy().unwrap_or(name);
         let ctx = CallContext {
             fallback_func: Some(_fallback),
             ..Default::default()
         };
+
+        if final_name == "auto"
+            && let Some(matched) = self.match_policy(&ctx)
+        {
+            final_name = matched;
+        }
+
+        let policy = self.get_or_create(&final_name);
+        let p = policy.read().unwrap();
         p.execute(&ctx, func, py)
     }
 

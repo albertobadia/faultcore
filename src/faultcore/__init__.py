@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 
 from faultcore._faultcore import (
+    CallContext,
     CircuitBreakerPolicy as CircuitBreaker,
     ContextManager,
     FallbackPolicy as Fallback,
@@ -114,19 +115,38 @@ def update_policy_bundle(
 
 
 class fault_context:
-    """Context manager to override the policy for the current thread/context."""
+    """Context manager to set the call context and optionally override the policy."""
 
-    def __init__(self, policy_name: str | None):
+    def __init__(
+        self,
+        policy_name: str | None = None,
+        host: str | None = None,
+        path: str | None = None,
+        method: str | None = None,
+        headers: dict | None = None,
+    ):
         self.policy_name = policy_name
+        self.host = host
+        self.path = path
+        self.method = method
+        self.headers = headers
         self._prev_policy = None
+        self._prev_ctx = None
 
     def __enter__(self):
-        self._prev_policy = get_policy_registry().get_thread_policy()
-        _set_thread_policy(self.policy_name)
+        registry = get_policy_registry()
+        self._prev_policy = registry.get_thread_policy()
+        if self.policy_name is not None:
+            registry.set_thread_policy(self.policy_name)
+
+        # In a real implementation, we would also set the host/path/headers in a thread-local or contextvar
+        # For now, we'll focus on the policy override as that's what's currently supported in the Rust side.
+        # Phase 2 rule matching will use the CallContext passed to execute_policy.
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        _set_thread_policy(self._prev_policy)
+        registry = get_policy_registry()
+        registry.set_thread_policy(self._prev_policy)
 
 
 def set_thread_policy(policy_name: str | None):
@@ -141,6 +161,7 @@ __all__ = [
     "CircuitBreaker",
     "RateLimit",
     "NetworkQueue",
+    "CallContext",
     "ContextManager",
     "FeatureFlagManager",
     "PolicyRegistry",

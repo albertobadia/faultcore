@@ -240,32 +240,12 @@ class _FaultWrapper:
         if self._is_async:
             return self._async_call(*args, **kwargs)
 
-        if self._policy_name == "auto" or not self._policy_name:
-
-            def func_to_call():
-                return self._func(*args, **kwargs)
-
-            return self._registry.execute_policy(self._policy_name, func_to_call)
-
-        if not self._registry.is_policy_enabled(self._policy_name):
-            return self._func(*args, **kwargs)
-
         def func_to_call():
             return self._func(*args, **kwargs)
 
         return self._registry.execute_policy(self._policy_name, func_to_call)
 
     async def _async_call(self, *args, **kwargs):
-        if self._policy_name == "auto" or not self._policy_name:
-
-            def func_to_call():
-                return self._func(*args, **kwargs)
-
-            return await self._registry.execute_policy(self._policy_name, func_to_call)
-
-        if not self._registry.is_policy_enabled(self._policy_name):
-            return await self._func(*args, **kwargs)
-
         def func_to_call():
             return self._func(*args, **kwargs)
 
@@ -297,39 +277,29 @@ class _FaultFallbackWrapper:
                 return self._fallback_func(*args, **kwargs)
             except Exception:
                 pass
-            
+
             # Try everything
             full_kwargs = {**kwargs, **extra_kwargs}
             try:
                 return self._fallback_func(*args, **full_kwargs)
             except TypeError:
                 pass
-            
+
             # Just exception
             if "exception" in extra_kwargs:
                 try:
                     return self._fallback_func(extra_kwargs["exception"])
                 except TypeError:
                     pass
-            
+
             # Nothing
             try:
                 return self._fallback_func()
             except TypeError:
                 pass
-            
+
             # Final attempt
             return self._fallback_func(*args, **full_kwargs)
-
-        if self._policy_name == "auto" or not self._policy_name:
-
-            def func_to_call():
-                return self._func(*args, **kwargs)
-
-            return self._registry.execute_policy_with_fallback(self._policy_name, func_to_call, fallback_closure)
-
-        if not self._registry.is_policy_enabled(self._policy_name):
-            return self._func(*args, **kwargs)
 
         def func_to_call():
             return self._func(*args, **kwargs)
@@ -343,39 +313,29 @@ class _FaultFallbackWrapper:
                 return self._fallback_func(*args, **kwargs)
             except Exception:
                 pass
-            
+
             # Try everything
             full_kwargs = {**kwargs, **extra_kwargs}
             try:
                 return self._fallback_func(*args, **full_kwargs)
             except TypeError:
                 pass
-            
+
             # Just exception
             if "exception" in extra_kwargs:
                 try:
                     return self._fallback_func(extra_kwargs["exception"])
                 except TypeError:
                     pass
-            
+
             # Nothing
             try:
                 return self._fallback_func()
             except TypeError:
                 pass
-            
+
             # Final attempt
             return self._fallback_func(*args, **full_kwargs)
-
-        if self._policy_name == "auto" or not self._policy_name:
-
-            def func_to_call():
-                return self._func(*args, **kwargs)
-
-            return await self._registry.execute_policy_with_fallback(self._policy_name, func_to_call, fallback_closure)
-
-        if not self._registry.is_policy_enabled(self._policy_name):
-            return await self._func(*args, **kwargs)
 
         def func_to_call():
             return self._func(*args, **kwargs)

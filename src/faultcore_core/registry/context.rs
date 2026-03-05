@@ -4,13 +4,21 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+#[pyclass]
 pub struct CallContext {
+    #[pyo3(get, set)]
     pub function_name: String,
+    #[pyo3(get, set)]
     pub thread_id: u64,
+    #[pyo3(get, set)]
     pub call_id: u64,
+    #[pyo3(get, set)]
     pub host: Option<String>,
+    #[pyo3(get, set)]
     pub path: Option<String>,
+    #[pyo3(get, set)]
     pub method: Option<String>,
+    #[pyo3(get, set)]
     pub headers: HashMap<String, String>,
     pub fallback_func: Option<pyo3::Py<pyo3::PyAny>>,
 }
@@ -48,7 +56,9 @@ impl std::fmt::Debug for CallContext {
     }
 }
 
+#[pymethods]
 impl CallContext {
+    #[new]
     pub fn new(function_name: String) -> Self {
         let thread_id = unsafe { libc::syscall(libc::SYS_gettid) as u64 };
         let call_id = CALL_COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -62,6 +72,10 @@ impl CallContext {
             headers: HashMap::new(),
             fallback_func: None,
         }
+    }
+
+    pub fn set_header(&mut self, key: String, value: String) {
+        self.headers.insert(key, value);
     }
 }
 

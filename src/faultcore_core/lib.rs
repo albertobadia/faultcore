@@ -112,6 +112,7 @@ fn _faultcore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ContextManager>()?;
     m.add_class::<features::flag::FeatureFlagManager>()?;
     m.add_class::<registry::PolicyRegistry>()?;
+    m.add_class::<registry::context::CallContext>()?;
 
     Ok(())
 }
