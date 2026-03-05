@@ -36,7 +36,7 @@ pub struct FeatureFlagManager {
 impl Clone for FeatureFlagManager {
     fn clone(&self) -> Self {
         Self {
-            bundles: Mutex::new(std::collections::HashMap::new()),
+            bundles: Mutex::new(self.bundles.lock().unwrap().clone()),
         }
     }
 }
@@ -54,6 +54,12 @@ impl FeatureFlagManager {
     #[new]
     fn new_() -> PyResult<Self> {
         Ok(Self::new())
+    }
+
+    fn clone_manager(&self) -> Self {
+        Self {
+            bundles: Mutex::new(self.bundles.lock().unwrap().clone()),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -307,3 +307,32 @@ def test_feature_flag_manager_retry_on():
     assert "retry_on" in config
     assert "ValueError" in config["retry_on"]
     assert "TimeoutError" in config["retry_on"]
+
+
+def test_feature_flag_manager_clone():
+    manager1 = faultcore.FeatureFlagManager()
+    manager1.register(
+        "clone_test_feature",
+        timeout_ms=2000,
+        retry_max_retries=5,
+        retry_backoff_ms=None,
+        retry_on=None,
+        circuit_breaker_failure_threshold=None,
+        circuit_breaker_success_threshold=None,
+        circuit_breaker_timeout_ms=None,
+        rate_limit_rate=None,
+        rate_limit_capacity=None,
+    )
+    keys_before = manager1.list_keys()
+    assert "clone_test_feature" in keys_before
+    config_before = manager1.get("clone_test_feature")
+    assert config_before is not None
+    assert config_before["timeout_ms"] == 2000
+    assert config_before["retry_max_retries"] == 5
+    manager2 = manager1.clone_manager()
+    keys_after = manager2.list_keys()
+    assert "clone_test_feature" in keys_after
+    config_after = manager2.get("clone_test_feature")
+    assert config_after is not None
+    assert config_after["timeout_ms"] == 2000
+    assert config_after["retry_max_retries"] == 5
