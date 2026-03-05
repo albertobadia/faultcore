@@ -8,7 +8,10 @@ pub fn get_thread_id() -> u64 {
 pub const FAULTCORE_MAGIC: u32 = 0xFACC0DE;
 pub const MAX_FDS: usize = 65536;
 pub const MAX_TIDS: usize = 1024;
-pub const FAULTCORE_SHM_SIZE: usize = (MAX_FDS + MAX_TIDS) * std::mem::size_of::<FaultcoreConfig>();
+pub const MAX_POLICIES: usize = 256;
+pub const FAULTCORE_SHM_SIZE: usize = ((MAX_FDS + MAX_TIDS)
+    * std::mem::size_of::<FaultcoreConfig>())
+    + (MAX_POLICIES * std::mem::size_of::<PolicyState>());
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
@@ -20,6 +23,16 @@ pub struct FaultcoreConfig {
     pub bandwidth_bps: u64,
     pub connect_timeout_ms: u64,
     pub recv_timeout_ms: u64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PolicyState {
+    pub magic: u32,
+    pub name: [u8; 32],
+    pub enabled: bool,
+    pub total_calls: u64,
+    pub total_failures: u64,
 }
 
 static SHM_POINTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -189,6 +202,66 @@ pub fn clear_config(tid: u64) -> Result<(), String> {
             Ok(())
         } else {
             Ok(())
+        }
+    }
+}
+
+/// Returns a pointer to the policy state at the given index in SHM.
+///
+/// # Safety
+/// The caller must ensure that SHM is open and the index is within bounds.
+pub unsafe fn get_policy_ptr(idx: usize) -> Option<*mut PolicyState> {
+    let base_ptr = SHM_POINTER.load(Ordering::SeqCst);
+    if base_ptr == 0 || idx >= MAX_POLICIES {
+        return None;
+    }
+    unsafe {
+        let array_start = (base_ptr as *mut FaultcoreConfig).add(MAX_FDS + MAX_TIDS);
+        let policy_array = array_start as *mut PolicyState;
+        Some(policy_array.add(idx))
+    }
+}
+
+pub fn write_policy_state(
+    idx: usize,
+    name: &str,
+    enabled: bool,
+    calls: u64,
+    failures: u64,
+) -> Result<(), String> {
+    unsafe {
+        if let Some(ptr) = get_policy_ptr(idx) {
+            let mut state = ptr.read();
+            state.magic = FAULTCORE_MAGIC;
+            let name_bytes = name.as_bytes();
+            let len = name_bytes.len().min(31);
+            state.name = [0; 32];
+            state.name[..len].copy_from_slice(&name_bytes[..len]);
+            state.enabled = enabled;
+            state.total_calls = calls;
+            state.total_failures = failures;
+            ptr.write(state);
+            Ok(())
+        } else {
+            Err("SHM not initialized or index out of bounds".to_string())
+        }
+    }
+}
+
+pub fn update_policy_metrics(idx: usize, success: bool) -> Result<(), String> {
+    unsafe {
+        if let Some(ptr) = get_policy_ptr(idx) {
+            let mut state = ptr.read();
+            if state.magic == FAULTCORE_MAGIC {
+                state.total_calls += 1;
+                if !success {
+                    state.total_failures += 1;
+                }
+                ptr.write(state);
+            }
+            Ok(())
+        } else {
+            Err("SHM not initialized or index out of bounds".to_string())
         }
     }
 }

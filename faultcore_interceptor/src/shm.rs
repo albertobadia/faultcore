@@ -20,7 +20,10 @@ pub fn get_thread_id() -> u64 {
 pub const FAULTCORE_MAGIC: u32 = 0xFACC0DE;
 pub const MAX_FDS: usize = 65536;
 pub const MAX_TIDS: usize = 1024;
-pub const FAULTCORE_SHM_SIZE: usize = (MAX_FDS + MAX_TIDS) * std::mem::size_of::<FaultcoreConfig>();
+pub const MAX_POLICIES: usize = 256;
+pub const FAULTCORE_SHM_SIZE: usize = ((MAX_FDS + MAX_TIDS)
+    * std::mem::size_of::<FaultcoreConfig>())
+    + (MAX_POLICIES * std::mem::size_of::<PolicyState>());
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default)]
@@ -32,6 +35,16 @@ pub struct FaultcoreConfig {
     pub bandwidth_bps: u64,
     pub connect_timeout_ms: u64,
     pub recv_timeout_ms: u64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PolicyState {
+    pub magic: u32,
+    pub name: [u8; 32],
+    pub enabled: bool,
+    pub total_calls: u64,
+    pub total_failures: u64,
 }
 
 impl FaultcoreConfig {

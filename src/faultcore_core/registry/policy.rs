@@ -135,6 +135,10 @@ impl Policy {
 
         let result = final_next.call();
 
+        // Sync metrics with SHM for TUI
+        crate::registry::shm_registry::get_shm_registry()
+            .update_metrics(&self.name, matches!(result, PolicyResult::Ok(_)));
+
         match result {
             PolicyResult::Ok(value) => Ok(value),
             PolicyResult::Error { message, exception } => {

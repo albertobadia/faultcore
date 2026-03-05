@@ -3,6 +3,7 @@ pub mod layer;
 pub mod layers;
 pub mod matching;
 pub mod policy;
+pub mod shm_registry;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
@@ -12,11 +13,14 @@ use std::sync::{Arc, Mutex, RwLock};
 use crate::registry::context::CallContext;
 use crate::registry::layers::circuit_breaker::CircuitBreakerLayer;
 use crate::registry::layers::fallback::FallbackLayer;
+use crate::registry::layers::latency::LatencyChaosLayer;
+use crate::registry::layers::packet_loss::PacketLossChaosLayer;
 use crate::registry::layers::rate_limit::RateLimitQosLayer;
 use crate::registry::layers::retry::RetryTransportLayer;
 use crate::registry::layers::timeout::TimeoutLayer;
 use crate::registry::matching::{MatchCondition, MatchingRule};
 use crate::registry::policy::Policy;
+use crate::registry::shm_registry::get_shm_registry;
 
 thread_local! {
     pub static THREAD_POLICY: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
@@ -47,31 +51,6 @@ impl PolicyRegistry {
         self.policies.lock().ok().and_then(|p| p.get(name).cloned())
     }
 
-    pub fn register_policy(&self, name: String, _config: Py<PyDict>) -> PyResult<()> {
-        let mut policies = self
-            .policies
-            .lock()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-
-        let policy = Policy::new(name.clone());
-        policies.insert(name, Arc::new(RwLock::new(policy)));
-        Ok(())
-    }
-
-    pub fn remove_policy(&self, name: &str) -> bool {
-        self.policies
-            .lock()
-            .map(|mut p| p.remove(name).is_some())
-            .unwrap_or(false)
-    }
-
-    pub fn list_policies(&self) -> Vec<String> {
-        self.policies
-            .lock()
-            .map(|p| p.keys().cloned().collect())
-            .unwrap_or_default()
-    }
-
     pub fn get_or_create(&self, name: &str) -> Arc<RwLock<Policy>> {
         if let Some(policy) = self._get_policy(name) {
             return policy;
@@ -98,51 +77,6 @@ impl PolicyRegistry {
         policy
     }
 
-    pub fn enable(&self, name: &str) -> bool {
-        self._get_policy(name)
-            .map(|p| {
-                if let Ok(mut policy) = p.write() {
-                    policy.enabled = true;
-                    true
-                } else {
-                    false
-                }
-            })
-            .unwrap_or(false)
-    }
-
-    pub fn disable(&self, name: &str) -> bool {
-        self._get_policy(name)
-            .map(|p| {
-                if let Ok(mut policy) = p.write() {
-                    policy.enabled = false;
-                    true
-                } else {
-                    false
-                }
-            })
-            .unwrap_or(false)
-    }
-
-    pub fn is_enabled(&self, name: &str) -> bool {
-        self._get_policy(name)
-            .map(|p| p.read().map(|policy| policy.enabled).unwrap_or(false))
-            .unwrap_or(false)
-    }
-
-    pub fn reset(&self, name: &str) -> bool {
-        self._get_policy(name)
-            .map(|p| {
-                if let Ok(mut policy) = p.write() {
-                    policy.enabled = true;
-                    true
-                } else {
-                    false
-                }
-            })
-            .unwrap_or(false)
-    }
-
     pub fn _set_thread_policy(&self, name: Option<String>) {
         THREAD_POLICY.with(|p| {
             *p.borrow_mut() = name;
@@ -162,6 +96,232 @@ impl Default for PolicyRegistry {
 
 #[pymethods]
 impl PolicyRegistry {
+    pub fn register_policy(&self, name: String, config: Py<PyDict>) -> PyResult<()> {
+        let mut policies = self
+            .policies
+            .lock()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        let mut policy = Policy::new(name.clone());
+
+        Python::attach(move |py| {
+            let config_bound = config.into_bound(py);
+
+            // Parse L4 Transport
+            if let Some(l4) = config_bound.get_item("l4_transport")? {
+                let list = l4.cast::<PyList>()?;
+                for item in list.iter() {
+                    let dict = item.cast::<PyDict>()?;
+                    let type_str: String = dict.get_item("type")?.unwrap().extract()?;
+                    match type_str.as_str() {
+                        "timeout" => {
+                            let ms: u64 = dict.get_item("timeout_ms")?.unwrap().extract()?;
+                            policy.add_transport_layer(Arc::new(TimeoutLayer { timeout_ms: ms }));
+                        }
+                        "circuit_breaker" => {
+                            let failure_threshold: u32 =
+                                dict.get_item("failure_threshold")?.unwrap().extract()?;
+                            let success_threshold: u32 = dict
+                                .get_item("success_threshold")?
+                                .map(|i| i.extract())
+                                .transpose()?
+                                .unwrap_or(1);
+                            let timeout_ms: u64 =
+                                dict.get_item("timeout_ms")?.unwrap().extract()?;
+
+                            use crate::policies::circuit_breaker::CircuitBreakerPolicy as CircuitBreakerCore;
+                            let core = Arc::new(RwLock::new(CircuitBreakerCore::new(
+                                failure_threshold,
+                                success_threshold,
+                                timeout_ms,
+                            )));
+                            policy.add_transport_layer(Arc::new(CircuitBreakerLayer { core }));
+                        }
+                        _ => {
+                            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                                "Unknown L4 type: {}",
+                                type_str
+                            )));
+                        }
+                    }
+                }
+            }
+
+            // Parse L3 Routing
+            if let Some(l3) = config_bound.get_item("l3_routing")? {
+                let list = l3.cast::<PyList>()?;
+                for item in list.iter() {
+                    let dict = item.cast::<PyDict>()?;
+                    let type_str: String = dict.get_item("type")?.unwrap().extract()?;
+                    match type_str.as_str() {
+                        "retry" => {
+                            let max_retries: u32 =
+                                dict.get_item("max_retries")?.unwrap().extract()?;
+                            let backoff_ms: u64 =
+                                dict.get_item("backoff_ms")?.unwrap().extract()?;
+                            let retry_on: Vec<String> = dict
+                                .get_item("retry_on")?
+                                .map(|i| i.extract())
+                                .transpose()?
+                                .unwrap_or_else(|| {
+                                    vec![
+                                        "Transient".to_string(),
+                                        "Timeout".to_string(),
+                                        "Network".to_string(),
+                                    ]
+                                });
+                            policy.add_routing_layer(Arc::new(RetryTransportLayer {
+                                max_retries,
+                                backoff_ms,
+                                retry_on,
+                            }));
+                        }
+                        "fallback" => {
+                            let func: Py<PyAny> = dict.get_item("fn")?.unwrap().extract()?;
+                            policy.add_routing_layer(Arc::new(FallbackLayer {
+                                fallback_func: func,
+                            }));
+                        }
+                        _ => {
+                            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                                "Unknown L3 type: {}",
+                                type_str
+                            )));
+                        }
+                    }
+                }
+            }
+
+            // Parse L2 QoS
+            if let Some(l2) = config_bound.get_item("l2_qos")? {
+                let list = l2.cast::<PyList>()?;
+                for item in list.iter() {
+                    let dict = item.cast::<PyDict>()?;
+                    let type_str: String = dict.get_item("type")?.unwrap().extract()?;
+                    match type_str.as_str() {
+                        "rate_limit" => {
+                            let rate: f64 = dict.get_item("rate")?.unwrap().extract()?;
+                            let capacity: f64 = dict.get_item("capacity")?.unwrap().extract()?;
+                            policy.add_qos_layer(Arc::new(RateLimitQosLayer {
+                                rate,
+                                capacity,
+                                tokens: Arc::new(Mutex::new((capacity, std::time::Instant::now()))),
+                            }));
+                        }
+                        _ => {
+                            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                                "Unknown L2 type: {}",
+                                type_str
+                            )));
+                        }
+                    }
+                }
+            }
+
+            // Parse L1 Chaos
+            if let Some(l1) = config_bound.get_item("l1_chaos")? {
+                let list = l1.cast::<PyList>()?;
+                for item in list.iter() {
+                    let dict = item.cast::<PyDict>()?;
+                    let type_str: String = dict.get_item("type")?.unwrap().extract()?;
+                    match type_str.as_str() {
+                        "latency" => {
+                            let ms: u64 = dict.get_item("latency_ms")?.unwrap().extract()?;
+                            policy.add_chaos_layer(Arc::new(LatencyChaosLayer { latency_ms: ms }));
+                        }
+                        "packet_loss" => {
+                            let ppm: u64 = dict.get_item("ppm")?.unwrap().extract()?;
+                            policy.add_chaos_layer(Arc::new(PacketLossChaosLayer { ppm }));
+                        }
+                        _ => {
+                            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                                "Unknown L1 type: {}",
+                                type_str
+                            )));
+                        }
+                    }
+                }
+            }
+
+            policies.insert(name.clone(), Arc::new(RwLock::new(policy)));
+            get_shm_registry().register_policy(&name, true);
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+
+    fn remove_policy(&self, name: &str) -> bool {
+        if let Ok(mut policies) = self.policies.lock() {
+            policies.remove(name).is_some()
+        } else {
+            false
+        }
+    }
+
+    fn list_policies(&self) -> Vec<String> {
+        if let Ok(policies) = self.policies.lock() {
+            policies.keys().cloned().collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn enable(&self, name: &str) -> bool {
+        let result = self
+            ._get_policy(name)
+            .map(|p| {
+                if let Ok(mut policy) = p.write() {
+                    policy.enabled = true;
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false);
+        if result {
+            get_shm_registry().set_enabled(name, true);
+        }
+        result
+    }
+
+    fn disable(&self, name: &str) -> bool {
+        let result = self
+            ._get_policy(name)
+            .map(|p| {
+                if let Ok(mut policy) = p.write() {
+                    policy.enabled = false;
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false);
+        if result {
+            get_shm_registry().set_enabled(name, false);
+        }
+        result
+    }
+
+    fn reset(&self, name: &str) -> bool {
+        self._get_policy(name)
+            .map(|p| {
+                if let Ok(mut policy) = p.write() {
+                    policy.enabled = true;
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(false)
+    }
+
+    fn is_enabled(&self, name: &str) -> bool {
+        self._get_policy(name)
+            .map(|p| p.read().map(|policy| policy.enabled).unwrap_or(false))
+            .unwrap_or(false)
+    }
+
     fn set_thread_policy(&self, name: Option<String>) {
         self._set_thread_policy(name);
     }
@@ -368,7 +528,7 @@ impl PolicyRegistry {
             ]
         });
 
-        p.add_transport_layer(Arc::new(RetryTransportLayer {
+        p.add_routing_layer(Arc::new(RetryTransportLayer {
             max_retries,
             backoff_ms,
             retry_on,
@@ -401,7 +561,7 @@ impl PolicyRegistry {
             .write()
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
-        p.add_transport_layer(Arc::new(FallbackLayer { fallback_func }));
+        p.add_routing_layer(Arc::new(FallbackLayer { fallback_func }));
         Ok(())
     }
 

@@ -1,5 +1,5 @@
 use crate::registry::context::{CallContext, PolicyResult};
-use crate::registry::layer::{Next, TransportLayer};
+use crate::registry::layer::{Next, RoutingLayer};
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 
@@ -7,7 +7,7 @@ pub struct FallbackLayer {
     pub fallback_func: Py<PyAny>,
 }
 
-impl TransportLayer for FallbackLayer {
+impl RoutingLayer for FallbackLayer {
     fn execute(&self, ctx: &CallContext, next: Next) -> PolicyResult {
         let result = next();
         if result.is_error() {

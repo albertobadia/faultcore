@@ -1,5 +1,5 @@
 use crate::registry::context::{CallContext, PolicyResult};
-use crate::registry::layer::{Next, TransportLayer};
+use crate::registry::layer::{Next, RoutingLayer};
 use pyo3::prelude::*;
 
 pub struct RetryTransportLayer {
@@ -8,7 +8,7 @@ pub struct RetryTransportLayer {
     pub retry_on: Vec<String>,
 }
 
-impl TransportLayer for RetryTransportLayer {
+impl RoutingLayer for RetryTransportLayer {
     fn execute(&self, _ctx: &CallContext, next: Next) -> PolicyResult {
         let mut last_error: Option<(String, Option<Py<PyAny>>)> = None;
 
