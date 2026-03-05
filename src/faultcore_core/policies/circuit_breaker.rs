@@ -80,8 +80,4 @@ impl CircuitBreakerPolicy {
             }
         }
     }
-
-    pub fn state(&self) -> &CircuitState {
-        &self.state
-    }
 }

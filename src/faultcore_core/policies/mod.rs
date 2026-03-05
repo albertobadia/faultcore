@@ -232,7 +232,7 @@ impl CircuitBreakerPolicy {
     #[getter]
     fn state(&self) -> String {
         let guard = self.core.read().unwrap();
-        match guard.state() {
+        match guard.state {
             CircuitState::Closed => "closed".to_string(),
             CircuitState::Open => "open".to_string(),
             CircuitState::HalfOpen => "half_open".to_string(),
@@ -243,9 +243,7 @@ impl CircuitBreakerPolicy {
         let guard = self.core.read().unwrap();
         format!(
             "CircuitBreakerPolicy(state={:?}, failures={}/{})",
-            guard.state(),
-            guard.failure_count,
-            guard.failure_threshold
+            guard.state, guard.failure_count, guard.failure_threshold
         )
     }
 }
