@@ -69,6 +69,6 @@ impl RetryPolicy {
     }
 
     pub fn backoff_duration(&self, attempt: u32) -> Duration {
-        self.backoff * (attempt + 1)
+        self.backoff * (1u32 << attempt)
     }
 }
