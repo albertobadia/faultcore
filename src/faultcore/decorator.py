@@ -219,7 +219,7 @@ class _DynamicPolicyWrapper:
         return self
 
 
-def fault(policy_name: str):
+def fault(policy_name: str = "auto"):
     registry = _get_registry()
 
     def decorator(func):
@@ -243,6 +243,15 @@ class _FaultWrapper:
         if self._is_async:
             return self._async_call(*args, **kwargs)
 
+        # "auto" or empty string signals dynamic rule-based matching in Rust.
+        # We also want to delegate if there might be a thread-local override.
+        if self._policy_name == "auto" or not self._policy_name:
+
+            def func_to_call():
+                return self._func(*args, **kwargs)
+
+            return self._registry.execute_policy(self._policy_name, func_to_call)
+
         if not self._registry.is_policy_enabled(self._policy_name):
             return self._func(*args, **kwargs)
 
@@ -252,6 +261,13 @@ class _FaultWrapper:
         return self._registry.execute_policy(self._policy_name, func_to_call)
 
     async def _async_call(self, *args, **kwargs):
+        if self._policy_name == "auto" or not self._policy_name:
+
+            def func_to_call():
+                return self._func(*args, **kwargs)
+
+            return await self._registry.execute_policy(self._policy_name, func_to_call)
+
         if not self._registry.is_policy_enabled(self._policy_name):
             return await self._func(*args, **kwargs)
 
@@ -280,6 +296,17 @@ class _FaultFallbackWrapper:
         if self._is_async:
             return self._async_call(*args, **kwargs)
 
+        if self._policy_name == "auto" or not self._policy_name:
+
+            def func_to_call():
+                return self._func(*args, **kwargs)
+
+            def fallback_closure(**extra_kwargs):
+                merged_kwargs = {**kwargs, **extra_kwargs}
+                return self._fallback_func(*args, **merged_kwargs)
+
+            return self._registry.execute_policy_with_fallback(self._policy_name, func_to_call, fallback_closure)
+
         if not self._registry.is_policy_enabled(self._policy_name):
             return self._func(*args, **kwargs)
 
@@ -294,6 +321,17 @@ class _FaultFallbackWrapper:
         return self._registry.execute_policy_with_fallback(self._policy_name, func_to_call, fallback_closure)
 
     async def _async_call(self, *args, **kwargs):
+        if self._policy_name == "auto" or not self._policy_name:
+
+            def func_to_call():
+                return self._func(*args, **kwargs)
+
+            def fallback_closure(**extra_kwargs):
+                merged_kwargs = {**kwargs, **extra_kwargs}
+                return self._fallback_func(*args, **merged_kwargs)
+
+            return await self._registry.execute_policy_with_fallback(self._policy_name, func_to_call, fallback_closure)
+
         if not self._registry.is_policy_enabled(self._policy_name):
             return await self._func(*args, **kwargs)
 

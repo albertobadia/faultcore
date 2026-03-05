@@ -1,15 +1,16 @@
-use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyList};
 
 use crate::circuit_breaker::CircuitBreakerPolicy as CircuitBreakerCore;
 
 thread_local! {
-    static FALLBACK_FN: RefCell<Option<Py<PyAny>>> = const { RefCell::new(None) };
+    static FALLBACK_FN: std::cell::RefCell<Option<Py<PyAny>>> = const { std::cell::RefCell::new(None) };
+    static THREAD_POLICY: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
 static CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -25,16 +26,24 @@ pub struct CallContext {
     pub function_name: String,
     pub thread_id: u64,
     pub call_id: u64,
+    pub host: Option<String>,
+    pub path: Option<String>,
+    pub method: Option<String>,
+    pub headers: HashMap<String, String>,
 }
 
 impl CallContext {
     pub fn new(function_name: String) -> Self {
-        let thread_id = std::process::id() as u64;
+        let thread_id = unsafe { libc::syscall(libc::SYS_gettid) as u64 };
         let call_id = CALL_COUNTER.fetch_add(1, Ordering::SeqCst);
         Self {
             function_name,
             thread_id,
             call_id,
+            host: None,
+            path: None,
+            method: None,
+            headers: HashMap::new(),
         }
     }
 }
@@ -302,16 +311,33 @@ impl Policy {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum MatchCondition {
+    Host(String),
+    Path(String),
+    Method(String),
+    Header(String, String),
+}
+
+#[derive(Clone, Debug)]
+pub struct MatchingRule {
+    pub conditions: Vec<MatchCondition>,
+    pub policy_name: String,
+    pub priority: i32,
+}
+
 #[pyclass]
 #[derive(Clone)]
 pub struct PolicyRegistry {
-    policies: Arc<Mutex<std::collections::HashMap<String, Arc<RwLock<Policy>>>>>,
+    policies: Arc<Mutex<HashMap<String, Arc<RwLock<Policy>>>>>,
+    rules: Arc<RwLock<Vec<MatchingRule>>>,
 }
 
 impl PolicyRegistry {
     pub fn new() -> Self {
         Self {
-            policies: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            policies: Arc::new(Mutex::new(HashMap::new())),
+            rules: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -417,6 +443,47 @@ impl PolicyRegistry {
             })
             .unwrap_or(false)
     }
+    pub fn match_policy(&self, ctx: &CallContext) -> Option<String> {
+        let rules = self.rules.read().ok()?;
+        let mut best_rule: Option<&MatchingRule> = None;
+
+        for rule in rules.iter() {
+            let matches = rule.conditions.iter().all(|cond| match cond {
+                MatchCondition::Host(h) => ctx.host.as_ref().map(|ch| ch == h).unwrap_or(false),
+                MatchCondition::Path(p) => ctx
+                    .path
+                    .as_ref()
+                    .map(|cp| cp.starts_with(p))
+                    .unwrap_or(false),
+                MatchCondition::Method(m) => ctx.method.as_ref().map(|cm| cm == m).unwrap_or(false),
+                MatchCondition::Header(k, v) => {
+                    ctx.headers.get(k).map(|cv| cv == v).unwrap_or(false)
+                }
+            });
+
+            if matches {
+                if let Some(best) = best_rule {
+                    if rule.priority > best.priority {
+                        best_rule = Some(rule);
+                    }
+                } else {
+                    best_rule = Some(rule);
+                }
+            }
+        }
+
+        best_rule.map(|r| r.policy_name.clone())
+    }
+
+    pub fn _set_thread_policy(&self, name: Option<String>) {
+        THREAD_POLICY.with(|p| {
+            *p.borrow_mut() = name;
+        });
+    }
+
+    pub fn _get_thread_policy(&self) -> Option<String> {
+        THREAD_POLICY.with(|p| p.borrow().clone())
+    }
 }
 
 impl Default for PolicyRegistry {
@@ -427,6 +494,100 @@ impl Default for PolicyRegistry {
 
 #[pymethods]
 impl PolicyRegistry {
+    fn set_thread_policy(&self, name: Option<String>) {
+        self._set_thread_policy(name);
+    }
+
+    fn get_thread_policy(&self) -> Option<String> {
+        self._get_thread_policy()
+    }
+
+    fn add_rule(
+        &self,
+        policy_name: String,
+        conditions: Bound<'_, PyList>,
+        priority: i32,
+    ) -> PyResult<()> {
+        let mut parsed_conditions = Vec::new();
+
+        for item in conditions.iter() {
+            #[allow(deprecated)]
+            let dict = item.downcast::<PyDict>().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err("Condition must be a dictionary")
+            })?;
+
+            let type_str: String = dict
+                .get_item("type")?
+                .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("type is required"))?
+                .extract()?;
+
+            match type_str.as_str() {
+                "host" => {
+                    let host: String = dict
+                        .get_item("value")?
+                        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("value is required"))?
+                        .extract()?;
+                    parsed_conditions.push(MatchCondition::Host(host));
+                }
+                "path" => {
+                    let path: String = dict
+                        .get_item("value")?
+                        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("value is required"))?
+                        .extract()?;
+                    parsed_conditions.push(MatchCondition::Path(path));
+                }
+                "method" => {
+                    let method: String = dict
+                        .get_item("value")?
+                        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("value is required"))?
+                        .extract()?;
+                    parsed_conditions.push(MatchCondition::Method(method));
+                }
+                "header" => {
+                    let name: String = dict
+                        .get_item("name")?
+                        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("name is required"))?
+                        .extract()?;
+                    let value: String = dict
+                        .get_item("value")?
+                        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("value is required"))?
+                        .extract()?;
+                    parsed_conditions.push(MatchCondition::Header(name, value));
+                }
+                _ => {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Unknown condition type: {}",
+                        type_str
+                    )));
+                }
+            }
+        }
+
+        let mut rules = self
+            .rules
+            .write()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+
+        rules.push(MatchingRule {
+            conditions: parsed_conditions,
+            policy_name,
+            priority,
+        });
+
+        // Keep rules sorted by priority (highest first)
+        rules.sort_by(|a, b| b.priority.cmp(&a.priority));
+
+        Ok(())
+    }
+
+    fn remove_all_rules(&self) -> PyResult<()> {
+        let mut rules = self
+            .rules
+            .write()
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        rules.clear();
+        Ok(())
+    }
     fn get_policy(&self, name: &str) -> bool {
         self._get_policy(name).is_some()
     }
@@ -853,15 +1014,30 @@ impl PolicyRegistry {
         policy_name: &str,
         func: Py<PyAny>,
     ) -> PyResult<Py<PyAny>> {
-        let policy = self._get_policy(policy_name).ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err(format!("Policy '{}' not found", policy_name))
+        let ctx = CallContext::new("execute".to_string());
+
+        // 1. Thread-local override
+        let final_policy_name = if let Some(thread_policy) = self._get_thread_policy() {
+            thread_policy
+        } else if policy_name.is_empty() || policy_name == "auto" {
+            // 2. Dynamic matching via rules
+            self.match_policy(&ctx).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("No matching policy found for this context")
+            })?
+        } else {
+            policy_name.to_string()
+        };
+
+        let policy = self._get_policy(&final_policy_name).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "Policy '{}' not found",
+                final_policy_name
+            ))
         })?;
 
         let p = policy
             .read()
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-
-        let ctx = CallContext::new("execute".to_string());
 
         p.execute(&ctx, func, py)
     }
@@ -873,15 +1049,30 @@ impl PolicyRegistry {
         func: Py<PyAny>,
         fallback: Py<PyAny>,
     ) -> PyResult<Py<PyAny>> {
-        let policy = self._get_policy(policy_name).ok_or_else(|| {
-            pyo3::exceptions::PyValueError::new_err(format!("Policy '{}' not found", policy_name))
+        let ctx = CallContext::new("execute".to_string());
+
+        // 1. Thread-local override
+        let final_policy_name = if let Some(thread_policy) = self._get_thread_policy() {
+            thread_policy
+        } else if policy_name.is_empty() || policy_name == "auto" {
+            // 2. Dynamic matching via rules
+            self.match_policy(&ctx).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("No matching policy found for this context")
+            })?
+        } else {
+            policy_name.to_string()
+        };
+
+        let policy = self._get_policy(&final_policy_name).ok_or_else(|| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "Policy '{}' not found",
+                final_policy_name
+            ))
         })?;
 
         let p = policy
             .read()
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-
-        let ctx = CallContext::new("execute".to_string());
 
         // Inject the fallback closure via thread_local so FallbackTransportLayer can access it
         FALLBACK_FN.with(|f| {

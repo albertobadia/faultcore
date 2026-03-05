@@ -94,6 +94,11 @@ fn get_policy_registry(py: Python<'_>) -> PyResult<Py<registry::PolicyRegistry>>
     Py::new(py, registry.clone())
 }
 
+#[pyfunction]
+fn set_thread_policy(name: Option<String>) {
+    registry::get_policy_registry()._set_thread_policy(name);
+}
+
 #[pymodule]
 fn _faultcore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(classify_exception, m)?)?;
@@ -103,6 +108,7 @@ fn _faultcore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(clear_keys, m)?)?;
     m.add_function(wrap_pyfunction!(get_feature_flag_manager, m)?)?;
     m.add_function(wrap_pyfunction!(get_policy_registry, m)?)?;
+    m.add_function(wrap_pyfunction!(set_thread_policy, m)?)?;
 
     m.add_class::<TimeoutPolicy>()?;
     m.add_class::<RetryPolicy>()?;

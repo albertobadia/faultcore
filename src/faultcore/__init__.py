@@ -17,7 +17,9 @@ from faultcore._faultcore import (
     clear_keys,
     get_feature_flag_manager as _get_feature_flag_manager,
     get_keys,
+    get_policy_registry,
     remove_key,
+    set_thread_policy as _set_thread_policy,
 )
 from faultcore.decorator import (
     apply_policy,
@@ -111,6 +113,27 @@ def update_policy_bundle(
     )
 
 
+class fault_context:
+    """Context manager to override the policy for the current thread/context."""
+
+    def __init__(self, policy_name: str | None):
+        self.policy_name = policy_name
+        self._prev_policy = None
+
+    def __enter__(self):
+        self._prev_policy = get_policy_registry().get_thread_policy()
+        _set_thread_policy(self.policy_name)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        _set_thread_policy(self._prev_policy)
+
+
+def set_thread_policy(policy_name: str | None):
+    """Set the policy override for the current thread."""
+    _set_thread_policy(policy_name)
+
+
 __all__ = [
     "Timeout",
     "Retry",
@@ -137,5 +160,7 @@ __all__ = [
     "network_queue",
     "apply_policy",
     "fault",
+    "fault_context",
+    "set_thread_policy",
     "is_interceptor_loaded",
 ]
