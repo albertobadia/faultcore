@@ -1,3 +1,4 @@
+import contextvars
 import os
 from pathlib import Path
 
@@ -28,6 +29,8 @@ from faultcore.decorator import (
     retry,
     timeout,
 )
+
+_FAULTCORE_CONTEXT_KEYS = contextvars.ContextVar("faultcore_context_keys", default=None)
 
 _cached_feature_flag_manager: FeatureFlagManager | None = None
 
