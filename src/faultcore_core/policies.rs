@@ -1,3 +1,5 @@
+use std::sync::{Arc, RwLock};
+
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
@@ -175,7 +177,7 @@ impl FallbackPolicy {
 #[pyclass]
 #[derive(Clone)]
 pub struct CircuitBreakerPolicy {
-    core: CircuitBreakerCore,
+    core: Arc<RwLock<CircuitBreakerCore>>,
 }
 
 #[pymethods]
@@ -184,40 +186,48 @@ impl CircuitBreakerPolicy {
     #[pyo3(signature = (failure_threshold=5, success_threshold=2, timeout_ms=30000))]
     fn new(failure_threshold: u32, success_threshold: u32, timeout_ms: u64) -> Self {
         Self {
-            core: CircuitBreakerCore::new(failure_threshold, success_threshold, timeout_ms),
+            core: Arc::new(RwLock::new(CircuitBreakerCore::new(
+                failure_threshold,
+                success_threshold,
+                timeout_ms,
+            ))),
         }
     }
 
     fn __call__(
-        &mut self,
+        &self,
         py: Python,
         func: Py<PyAny>,
         args: &Bound<'_, PyTuple>,
         kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Py<PyAny>> {
-        if self.core.is_open() && !self.core.can_attempt() {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "Circuit breaker is OPEN",
-            ));
+        {
+            let mut guard = self.core.write().unwrap();
+            if guard.is_open() && !guard.can_attempt() {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                    "Circuit breaker is OPEN",
+                ));
+            }
         }
 
         let result = func.call(py, args, kwargs);
 
-        match result {
-            Ok(value) => {
-                self.core.record_success();
-                Ok(value)
-            }
-            Err(e) => {
-                self.core.record_failure();
-                Err(e)
+        let is_ok = result.is_ok();
+        {
+            let mut guard = self.core.write().unwrap();
+            if is_ok {
+                guard.record_success();
+            } else {
+                guard.record_failure();
             }
         }
+        result
     }
 
     #[getter]
     fn state(&self) -> String {
-        match self.core.state() {
+        let guard = self.core.read().unwrap();
+        match guard.state() {
             CircuitState::Closed => "closed".to_string(),
             CircuitState::Open => "open".to_string(),
             CircuitState::HalfOpen => "half_open".to_string(),
@@ -225,11 +235,12 @@ impl CircuitBreakerPolicy {
     }
 
     fn __repr__(&self) -> String {
+        let guard = self.core.read().unwrap();
         format!(
             "CircuitBreakerPolicy(state={:?}, failures={}/{})",
-            self.core.state(),
-            self.core.failure_count,
-            self.core.failure_threshold
+            guard.state(),
+            guard.failure_count,
+            guard.failure_threshold
         )
     }
 }
