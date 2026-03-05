@@ -226,15 +226,18 @@ def fault(policy_name: str = "auto"):
 
 
 class _FaultWrapper:
-    """Unified wrapper that always delegates to registry.execute_policy()."""
+    _wrapper_attrs = ('__doc__', '__name__', '__module__', '__annotations__', '__wrapped__')
 
     def __init__(self, func, policy_name, registry):
-        self._func = func
-        self._policy_name = policy_name
-        self._registry = registry
-        self._is_async = _is_async(func)
-        self.__name__ = func.__name__
-        self.__doc__ = getattr(func, "__doc__", None)
+        object.__setattr__(self, '_func', func)
+        object.__setattr__(self, '_policy_name', policy_name)
+        object.__setattr__(self, '_registry', registry)
+        object.__setattr__(self, '_is_async', _is_async(func))
+
+    def __getattribute__(self, name):
+        if name in object.__getattribute__(self, '_wrapper_attrs'):
+            return getattr(object.__getattribute__(self, '_func'), name)
+        return object.__getattribute__(self, name)
 
     def __call__(self, *args, **kwargs):
         if self._is_async:
@@ -256,8 +259,6 @@ class _FaultWrapper:
 
 
 class _FaultFallbackWrapper:
-    """Wrapper specifically for fallback that passes the fallback closure to execute_policy_with_fallback."""
-
     def __init__(self, func, policy_name, registry, fallback_func):
         self._func = func
         self._policy_name = policy_name
@@ -272,33 +273,28 @@ class _FaultFallbackWrapper:
             return self._async_call(*args, **kwargs)
 
         def fallback_closure(**extra_kwargs):
-            # Try original args + original kwargs
             try:
                 return self._fallback_func(*args, **kwargs)
             except Exception:
                 pass
 
-            # Try everything
             full_kwargs = {**kwargs, **extra_kwargs}
             try:
                 return self._fallback_func(*args, **full_kwargs)
             except TypeError:
                 pass
 
-            # Just exception
             if "exception" in extra_kwargs:
                 try:
                     return self._fallback_func(extra_kwargs["exception"])
                 except TypeError:
                     pass
 
-            # Nothing
             try:
                 return self._fallback_func()
             except TypeError:
                 pass
 
-            # Final attempt
             return self._fallback_func(*args, **full_kwargs)
 
         def func_to_call():
@@ -308,33 +304,28 @@ class _FaultFallbackWrapper:
 
     async def _async_call(self, *args, **kwargs):
         def fallback_closure(**extra_kwargs):
-            # Try original args + original kwargs
             try:
                 return self._fallback_func(*args, **kwargs)
             except Exception:
                 pass
 
-            # Try everything
             full_kwargs = {**kwargs, **extra_kwargs}
             try:
                 return self._fallback_func(*args, **full_kwargs)
             except TypeError:
                 pass
 
-            # Just exception
             if "exception" in extra_kwargs:
                 try:
                     return self._fallback_func(extra_kwargs["exception"])
                 except TypeError:
                     pass
 
-            # Nothing
             try:
                 return self._fallback_func()
             except TypeError:
                 pass
 
-            # Final attempt
             return self._fallback_func(*args, **full_kwargs)
 
         def func_to_call():
@@ -347,8 +338,6 @@ class _FaultFallbackWrapper:
 
 
 class _FaultAsyncRetryWrapper:
-    """Async wrapper for retry that handles exponential backoff with asyncio.sleep."""
-
     def __init__(self, func, policy_name, registry, max_retries, backoff_ms, retry_on):
         self._func = func
         self._policy_name = policy_name

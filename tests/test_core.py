@@ -123,10 +123,8 @@ def test_rate_limit_decorator_exceeded():
     def my_func():
         return "ok"
 
-    # First call should succeed
     assert my_func() == "ok"
 
-    # Second call should fail (rate limit exceeded)
     try:
         my_func()
         # May not raise depending on timing

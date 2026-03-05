@@ -78,10 +78,6 @@ def test_network_queue_rate_limiting():
         network_call()
     duration = time.time() - start
 
-    # With rate=10/s and capacity=5, processing 15 items should take:
-    # First 5 items: immediately (capacity)
-    # Remaining 10 items: at 10 per second = 1 second
-    # Total: ~1 second minimum
     assert duration >= 0.9, f"Expected >= 0.9s, got {duration}s"
 
 

@@ -115,8 +115,6 @@ def update_policy_bundle(
 
 
 class fault_context:
-    """Context manager to set the call context and optionally override the policy."""
-
     def __init__(
         self,
         policy_name: str | None = None,
@@ -138,10 +136,6 @@ class fault_context:
         self._prev_policy = registry.get_thread_policy()
         if self.policy_name is not None:
             registry.set_thread_policy(self.policy_name)
-
-        # In a real implementation, we would also set the host/path/headers in a thread-local or contextvar
-        # For now, we'll focus on the policy override as that's what's currently supported in the Rust side.
-        # Phase 2 rule matching will use the CallContext passed to execute_policy.
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -150,7 +144,6 @@ class fault_context:
 
 
 def set_thread_policy(policy_name: str | None):
-    """Set the policy override for the current thread."""
     _set_thread_policy(policy_name)
 
 

@@ -41,12 +41,9 @@ impl TransportLayer for RetryTransportLayer {
                         if cats.is_empty()
                             || exc_type.contains("transient")
                             || exc_type.contains("runtime")
-                            || exc_type.contains("value")
                             || exc_type.contains("os")
                             || exc_type.contains("io")
                             || exc_type.contains("file")
-                            || exc_type.contains("attribute")
-                            || exc_type.contains("key")
                             || exc_type.contains("permission")
                         {
                             cats.push("transient");
