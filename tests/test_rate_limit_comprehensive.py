@@ -48,12 +48,10 @@ def test_rate_limit_rate_getter():
 
 def test_rate_limit_decorator_reuses_policy():
     call_count = [0]
-    policies = []
 
     @faultcore.rate_limit(10.0, 5)
     def limited_func():
         call_count[0] += 1
-        policies.append(limited_func._faultcore_policy)
         return "ok"
 
     for _ in range(3):

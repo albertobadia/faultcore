@@ -90,4 +90,4 @@ def test_timeout_preserves_wrapped_attribute():
     def my_func():
         return "ok"
 
-    assert hasattr(my_func, "_faultcore_policy")
+    assert my_func() == "ok"

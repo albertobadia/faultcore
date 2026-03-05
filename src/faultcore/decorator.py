@@ -1,212 +1,125 @@
 import asyncio
 import functools
 import inspect
-import sys
+import time
+import uuid
 
-from faultcore._faultcore import (
-    CircuitBreakerPolicy,
-    FallbackPolicy,
-    NetworkQueuePolicy,
-    RateLimitPolicy,
-    RetryPolicy,
-    TimeoutPolicy,
-)
+from faultcore._faultcore import classify_exception, get_policy_registry
 
 
 def _is_async(func):
-    return inspect.iscoroutinefunction(func)
+    if inspect.iscoroutinefunction(func):
+        return True
+    if callable(func):
+        return inspect.iscoroutinefunction(func.__call__)
+    return False
 
 
-def _wrap_sync(policy, func):
+def _get_registry():
+    return get_policy_registry()
+
+
+def _create_sync_wrapper(func, policy):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         return policy(func, args, kwargs)
 
-    wrapper._faultcore_policy = policy
     return wrapper
 
 
-def _wrap_retry_async(max_retries, backoff_ms, retry_on, func):
-    retry_types = None
-    if retry_on is not None:
-        retry_types = []
-        builtins = sys.modules.get("builtins")
-        for type_or_str in retry_on:
-            if isinstance(type_or_str, str):
-                if builtins is not None and hasattr(builtins, type_or_str):
-                    retry_types.append(getattr(builtins, type_or_str))
-            else:
-                retry_types.append(type_or_str)
-
+def _create_simple_async_wrapper(func):
     @functools.wraps(func)
-    async def wrapper(*args, **kwargs):
-        last_error: Exception | None = None
-        for attempt in range(max_retries + 1):
-            try:
-                return await func(*args, **kwargs)
-            except Exception as e:
-                last_error = e
-                if retry_types is not None:
-                    should_retry = any(isinstance(last_error, t) for t in retry_types)
-                else:
-                    should_retry = True
+    async def async_wrapper(*args, **kwargs):
+        return await async_wrapper._wrapped_func(*args, **kwargs)
 
-                if not should_retry or attempt == max_retries:
-                    raise last_error from last_error
-
-                await asyncio.sleep(backoff_ms / 1000.0)
-
-        raise last_error
-
-    wrapper._faultcore_policy = None
-    return wrapper
+    async_wrapper._wrapped_func = func
+    async_wrapper.__name__ = func.__name__
+    async_wrapper.__doc__ = getattr(func, "__doc__", None)
+    return async_wrapper
 
 
-class AsyncChaosWrapper:
-    def __init__(self, coro, policy, ticket=None):
-        self.coro = coro
-        self.policy = policy
-        self.ticket = ticket
-        self._entered = False
-        self._has_context = hasattr(policy, "_enter_thread_context") and hasattr(policy, "_exit_thread_context")
-
-    def __await__(self):
-        return self
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        return self.send(None)
-
-    def _enter_context(self):
-        if self._has_context and not self._entered:
-            self.policy._enter_thread_context()
-            self._entered = True
-
-    def _exit_context(self):
-        if self._has_context and self._entered:
-            self.policy._exit_thread_context()
-            self._entered = False
-
-    def send(self, value):
-        self._enter_context()
-        try:
-            result = self.coro.send(value)
-            self._exit_context()
-            return result
-        except StopIteration:
-            self._exit_context()
-            raise
-        except BaseException:
-            self._exit_context()
-            raise
-
-    async def _apply_latency_async(self):
-        if self.ticket is not None:
-            latency_ms = getattr(self.ticket, "latency_ms", 0)
-            if latency_ms and latency_ms > 0:
-                await asyncio.sleep(latency_ms / 1000.0)
-                if hasattr(self.ticket, "_release_async"):
-                    await self.ticket._release_async()
-                elif hasattr(self.ticket, "wait_and_release"):
-                    self.ticket.wait_and_release()
-
-    def throw(self, typ, val=None, tb=None):
-        self._enter_context()
-        try:
-            result = self.coro.throw(typ, val, tb)
-            self._exit_context()
-            return result
-        except StopIteration:
-            self._exit_context()
-            raise
-        except BaseException:
-            self._exit_context()
-            raise
-
-    def close(self):
-        self._exit_context()
-        return self.coro.close()
+def _attach_faultcore_attributes(wrapper, async_wrapper, func, policy):
+    return async_wrapper if _is_async(func) else wrapper
 
 
-def _wrap_async(policy, func):
-    @functools.wraps(func)
-    async def wrapper(*args, **kwargs):
-        coro = func(*args, **kwargs)
-
-        ticket = None
-        if hasattr(policy, "_get_async_ticket"):
-            ticket = policy._get_async_ticket()
-
-        return await AsyncChaosWrapper(coro, policy, ticket)
-
-    return wrapper
+def _decorate_func(func, policy, async_wrapper_generator=None):
+    wrapper = _create_sync_wrapper(func, policy)
+    if async_wrapper_generator:
+        async_wrapper = async_wrapper_generator(func)
+    else:
+        async_wrapper = _create_simple_async_wrapper(func)
+    return _attach_faultcore_attributes(wrapper, async_wrapper, func, policy)
 
 
-def _wrap_async_network_queue(policy, func):
-    @functools.wraps(func)
-    async def wrapper(*args, **kwargs):
-        ticket_info = policy._prepare_async_ticket()
-
-        if isinstance(ticket_info, Exception):
-            raise ticket_info
-
-        latency_ms = ticket_info.get("latency_ms", 0)
-
-        policy._enter_thread_context()
-
-        try:
-            result = await func(*args, **kwargs)
-
-            if latency_ms > 0:
-                await asyncio.sleep(latency_ms / 1000.0)
-
-            return result
-        finally:
-            policy._exit_thread_context()
-
-    return wrapper
-
-
-def _make_wrapper(policy, func, retry_max_retries=None, retry_backoff_ms=None, retry_retry_on=None):
-    if _is_async(func):
-        if retry_max_retries is not None:
-            return _wrap_retry_async(retry_max_retries, retry_backoff_ms, retry_retry_on, func)
-        if hasattr(policy, "_prepare_async_ticket"):
-            return _wrap_async_network_queue(policy, func)
-        return _wrap_async(policy, func)
-    return _wrap_sync(policy, func)
+def _should_retry(exception, retry_on):
+    if retry_on is None:
+        return True
+    if isinstance(retry_on, list) and len(retry_on) == 0:
+        return False
+    exception_type = type(exception).__name__
+    classified = classify_exception(exception)
+    retry_on_lower = [r.lower() for r in retry_on]
+    return exception_type.lower() in retry_on_lower or classified.lower() in retry_on_lower
 
 
 def timeout(timeout_ms: int):
-    policy = TimeoutPolicy(timeout_ms)
-    return lambda func: _make_wrapper(policy, func)
+    def decorator(func):
+        registry = _get_registry()
+        func_id = id(func)
+        policy_name = f"_timeout_{func_id}"
+        registry.register_timeout_layer(policy_name, timeout_ms)
+        if _is_async(func):
+            return _FaultAsyncWrapper(func, policy_name, registry)
+        return _FaultSyncWrapper(func, policy_name, registry)
+
+    return decorator
 
 
 def retry(max_retries: int = 3, backoff_ms: int = 100, retry_on: list = None):
-    if retry_on:
-        retry_on_tuple = tuple(retry_on)
-    else:
-        retry_on_tuple = None
+    def decorator(func):
+        registry = _get_registry()
+        func_id = id(func)
+        policy_name = f"_retry_{func_id}"
+        retry_on_list = list(retry_on) if retry_on is not None else None
+        registry.register_retry_layer(policy_name, max_retries, backoff_ms, retry_on_list)
+        if _is_async(func):
+            return _FaultAsyncWrapper(func, policy_name, registry, max_retries, backoff_ms, retry_on_list)
+        return _FaultSyncWrapper(func, policy_name, registry, max_retries, backoff_ms, retry_on_list)
 
-    policy = RetryPolicy(max_retries, backoff_ms, retry_on)
-    return lambda func: _make_wrapper(policy, func, max_retries, backoff_ms, retry_on_tuple)
+    return decorator
 
 
 def fallback(fallback_func):
-    policy = FallbackPolicy(fallback_func)
-    return lambda func: _make_wrapper(policy, func)
+    def decorator(func):
+        from faultcore._faultcore import FallbackPolicy
+
+        policy = FallbackPolicy(fallback_func)
+        return _decorate_func(func, policy)
+
+    return decorator
 
 
 def circuit_breaker(failure_threshold: int = 5, success_threshold: int = 2, timeout_ms: int = 30000):
-    policy = CircuitBreakerPolicy(failure_threshold, success_threshold, timeout_ms)
-    return lambda func: _make_wrapper(policy, func)
+    def decorator(func):
+        from faultcore._faultcore import CircuitBreakerPolicy
+
+        policy = CircuitBreakerPolicy(failure_threshold, success_threshold, timeout_ms)
+        return _decorate_func(func, policy)
+
+    return decorator
 
 
 def rate_limit(rate: float, capacity: int):
-    policy = RateLimitPolicy(rate, capacity)
-    return lambda func: _make_wrapper(policy, func)
+    unique_id = uuid.uuid4().hex
+
+    def decorator(func):
+        registry = _get_registry()
+        func_id = id(func)
+        policy_name = f"_ratelimit_{func_id}_{unique_id}"
+        registry.register_rate_limit_layer(policy_name, rate, capacity)
+        return _FaultSyncWrapper(func, policy_name, registry)
+
+    return decorator
 
 
 def network_queue(
@@ -216,10 +129,43 @@ def network_queue(
     packet_loss: float = 0.0,
     latency_ms: int = 0,
 ):
-    policy = NetworkQueuePolicy(
-        rate=rate, capacity=capacity, max_queue_size=max_queue_size, packet_loss=packet_loss, latency_ms=latency_ms
-    )
-    return lambda func: _make_wrapper(policy, func)
+    def decorator(func):
+        from faultcore._faultcore import NetworkQueuePolicy
+
+        policy = NetworkQueuePolicy(
+            rate=rate, capacity=capacity, max_queue_size=max_queue_size, packet_loss=packet_loss, latency_ms=latency_ms
+        )
+
+        wrapper = _create_sync_wrapper(func, policy)
+
+        @functools.wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            ticket_info = policy._prepare_async_ticket()
+
+            if isinstance(ticket_info, Exception):
+                raise ticket_info
+
+            latency_ms_val = ticket_info.get("latency_ms", 0)
+
+            policy._enter_thread_context()
+
+            try:
+                result = await func(*args, **kwargs)
+
+                if latency_ms_val > 0:
+                    await asyncio.sleep(latency_ms_val / 1000.0)
+
+                return result
+            finally:
+                policy._exit_thread_context()
+
+        async_wrapper._wrapped_func = func
+        async_wrapper.__name__ = func.__name__
+        async_wrapper.__doc__ = getattr(func, "__doc__", None)
+
+        return _attach_faultcore_attributes(wrapper, async_wrapper, func, policy)
+
+    return decorator
 
 
 def apply_policy(key: str):
@@ -238,80 +184,49 @@ class _DynamicPolicyWrapper:
         self._func = func
         self._key = key
         self._manager = manager
-        self._policies = []
-
-    def _build_policies(self):
-        config = self._manager.get(self._key)
-        if config is None:
-            raise ValueError(f"Policy bundle '{self._key}' not found")
-
-        policies = []
-
-        if config.get("timeout_ms"):
-            policies.append(TimeoutPolicy(config["timeout_ms"]))
-
-        if config.get("retry_max_retries") is not None:
-            policies.append(
-                RetryPolicy(
-                    config["retry_max_retries"],
-                    config.get("retry_backoff_ms", 100),
-                    config.get("retry_on"),
-                )
-            )
-
-        if config.get("circuit_breaker_failure_threshold") is not None:
-            policies.append(
-                CircuitBreakerPolicy(
-                    config["circuit_breaker_failure_threshold"],
-                    config.get("circuit_breaker_success_threshold", 2),
-                    config.get("circuit_breaker_timeout_ms", 30000),
-                )
-            )
-
-        if config.get("rate_limit_rate") is not None:
-            policies.append(
-                RateLimitPolicy(
-                    config["rate_limit_rate"],
-                    config.get("rate_limit_capacity", 100),
-                )
-            )
-
-        return policies
-
-    def _apply_policies(self, func, args, kwargs):
-        if not self._manager.is_enabled(self._key):
-            return func(*args, **kwargs)
-
-        policies = self._build_policies()
-        if not policies:
-            return func(*args, **kwargs)
-
-        result = None
-        error = None
-        for policy in policies:
-            try:
-                result = policy(func, args, kwargs)
-                error = None
-                break
-            except Exception as e:
-                error = e
-
-        if error:
-            raise error
-        return result
 
     def __call__(self, *args, **kwargs):
-        return self._apply_policies(self._func, args, kwargs)
+        if not self._manager.is_enabled(self._key):
+            return self._func(*args, **kwargs)
+
+        config = self._manager.get(self._key)
+        if config is None:
+            return self._func(*args, **kwargs)
+
+        registry = _get_registry()
+
+        policy_parts = [self._key]
+        if config.get("timeout_ms"):
+            policy_parts.append(f"t{config['timeout_ms']}")
+        if config.get("retry_max_retries") is not None:
+            policy_parts.append(f"r{config['retry_max_retries']}")
+        if config.get("circuit_breaker_failure_threshold") is not None:
+            policy_parts.append(f"cb{config['circuit_breaker_failure_threshold']}")
+        if config.get("rate_limit_rate") is not None:
+            policy_parts.append(f"rl{config['rate_limit_rate']}")
+
+        policy_name = "_".join(policy_parts)
+
+        if config.get("timeout_ms") and not registry.get_policy(policy_name):
+            registry.register_timeout_layer(policy_name, config["timeout_ms"])
+        if config.get("retry_max_retries") is not None and not registry.get_policy(policy_name):
+            registry.register_retry_layer(policy_name, config["retry_max_retries"], config.get("retry_backoff_ms", 100))
+        if config.get("rate_limit_rate") is not None and not registry.get_policy(policy_name):
+            registry.register_rate_limit_layer(
+                policy_name, config["rate_limit_rate"], config.get("rate_limit_capacity", 100)
+            )
+
+        def func_to_call():
+            return self._func(*args, **kwargs)
+
+        return registry.execute_policy(policy_name, func_to_call)
 
     def __get__(self, obj, objtype=None):
         return self
 
 
 def fault(policy_name: str):
-    """Decorator that applies a policy from the PolicyRegistry."""
-    from faultcore._faultcore import PolicyRegistry
-
-    registry = PolicyRegistry()
+    registry = _get_registry()
 
     def decorator(func):
         if _is_async(func):
@@ -322,44 +237,74 @@ def fault(policy_name: str):
 
 
 class _FaultSyncWrapper:
-    def __init__(self, func, policy_name, registry):
+    def __init__(self, func, policy_name, registry, max_retries=None, backoff_ms=None, retry_on=None):
         self._func = func
         self._policy_name = policy_name
         self._registry = registry
+        self._max_retries = max_retries
+        self._backoff_ms = backoff_ms
+        self._retry_on = retry_on
+        self.__name__ = func.__name__
+        self.__doc__ = getattr(func, "__doc__", None)
 
     def __call__(self, *args, **kwargs):
-        policy = self._registry.get_policy(self._policy_name)
-        if policy is None:
+        if not self._registry.is_policy_enabled(self._policy_name):
             return self._func(*args, **kwargs)
 
-        policy_lock = policy
-        with policy_lock as p:
-            if not p.enabled:
+        if self._max_retries is not None:
+            last_exception = None
+            for attempt in range(self._max_retries + 1):
+                try:
+                    return self._func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    if not _should_retry(e, self._retry_on):
+                        raise
+                    if attempt < self._max_retries:
+                        delay = self._backoff_ms * (2**attempt) / 1000.0
+                        time.sleep(delay)
+            raise last_exception
+        else:
+
+            def func_to_call():
                 return self._func(*args, **kwargs)
 
-        return self._func(*args, **kwargs)
+            return self._registry.execute_policy(self._policy_name, func_to_call)
 
     def __repr__(self):
         return f"<FaultSyncWrapper({self._policy_name}) for {self._func}>"
 
 
 class _FaultAsyncWrapper:
-    def __init__(self, func, policy_name, registry):
+    def __init__(self, func, policy_name, registry, max_retries=None, backoff_ms=None, retry_on=None):
         self._func = func
         self._policy_name = policy_name
         self._registry = registry
+        self._max_retries = max_retries
+        self._backoff_ms = backoff_ms
+        self._retry_on = retry_on
+        self.__name__ = func.__name__
+        self.__doc__ = getattr(func, "__doc__", None)
 
     async def __call__(self, *args, **kwargs):
-        policy = self._registry.get_policy(self._policy_name)
-        if policy is None:
+        if not self._registry.is_policy_enabled(self._policy_name):
             return await self._func(*args, **kwargs)
 
-        policy_lock = policy
-        with policy_lock as p:
-            if not p.enabled:
-                return await self._func(*args, **kwargs)
-
-        return await self._func(*args, **kwargs)
+        if self._max_retries is not None:
+            last_exception = None
+            for attempt in range(self._max_retries + 1):
+                try:
+                    return await self._func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    if not _should_retry(e, self._retry_on):
+                        raise
+                    if attempt < self._max_retries:
+                        delay = self._backoff_ms * (2**attempt) / 1000.0
+                        await asyncio.sleep(delay)
+            raise last_exception
+        else:
+            return await self._func(*args, **kwargs)
 
     def __repr__(self):
         return f"<FaultAsyncWrapper({self._policy_name}) for {self._func}>"

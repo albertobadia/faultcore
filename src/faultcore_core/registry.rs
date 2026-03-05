@@ -1,30 +1,16 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
+use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
 static CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-#[allow(dead_code)]
-#[derive(Clone, Debug)]
-pub enum Scope {
-    Policy,
-    Function,
-    Thread,
-    Call,
-}
+static POLICY_REGISTRY: std::sync::OnceLock<PolicyRegistry> = std::sync::OnceLock::new();
 
-#[allow(dead_code)]
-impl Scope {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "function" => Scope::Function,
-            "thread" => Scope::Thread,
-            "call" => Scope::Call,
-            _ => Scope::Policy,
-        }
-    }
+pub fn get_policy_registry() -> &'static PolicyRegistry {
+    POLICY_REGISTRY.get_or_init(PolicyRegistry::new)
 }
 
 #[derive(Clone, Debug)]
@@ -48,8 +34,13 @@ impl CallContext {
 
 pub enum PolicyResult {
     Ok(Py<PyAny>),
-    Drop { reason: &'static str },
-    Error(String),
+    Drop {
+        reason: &'static str,
+    },
+    Error {
+        message: String,
+        exception: Option<Py<PyAny>>,
+    },
 }
 
 impl PolicyResult {
@@ -62,7 +53,7 @@ impl PolicyResult {
     }
 
     pub fn is_error(&self) -> bool {
-        matches!(self, PolicyResult::Error(..))
+        matches!(self, PolicyResult::Error { .. })
     }
 }
 
@@ -94,7 +85,50 @@ pub trait ChaosLayer: Send + Sync {
     }
 }
 
-pub type Next = Arc<dyn Fn() -> PolicyResult + Send + Sync>;
+pub struct Next {
+    inner: Arc<dyn Fn() -> PolicyResult + Send + Sync>,
+}
+
+impl Next {
+    pub fn new<F>(f: F) -> Self
+    where
+        F: Fn() -> PolicyResult + Send + Sync + 'static,
+    {
+        Next { inner: Arc::new(f) }
+    }
+
+    pub fn from_box(box_fn: Box<dyn Fn() -> PolicyResult + Send + Sync>) -> Self {
+        Next {
+            inner: Arc::from(box_fn),
+        }
+    }
+
+    pub fn call(&self) -> PolicyResult {
+        (self.inner)()
+    }
+}
+
+impl From<Box<dyn Fn() -> PolicyResult + Send + Sync>> for Next {
+    fn from(box_fn: Box<dyn Fn() -> PolicyResult + Send + Sync>) -> Self {
+        Next::from_box(box_fn)
+    }
+}
+
+impl Clone for Next {
+    fn clone(&self) -> Self {
+        Next {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+impl std::ops::Deref for Next {
+    type Target = dyn Fn() -> PolicyResult + Send + Sync;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.inner
+    }
+}
 
 pub struct Policy {
     pub name: String,
@@ -137,7 +171,7 @@ impl Policy {
 
     pub fn execute(
         &self,
-        _ctx: &CallContext,
+        ctx: &CallContext,
         func: Py<PyAny>,
         py: Python<'_>,
     ) -> PyResult<Py<PyAny>> {
@@ -145,16 +179,124 @@ impl Policy {
             return func.call(py, (), None);
         }
 
-        for _ in &self.l4_transport {}
-        for _ in &self.l3_routing {}
-        for _ in &self.l2_qos {}
-        for _ in &self.l1_chaos {}
+        let func = func.clone_ref(py);
 
-        func.call(py, (), None)
+        let inner_call = move || -> PolicyResult {
+            Python::attach(|py| {
+                func.call(py, (), None)
+                    .map(PolicyResult::Ok)
+                    .unwrap_or_else(|e: pyo3::PyErr| {
+                        let err_type = e
+                            .get_type(py)
+                            .name()
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|_| "RuntimeError".to_string());
+                        let err_msg = e
+                            .value(py)
+                            .str()
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|_| e.to_string());
+                        PolicyResult::Error {
+                            message: format!("{}: {}", err_type, err_msg),
+                            exception: Some(e.into_py_any(py).unwrap()),
+                        }
+                    })
+            })
+        };
+
+        let base_next = Next::new(inner_call);
+
+        let next_l1: Next = if self.l1_chaos.is_empty() {
+            base_next.clone()
+        } else {
+            let mut next = base_next.clone();
+            for layer in self.l1_chaos.iter().rev() {
+                let layer = layer.clone();
+                let ctx = ctx.clone();
+                let prev_next = next.clone();
+                next = Next::new(move || layer.execute(&ctx, prev_next.clone()));
+            }
+            next
+        };
+
+        let next_l2: Next = if self.l2_qos.is_empty() {
+            next_l1.clone()
+        } else {
+            let mut next = next_l1.clone();
+            for layer in self.l2_qos.iter().rev() {
+                let layer = layer.clone();
+                let ctx = ctx.clone();
+                let prev_next = next.clone();
+                next = Next::new(move || layer.execute(&ctx, prev_next.clone()));
+            }
+            next
+        };
+
+        let next_l3: Next = if self.l3_routing.is_empty() {
+            next_l2.clone()
+        } else {
+            let mut next = next_l2.clone();
+            for layer in self.l3_routing.iter().rev() {
+                let layer = layer.clone();
+                let ctx = ctx.clone();
+                let prev_next = next.clone();
+                next = Next::new(move || layer.execute(&ctx, prev_next.clone()));
+            }
+            next
+        };
+
+        let final_next: Next = if self.l4_transport.is_empty() {
+            next_l3.clone()
+        } else {
+            let mut next = next_l3.clone();
+            for layer in self.l4_transport.iter().rev() {
+                let layer = layer.clone();
+                let ctx = ctx.clone();
+                let prev_next = next.clone();
+                next = Next::new(move || layer.execute(&ctx, prev_next.clone()));
+            }
+            next
+        };
+
+        let result = final_next.call();
+
+        match result {
+            PolicyResult::Ok(value) => Ok(value),
+            PolicyResult::Error { message, exception } => {
+                if let Some(exc) = exception {
+                    Python::attach(|py| {
+                        let err = exc.into_bound(py);
+                        Err(PyErr::from_value(err))
+                    })
+                } else {
+                    let (err_type, err_msg) = if let Some(pos) = message.find(':') {
+                        (
+                            message[..pos].trim().to_string(),
+                            message[pos + 1..].trim().to_string(),
+                        )
+                    } else {
+                        ("RuntimeError".to_string(), message.clone())
+                    };
+
+                    Python::attach(|py| {
+                        if let Ok(exc_type) = py.import("builtins")?.getattr(err_type)
+                            && let Ok(instance) = exc_type.call1((err_msg,))
+                        {
+                            return Err(PyErr::from_value(instance));
+                        }
+                        Err(pyo3::exceptions::PyRuntimeError::new_err(message))
+                    })
+                }
+            }
+            PolicyResult::Drop { reason } => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                format!("Request dropped: {}", reason),
+            )),
+        }
     }
 }
 
 #[pyclass]
+#[derive(Clone)]
 pub struct PolicyRegistry {
     policies: Arc<Mutex<std::collections::HashMap<String, Arc<RwLock<Policy>>>>>,
 }
@@ -166,7 +308,7 @@ impl PolicyRegistry {
         }
     }
 
-    pub fn get_policy(&self, name: &str) -> Option<Arc<RwLock<Policy>>> {
+    fn _get_policy(&self, name: &str) -> Option<Arc<RwLock<Policy>>> {
         self.policies.lock().ok().and_then(|p| p.get(name).cloned())
     }
 
@@ -196,7 +338,7 @@ impl PolicyRegistry {
     }
 
     pub fn get_or_create(&self, name: &str) -> Arc<RwLock<Policy>> {
-        if let Some(policy) = self.get_policy(name) {
+        if let Some(policy) = self._get_policy(name) {
             return policy;
         }
 
@@ -211,7 +353,7 @@ impl PolicyRegistry {
     }
 
     pub fn enable(&self, name: &str) -> bool {
-        self.get_policy(name)
+        self._get_policy(name)
             .map(|p| {
                 if let Ok(mut policy) = p.write() {
                     policy.enabled = true;
@@ -224,7 +366,7 @@ impl PolicyRegistry {
     }
 
     pub fn disable(&self, name: &str) -> bool {
-        self.get_policy(name)
+        self._get_policy(name)
             .map(|p| {
                 if let Ok(mut policy) = p.write() {
                     policy.enabled = false;
@@ -237,13 +379,13 @@ impl PolicyRegistry {
     }
 
     pub fn is_enabled(&self, name: &str) -> bool {
-        self.get_policy(name)
+        self._get_policy(name)
             .map(|p| p.read().map(|policy| policy.enabled).unwrap_or(false))
             .unwrap_or(false)
     }
 
     pub fn reset(&self, name: &str) -> bool {
-        self.get_policy(name)
+        self._get_policy(name)
             .map(|p| {
                 if let Ok(mut policy) = p.write() {
                     policy.enabled = true;
@@ -264,6 +406,16 @@ impl Default for PolicyRegistry {
 
 #[pymethods]
 impl PolicyRegistry {
+    fn get_policy(&self, name: &str) -> bool {
+        self._get_policy(name).is_some()
+    }
+
+    fn is_policy_enabled(&self, name: &str) -> bool {
+        self._get_policy(name)
+            .map(|p| p.read().map(|policy| policy.enabled).unwrap_or(false))
+            .unwrap_or(false)
+    }
+
     fn register_timeout_layer(&self, policy_name: &str, timeout_ms: u64) -> PyResult<()> {
         let policy = self.get_or_create(policy_name);
         let mut p = policy
@@ -276,19 +428,16 @@ impl PolicyRegistry {
 
         impl TransportLayer for TimeoutLayer {
             fn execute(&self, _ctx: &CallContext, next: Next) -> PolicyResult {
-                let timeout = std::time::Duration::from_millis(self.timeout_ms);
                 let start = std::time::Instant::now();
-                let result = std::thread::spawn(move || next()).join();
+                let result = next.call();
 
-                match result {
-                    Ok(r) => {
-                        if start.elapsed() > timeout {
-                            return PolicyResult::Error("Timeout exceeded".to_string());
-                        }
-                        r
-                    }
-                    Err(_) => PolicyResult::Error("Thread panicked".to_string()),
+                if start.elapsed().as_millis() > self.timeout_ms as u128 {
+                    return PolicyResult::Error {
+                        message: "Timeout exceeded".to_string(),
+                        exception: None,
+                    };
                 }
+                result
             }
 
             fn name(&self) -> &str {
@@ -305,28 +454,50 @@ impl PolicyRegistry {
         policy_name: &str,
         max_retries: u32,
         backoff_ms: u64,
+        retry_on: Option<Vec<String>>,
     ) -> PyResult<()> {
         let policy = self.get_or_create(policy_name);
         let mut p = policy
             .write()
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
 
+        let retry_on = retry_on.unwrap_or_else(|| {
+            vec![
+                "Transient".to_string(),
+                "Timeout".to_string(),
+                "Network".to_string(),
+                "Connection".to_string(),
+                "Error".to_string(),
+                "Exception".to_string(),
+            ]
+        });
+
         struct RetryTransportLayer {
             max_retries: u32,
             backoff_ms: u64,
+            retry_on: Vec<String>,
         }
 
         impl TransportLayer for RetryTransportLayer {
             fn execute(&self, _ctx: &CallContext, next: Next) -> PolicyResult {
-                let mut last_error: Option<String> = None;
+                let mut last_error: Option<(String, Option<Py<PyAny>>)> = None;
 
                 for attempt in 0..=self.max_retries {
                     let result = next();
 
                     match result {
                         PolicyResult::Ok(_) => return result,
-                        PolicyResult::Error(e) => {
-                            last_error = Some(e);
+                        PolicyResult::Error { message, exception } => {
+                            let should_retry = self
+                                .retry_on
+                                .iter()
+                                .any(|exc| message.to_lowercase().contains(&exc.to_lowercase()));
+
+                            if !should_retry {
+                                return PolicyResult::Error { message, exception };
+                            }
+
+                            last_error = Some((message, exception));
                             if attempt < self.max_retries {
                                 std::thread::sleep(std::time::Duration::from_millis(
                                     self.backoff_ms,
@@ -334,7 +505,7 @@ impl PolicyRegistry {
                             }
                         }
                         PolicyResult::Drop { reason } => {
-                            last_error = Some(reason.to_string());
+                            last_error = Some((reason.to_string(), None));
                             if attempt < self.max_retries {
                                 std::thread::sleep(std::time::Duration::from_millis(
                                     self.backoff_ms,
@@ -344,7 +515,14 @@ impl PolicyRegistry {
                     }
                 }
 
-                PolicyResult::Error(last_error.unwrap_or_else(|| "Retry exhausted".to_string()))
+                if let Some((message, exception)) = last_error {
+                    PolicyResult::Error { message, exception }
+                } else {
+                    PolicyResult::Error {
+                        message: "Retry exhausted".to_string(),
+                        exception: None,
+                    }
+                }
             }
 
             fn name(&self) -> &str {
@@ -355,6 +533,7 @@ impl PolicyRegistry {
         p.add_transport_layer(Arc::new(RetryTransportLayer {
             max_retries,
             backoff_ms,
+            retry_on,
         }));
         Ok(())
     }
@@ -461,7 +640,7 @@ impl PolicyRegistry {
         policy_name: &str,
         func: Py<PyAny>,
     ) -> PyResult<Py<PyAny>> {
-        let policy = self.get_policy(policy_name).ok_or_else(|| {
+        let policy = self._get_policy(policy_name).ok_or_else(|| {
             pyo3::exceptions::PyValueError::new_err(format!("Policy '{}' not found", policy_name))
         })?;
 

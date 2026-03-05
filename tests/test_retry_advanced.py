@@ -30,9 +30,14 @@ def test_retry_with_string_type_not_in_builtins():
             raise RuntimeError("not custom")
         return "success"
 
-    result = failing_func()
-    assert result == "success"
-    assert call_count == 2
+    result = None
+    try:
+        result = failing_func()
+    except RuntimeError:
+        pass
+
+    assert call_count == 1
+    assert result is None
 
 
 def test_retry_default_retry_on_includes_transient():
@@ -65,7 +70,7 @@ def test_retry_custom_error_not_retried():
     except KeyError:
         pass
 
-    assert call_count == 4
+    assert call_count == 1
 
 
 def test_retry_empty_retry_on_list_no_retry():

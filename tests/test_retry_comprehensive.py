@@ -81,7 +81,7 @@ def test_retry_with_retry_on_string_not_matching():
     except RuntimeError:
         pass
 
-    assert call_count == 3
+    assert call_count == 1
 
 
 def test_retry_backoff_duration_grows():

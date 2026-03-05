@@ -57,7 +57,7 @@ def test_retry_decorator_no_retry_on_non_retryable():
     except TypeError:
         pass
 
-    assert call_count == 4
+    assert call_count == 1
 
 
 def test_fallback_decorator():

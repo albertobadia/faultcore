@@ -88,6 +88,12 @@ fn get_feature_flag_manager(py: Python<'_>) -> PyResult<Py<PyAny>> {
     manager.clone().into_py_any(py)
 }
 
+#[pyfunction]
+fn get_policy_registry(py: Python<'_>) -> PyResult<Py<registry::PolicyRegistry>> {
+    let registry = registry::get_policy_registry();
+    Py::new(py, registry.clone())
+}
+
 #[pymodule]
 fn _faultcore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(classify_exception, m)?)?;
@@ -96,6 +102,7 @@ fn _faultcore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(remove_key, m)?)?;
     m.add_function(wrap_pyfunction!(clear_keys, m)?)?;
     m.add_function(wrap_pyfunction!(get_feature_flag_manager, m)?)?;
+    m.add_function(wrap_pyfunction!(get_policy_registry, m)?)?;
 
     m.add_class::<TimeoutPolicy>()?;
     m.add_class::<RetryPolicy>()?;
