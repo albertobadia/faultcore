@@ -12,7 +12,6 @@ def _is_async(func):
     if inspect.iscoroutinefunction(func):
         return True
     if callable(func):
-        # Some wrappers might have an async __call__
         if inspect.iscoroutinefunction(func.__call__):
             return True
     return False
@@ -243,8 +242,6 @@ class _FaultWrapper:
         if self._is_async:
             return self._async_call(*args, **kwargs)
 
-        # "auto" or empty string signals dynamic rule-based matching in Rust.
-        # We also want to delegate if there might be a thread-local override.
         if self._policy_name == "auto" or not self._policy_name:
 
             def func_to_call():
