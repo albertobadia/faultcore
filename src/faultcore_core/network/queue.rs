@@ -273,8 +273,7 @@ impl NetworkTicket {
 
             let rate = self.rate;
             if rate > 0.0 {
-                let mbps = rate;
-                let bytes_per_sec = mbps * 1024.0 * 1024.0 / 8.0;
+                let bytes_per_sec = rate / 8.0;
                 let assumed_chunk_size = 10240.0;
                 let time_needed = assumed_chunk_size / bytes_per_sec;
                 std::thread::sleep(std::time::Duration::from_secs_f64(time_needed));
