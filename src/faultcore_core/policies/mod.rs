@@ -1,10 +1,5 @@
-pub mod async_retry;
-pub mod circuit_breaker;
 pub mod rate_limit;
-pub mod retry;
 pub mod timeout;
-
-pub use async_retry::AsyncRetryPolicy;
 
 use std::sync::Arc;
 
@@ -17,9 +12,7 @@ use pyo3::types::{PyDict, PyTuple};
 use crate::network::queue::{
     NetworkQueueConfig, NetworkQueueCore as NetworkQueueCoreInner, QueueError, QueueStrategy,
 };
-use crate::policies::circuit_breaker::{CircuitBreakerPolicy as CircuitBreakerCore, CircuitState};
 use crate::policies::rate_limit::RateLimitPolicy as RateLimitCore;
-use crate::policies::retry::{ErrorClass, RetryPolicy as RetryCore};
 use crate::policies::timeout::TimeoutPolicy as TimeoutCore;
 use crate::system::shm;
 
@@ -73,71 +66,6 @@ impl TimeoutPolicy {
     }
 }
 
-#[pyclass(from_py_object)]
-#[derive(Clone)]
-pub struct RetryPolicy {
-    core: RetryCore,
-}
-
-#[pymethods]
-impl RetryPolicy {
-    #[new]
-    #[pyo3(signature = (max_retries, backoff_ms=100, retry_on=None))]
-    fn new(max_retries: u32, backoff_ms: u64, retry_on: Option<Vec<String>>) -> Self {
-        Self {
-            core: RetryCore::new(max_retries, backoff_ms, retry_on),
-        }
-    }
-
-    fn __call__(
-        &self,
-        py: Python,
-        func: Py<PyAny>,
-        args: &Bound<'_, PyTuple>,
-        kwargs: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<Py<PyAny>> {
-        for attempt in 0..=self.core.max_retries {
-            let result = func.call(py, args, kwargs);
-
-            match result {
-                Ok(value) => return Ok(value),
-                Err(e) => {
-                    let error_val = e.value(py);
-                    let error_class = classify_exception(error_val.as_any());
-
-                    if !self.core.should_retry(&error_class) || attempt == self.core.max_retries {
-                        return Err(e);
-                    }
-
-                    if attempt < self.core.max_retries {
-                        std::thread::sleep(self.core.backoff_duration(attempt));
-                    }
-                }
-            }
-        }
-
-        Err(pyo3::exceptions::PyRuntimeError::new_err("Retry exhausted"))
-    }
-
-    #[getter]
-    fn max_retries(&self) -> u32 {
-        self.core.max_retries
-    }
-
-    #[getter]
-    fn backoff_ms(&self) -> u64 {
-        self.core.backoff.as_millis() as u64
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "RetryPolicy(max_retries={}, backoff_ms={})",
-            self.core.max_retries,
-            self.core.backoff.as_millis()
-        )
-    }
-}
-
 #[pyclass]
 pub struct FallbackPolicy {
     fallback: Py<PyAny>,
@@ -181,75 +109,6 @@ impl FallbackPolicy {
 
     fn __repr__(&self) -> String {
         "FallbackPolicy(...)".to_string()
-    }
-}
-
-#[pyclass(from_py_object)]
-#[derive(Clone)]
-pub struct CircuitBreakerPolicy {
-    core: Arc<RwLock<CircuitBreakerCore>>,
-}
-
-#[pymethods]
-impl CircuitBreakerPolicy {
-    #[new]
-    #[pyo3(signature = (failure_threshold=5, success_threshold=2, timeout_ms=30000))]
-    fn new(failure_threshold: u32, success_threshold: u32, timeout_ms: u64) -> Self {
-        Self {
-            core: Arc::new(RwLock::new(CircuitBreakerCore::new(
-                failure_threshold,
-                success_threshold,
-                timeout_ms,
-            ))),
-        }
-    }
-
-    fn __call__(
-        &self,
-        py: Python,
-        func: Py<PyAny>,
-        args: &Bound<'_, PyTuple>,
-        kwargs: Option<&Bound<'_, PyDict>>,
-    ) -> PyResult<Py<PyAny>> {
-        {
-            let mut guard = self.core.write();
-            if guard.is_open() && !guard.can_attempt() {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                    "Circuit breaker is OPEN",
-                ));
-            }
-        }
-
-        let result = func.call(py, args, kwargs);
-
-        let is_ok = result.is_ok();
-        {
-            let mut guard = self.core.write();
-            if is_ok {
-                guard.record_success();
-            } else {
-                guard.record_failure();
-            }
-        }
-        result
-    }
-
-    #[getter]
-    fn state(&self) -> String {
-        let guard = self.core.read();
-        match guard.state {
-            CircuitState::Closed => "closed".to_string(),
-            CircuitState::Open => "open".to_string(),
-            CircuitState::HalfOpen => "half_open".to_string(),
-        }
-    }
-
-    fn __repr__(&self) -> String {
-        let guard = self.core.read();
-        format!(
-            "CircuitBreakerPolicy(state={:?}, failures={}/{})",
-            guard.state, guard.failure_count, guard.failure_threshold
-        )
     }
 }
 
@@ -540,39 +399,4 @@ impl NetworkQueuePolicy {
             self.core.max_queue_size()
         )
     }
-}
-
-fn classify_exception(exc: &Bound<'_, PyAny>) -> ErrorClass {
-    let exc_type = exc.get_type();
-    let name = match exc_type.name() {
-        Ok(n) => n,
-        Err(_) => return ErrorClass::Transient,
-    };
-
-    let name_lower = name.to_cow().unwrap_or_default().to_lowercase();
-
-    if name_lower.contains("timeout") || name_lower.contains("timedout") {
-        return ErrorClass::Timeout;
-    }
-    if name_lower.contains("rate")
-        && (name_lower.contains("limit") || name_lower.contains("throttle"))
-    {
-        return ErrorClass::RateLimit;
-    }
-    if name_lower.contains("connection")
-        || name_lower.contains("network")
-        || name_lower.contains("remote")
-        || name_lower.contains("disconnected")
-        || name_lower.contains("protocol")
-    {
-        return ErrorClass::Network;
-    }
-    if name_lower.contains("transient")
-        || (name_lower.contains("value") && !name_lower.contains("type"))
-        || (name_lower.contains("runtime") && !name_lower.contains("type"))
-    {
-        return ErrorClass::Transient;
-    }
-
-    ErrorClass::Transient
 }

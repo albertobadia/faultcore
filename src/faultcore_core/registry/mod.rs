@@ -11,12 +11,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
 use crate::registry::context::CallContext;
-use crate::registry::layers::circuit_breaker::CircuitBreakerLayer;
-use crate::registry::layers::fallback::FallbackLayer;
 use crate::registry::layers::latency::LatencyChaosLayer;
 use crate::registry::layers::packet_loss::PacketLossChaosLayer;
 use crate::registry::layers::rate_limit::RateLimitQosLayer;
-use crate::registry::layers::retry::RetryTransportLayer;
 use crate::registry::layers::timeout::TimeoutLayer;
 use crate::registry::matching::{MatchCondition, MatchingRule};
 use crate::registry::policy::Policy;
@@ -118,25 +115,6 @@ impl PolicyRegistry {
                             let ms: u64 = dict.get_item("timeout_ms")?.unwrap().extract()?;
                             policy.add_transport_layer(Arc::new(TimeoutLayer { timeout_ms: ms }));
                         }
-                        "circuit_breaker" => {
-                            let failure_threshold: u32 =
-                                dict.get_item("failure_threshold")?.unwrap().extract()?;
-                            let success_threshold: u32 = dict
-                                .get_item("success_threshold")?
-                                .map(|i| i.extract())
-                                .transpose()?
-                                .unwrap_or(1);
-                            let timeout_ms: u64 =
-                                dict.get_item("timeout_ms")?.unwrap().extract()?;
-
-                            use crate::policies::circuit_breaker::CircuitBreakerPolicy as CircuitBreakerCore;
-                            let core = Arc::new(RwLock::new(CircuitBreakerCore::new(
-                                failure_threshold,
-                                success_threshold,
-                                timeout_ms,
-                            )));
-                            policy.add_transport_layer(Arc::new(CircuitBreakerLayer { core }));
-                        }
                         _ => {
                             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                                 "Unknown L4 type: {}",
@@ -147,48 +125,13 @@ impl PolicyRegistry {
                 }
             }
 
-            // Parse L3 Routing
+            // Parse L3 Routing (currently no layers)
             if let Some(l3) = config_bound.get_item("l3_routing")? {
                 let list = l3.cast::<PyList>()?;
-                for item in list.iter() {
-                    let dict = item.cast::<PyDict>()?;
-                    let type_str: String = dict.get_item("type")?.unwrap().extract()?;
-                    match type_str.as_str() {
-                        "retry" => {
-                            let max_retries: u32 =
-                                dict.get_item("max_retries")?.unwrap().extract()?;
-                            let backoff_ms: u64 =
-                                dict.get_item("backoff_ms")?.unwrap().extract()?;
-                            let retry_on: Vec<String> = dict
-                                .get_item("retry_on")?
-                                .map(|i| i.extract())
-                                .transpose()?
-                                .unwrap_or_else(|| {
-                                    vec![
-                                        "Transient".to_string(),
-                                        "Timeout".to_string(),
-                                        "Network".to_string(),
-                                    ]
-                                });
-                            policy.add_routing_layer(Arc::new(RetryTransportLayer {
-                                max_retries,
-                                backoff_ms,
-                                retry_on,
-                            }));
-                        }
-                        "fallback" => {
-                            let func: Py<PyAny> = dict.get_item("fn")?.unwrap().extract()?;
-                            policy.add_routing_layer(Arc::new(FallbackLayer {
-                                fallback_func: func,
-                            }));
-                        }
-                        _ => {
-                            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                                "Unknown L3 type: {}",
-                                type_str
-                            )));
-                        }
-                    }
+                if !list.is_empty() {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "L3 Routing layers are not supported in this version",
+                    ));
                 }
             }
 
@@ -375,30 +318,6 @@ impl PolicyRegistry {
         p.execute(&ctx, func, py)
     }
 
-    fn execute_policy_with_fallback(
-        &self,
-        py: Python<'_>,
-        name: String,
-        func: Py<PyAny>,
-        _fallback: Py<PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        let mut final_name = self._get_thread_policy().unwrap_or(name);
-        let ctx = CallContext {
-            fallback_func: Some(_fallback),
-            ..Default::default()
-        };
-
-        if final_name == "auto"
-            && let Some(matched) = self.match_policy(&ctx)
-        {
-            final_name = matched;
-        }
-
-        let policy = self.get_or_create(&final_name);
-        let p = policy.read().unwrap();
-        p.execute(&ctx, func, py)
-    }
-
     fn add_rule(
         &self,
         policy_name: String,
@@ -493,37 +412,6 @@ impl PolicyRegistry {
         Ok(())
     }
 
-    fn register_retry_layer(
-        &self,
-        policy_name: &str,
-        max_retries: u32,
-        backoff_ms: u64,
-        retry_on: Option<Vec<String>>,
-    ) -> PyResult<()> {
-        let policy = self.create_fresh(policy_name);
-        let mut p = policy
-            .write()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-
-        let retry_on = retry_on.unwrap_or_else(|| {
-            vec![
-                "Transient".to_string(),
-                "Timeout".to_string(),
-                "Network".to_string(),
-                "Connection".to_string(),
-                "Error".to_string(),
-                "Exception".to_string(),
-            ]
-        });
-
-        p.add_routing_layer(Arc::new(RetryTransportLayer {
-            max_retries,
-            backoff_ms,
-            retry_on,
-        }));
-        Ok(())
-    }
-
     fn register_rate_limit_layer(
         &self,
         policy_name: &str,
@@ -540,39 +428,6 @@ impl PolicyRegistry {
             capacity: capacity as f64,
             tokens: Arc::new(Mutex::new((capacity as f64, std::time::Instant::now()))),
         }));
-        Ok(())
-    }
-
-    fn register_fallback_layer(&self, policy_name: &str, fallback_func: Py<PyAny>) -> PyResult<()> {
-        let policy = self.create_fresh(policy_name);
-        let mut p = policy
-            .write()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-
-        p.add_routing_layer(Arc::new(FallbackLayer { fallback_func }));
-        Ok(())
-    }
-
-    fn register_circuit_breaker_layer(
-        &self,
-        policy_name: &str,
-        failure_threshold: u32,
-        success_threshold: u32,
-        timeout_ms: u64,
-    ) -> PyResult<()> {
-        let policy = self.create_fresh(policy_name);
-        let mut p = policy
-            .write()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-
-        use crate::policies::circuit_breaker::CircuitBreakerPolicy as CircuitBreakerCore;
-        let core = Arc::new(RwLock::new(CircuitBreakerCore::new(
-            failure_threshold,
-            success_threshold,
-            timeout_ms,
-        )));
-
-        p.add_transport_layer(Arc::new(CircuitBreakerLayer { core }));
         Ok(())
     }
 

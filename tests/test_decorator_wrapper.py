@@ -9,30 +9,6 @@ def test_timeout_decorator_sets_policy_attribute():
     assert func() == "ok"
 
 
-def test_retry_decorator_sets_policy_attribute():
-    @faultcore.retry(3, backoff_ms=100)
-    def func():
-        return "ok"
-
-    assert func() == "ok"
-
-
-def test_fallback_decorator_sets_policy_attribute():
-    @faultcore.fallback(lambda: "fallback")
-    def func():
-        return "ok"
-
-    assert func() == "ok"
-
-
-def test_circuit_breaker_decorator_sets_policy_attribute():
-    @faultcore.circuit_breaker(5)
-    def func():
-        return "ok"
-
-    assert func() == "ok"
-
-
 def test_rate_limit_decorator_sets_policy_attribute():
     @faultcore.rate_limit(10.0, 100)
     def func():
@@ -42,15 +18,7 @@ def test_rate_limit_decorator_sets_policy_attribute():
 
 
 def test_network_queue_decorator_sets_policy_attribute():
-    @faultcore.network_queue(rate="1000", capacity="100")
-    def func():
-        return "ok"
-
-    assert func() == "ok"
-
-
-def test_retry_decorator_with_retry_on_string_types_sets_policy():
-    @faultcore.retry(3, backoff_ms=100, retry_on=["ValueError", "TimeoutError"])
+    @faultcore.network_queue(rate="10mbps", capacity="1mb")
     def func():
         return "ok"
 

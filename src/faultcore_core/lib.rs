@@ -6,15 +6,10 @@ pub mod system;
 
 pub use features::flag::FeatureFlagManager;
 pub use network::queue::{NetworkQueueCore as NetworkQueueCoreInner, QueueError, QueueStats};
-pub use policies::circuit_breaker::{CircuitBreakerPolicy as CircuitBreakerCore, CircuitState};
 pub use policies::rate_limit::RateLimitPolicy as RateLimitCore;
-pub use policies::retry::{ErrorClass, RetryPolicy as RetryCore};
 pub use policies::timeout::TimeoutPolicy as TimeoutCore;
 
-pub use policies::{
-    AsyncRetryPolicy, CircuitBreakerPolicy, FallbackPolicy, NetworkQueuePolicy, RateLimitPolicy,
-    RetryPolicy, TimeoutPolicy,
-};
+pub use policies::{FallbackPolicy, NetworkQueuePolicy, RateLimitPolicy, TimeoutPolicy};
 
 pub use registry::PolicyRegistry;
 pub use system::context::ContextManager;
@@ -104,10 +99,7 @@ fn _faultcore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(set_thread_policy, m)?)?;
 
     m.add_class::<TimeoutPolicy>()?;
-    m.add_class::<RetryPolicy>()?;
-    m.add_class::<AsyncRetryPolicy>()?;
     m.add_class::<FallbackPolicy>()?;
-    m.add_class::<CircuitBreakerPolicy>()?;
     m.add_class::<RateLimitPolicy>()?;
     m.add_class::<NetworkQueuePolicy>()?;
     m.add_class::<ContextManager>()?;

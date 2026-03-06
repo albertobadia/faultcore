@@ -261,25 +261,7 @@ impl NetworkTicket {
             std::thread::sleep(std::time::Duration::from_millis(self.latency_ms));
         }
 
-        let queue_size = if self.strategy == QueueStrategy::Wait {
-            let queue = self.queue.clone();
-            let size = {
-                let mut q = queue.lock().unwrap();
-                if !q.is_empty() {
-                    q.remove(0);
-                }
-                q.len() as u64
-            };
-
-            let rate = self.rate;
-            if rate > 0.0 {
-                let bytes_per_sec = rate / 8.0;
-                let assumed_chunk_size = 10240.0;
-                let time_needed = assumed_chunk_size / bytes_per_sec;
-                std::thread::sleep(std::time::Duration::from_secs_f64(time_needed));
-            }
-            size
-        } else {
+        let queue_size = {
             let mut queue = self.queue.lock().unwrap();
             if !queue.is_empty() {
                 queue.remove(0);

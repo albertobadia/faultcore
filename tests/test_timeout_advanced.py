@@ -67,24 +67,6 @@ def test_timeout_decorator_stacking():
     assert result == "ok"
 
 
-def test_timeout_with_fallback_and_retry():
-    call_count = 0
-
-    @faultcore.fallback(lambda: "fallback")
-    @faultcore.retry(1, backoff_ms=10)
-    @faultcore.timeout(1000)
-    def func():
-        nonlocal call_count
-        call_count += 1
-        if call_count < 2:
-            raise ValueError("retryable")
-        return "success"
-
-    result = func()
-    assert result == "success"
-    assert call_count == 2
-
-
 def test_timeout_preserves_wrapped_attribute():
     @faultcore.timeout(1000)
     def my_func():

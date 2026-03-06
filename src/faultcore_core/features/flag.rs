@@ -9,12 +9,6 @@ use pyo3::prelude::*;
 #[derive(Clone)]
 pub struct PolicyBundle {
     pub timeout_ms: Option<u64>,
-    pub retry_max_retries: Option<u32>,
-    pub retry_backoff_ms: Option<u64>,
-    pub retry_on: Option<Vec<String>>,
-    pub circuit_breaker_failure_threshold: Option<u32>,
-    pub circuit_breaker_success_threshold: Option<u32>,
-    pub circuit_breaker_timeout_ms: Option<u64>,
     pub rate_limit_rate: Option<f64>,
     pub rate_limit_capacity: Option<u64>,
     pub enabled: Arc<AtomicBool>,
@@ -69,12 +63,6 @@ impl FeatureFlagManager {
         &self,
         key: String,
         timeout_ms: Option<u64>,
-        retry_max_retries: Option<u32>,
-        retry_backoff_ms: Option<u64>,
-        retry_on: Option<Vec<String>>,
-        circuit_breaker_failure_threshold: Option<u32>,
-        circuit_breaker_success_threshold: Option<u32>,
-        circuit_breaker_timeout_ms: Option<u64>,
         rate_limit_rate: Option<f64>,
         rate_limit_capacity: Option<u64>,
     ) -> PyResult<()> {
@@ -82,12 +70,6 @@ impl FeatureFlagManager {
 
         let bundle = PolicyBundle {
             timeout_ms,
-            retry_max_retries,
-            retry_backoff_ms,
-            retry_on,
-            circuit_breaker_failure_threshold,
-            circuit_breaker_success_threshold,
-            circuit_breaker_timeout_ms,
             rate_limit_rate,
             rate_limit_capacity,
             enabled: Arc::new(AtomicBool::new(true)),
@@ -102,12 +84,6 @@ impl FeatureFlagManager {
         &self,
         key: String,
         timeout_ms: Option<u64>,
-        retry_max_retries: Option<u32>,
-        retry_backoff_ms: Option<u64>,
-        retry_on: Option<Vec<String>>,
-        circuit_breaker_failure_threshold: Option<u32>,
-        circuit_breaker_success_threshold: Option<u32>,
-        circuit_breaker_timeout_ms: Option<u64>,
         rate_limit_rate: Option<f64>,
         rate_limit_capacity: Option<u64>,
     ) -> PyResult<bool> {
@@ -116,24 +92,6 @@ impl FeatureFlagManager {
         if let Some(bundle) = bundles.get_mut(&key) {
             if let Some(v) = timeout_ms {
                 bundle.timeout_ms = Some(v);
-            }
-            if let Some(v) = retry_max_retries {
-                bundle.retry_max_retries = Some(v);
-            }
-            if let Some(v) = retry_backoff_ms {
-                bundle.retry_backoff_ms = Some(v);
-            }
-            if let Some(v) = retry_on {
-                bundle.retry_on = Some(v);
-            }
-            if let Some(v) = circuit_breaker_failure_threshold {
-                bundle.circuit_breaker_failure_threshold = Some(v);
-            }
-            if let Some(v) = circuit_breaker_success_threshold {
-                bundle.circuit_breaker_success_threshold = Some(v);
-            }
-            if let Some(v) = circuit_breaker_timeout_ms {
-                bundle.circuit_breaker_timeout_ms = Some(v);
             }
             if let Some(v) = rate_limit_rate {
                 bundle.rate_limit_rate = Some(v);
@@ -184,26 +142,6 @@ impl FeatureFlagManager {
                 let dict = pyo3::types::PyDict::new(py);
                 if let Some(v) = bundle.timeout_ms {
                     dict.set_item("timeout_ms", v).unwrap();
-                }
-                if let Some(v) = bundle.retry_max_retries {
-                    dict.set_item("retry_max_retries", v).unwrap();
-                }
-                if let Some(v) = bundle.retry_backoff_ms {
-                    dict.set_item("retry_backoff_ms", v).unwrap();
-                }
-                if let Some(ref v) = bundle.retry_on {
-                    dict.set_item("retry_on", v.clone()).unwrap();
-                }
-                if let Some(v) = bundle.circuit_breaker_failure_threshold {
-                    dict.set_item("circuit_breaker_failure_threshold", v)
-                        .unwrap();
-                }
-                if let Some(v) = bundle.circuit_breaker_success_threshold {
-                    dict.set_item("circuit_breaker_success_threshold", v)
-                        .unwrap();
-                }
-                if let Some(v) = bundle.circuit_breaker_timeout_ms {
-                    dict.set_item("circuit_breaker_timeout_ms", v).unwrap();
                 }
                 if let Some(v) = bundle.rate_limit_rate {
                     dict.set_item("rate_limit_rate", v).unwrap();

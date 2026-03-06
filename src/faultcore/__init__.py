@@ -3,19 +3,14 @@ import os
 from pathlib import Path
 
 from faultcore._faultcore import (
-    AsyncRetryPolicy,
     CallContext,
-    CircuitBreakerPolicy as CircuitBreaker,
     ContextManager,
-    FallbackPolicy as Fallback,
     FeatureFlagManager,
     NetworkQueuePolicy as NetworkQueue,
     PolicyRegistry,
     RateLimitPolicy as RateLimit,
-    RetryPolicy as Retry,
     TimeoutPolicy as Timeout,
     add_keys,
-    classify_exception,
     clear_keys,
     get_feature_flag_manager as _get_feature_flag_manager,
     get_keys,
@@ -25,12 +20,9 @@ from faultcore._faultcore import (
 )
 from faultcore.decorator import (
     apply_policy,
-    circuit_breaker,
-    fallback,
     fault,
     network_queue,
     rate_limit,
-    retry,
     timeout,
 )
 
@@ -65,12 +57,6 @@ def get_interceptor_path() -> str | None:
 def register_policy_bundle(
     key: str,
     timeout_ms: int | None = None,
-    retry_max_retries: int | None = None,
-    retry_backoff_ms: int | None = None,
-    retry_on: list[str] | None = None,
-    circuit_breaker_failure_threshold: int | None = None,
-    circuit_breaker_success_threshold: int | None = None,
-    circuit_breaker_timeout_ms: int | None = None,
     rate_limit_rate: float | None = None,
     rate_limit_capacity: int | None = None,
 ) -> None:
@@ -78,12 +64,6 @@ def register_policy_bundle(
     manager.register(
         key,
         timeout_ms,
-        retry_max_retries,
-        retry_backoff_ms,
-        retry_on,
-        circuit_breaker_failure_threshold,
-        circuit_breaker_success_threshold,
-        circuit_breaker_timeout_ms,
         rate_limit_rate,
         rate_limit_capacity,
     )
@@ -92,12 +72,6 @@ def register_policy_bundle(
 def update_policy_bundle(
     key: str,
     timeout_ms: int | None = None,
-    retry_max_retries: int | None = None,
-    retry_backoff_ms: int | None = None,
-    retry_on: list[str] | None = None,
-    circuit_breaker_failure_threshold: int | None = None,
-    circuit_breaker_success_threshold: int | None = None,
-    circuit_breaker_timeout_ms: int | None = None,
     rate_limit_rate: float | None = None,
     rate_limit_capacity: int | None = None,
 ) -> bool:
@@ -105,12 +79,6 @@ def update_policy_bundle(
     return manager.update(
         key,
         timeout_ms,
-        retry_max_retries,
-        retry_backoff_ms,
-        retry_on,
-        circuit_breaker_failure_threshold,
-        circuit_breaker_success_threshold,
-        circuit_breaker_timeout_ms,
         rate_limit_rate,
         rate_limit_capacity,
     )
@@ -145,10 +113,6 @@ def set_thread_policy(policy_name: str | None):
 
 __all__ = [
     "Timeout",
-    "Retry",
-    "AsyncRetryPolicy",
-    "Fallback",
-    "CircuitBreaker",
     "RateLimit",
     "NetworkQueue",
     "CallContext",
@@ -156,7 +120,6 @@ __all__ = [
     "FeatureFlagManager",
     "PolicyRegistry",
     "get_policy_registry",
-    "classify_exception",
     "add_keys",
     "get_keys",
     "remove_key",
@@ -165,9 +128,6 @@ __all__ = [
     "register_policy_bundle",
     "update_policy_bundle",
     "timeout",
-    "retry",
-    "fallback",
-    "circuit_breaker",
     "rate_limit",
     "network_queue",
     "apply_policy",
