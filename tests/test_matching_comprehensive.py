@@ -50,19 +50,16 @@ def test_rule_priority_matching():
     registry.register_timeout_layer("p_high", 100)
     registry.register_timeout_layer("p_low", 200)
 
-    # In Phase 2, we want to match based on context.
-    # Since current implementation of execute_policy uses default CallContext,
-    # we'll verify it returns the best rule if multiple could match (though here it matches none).
-
-    registry.add_rule("p_low", [{"type": "host", "value": "test"}], 1)
-    registry.add_rule("p_high", [{"type": "host", "value": "test"}], 10)
+    # Generic protocol-agnostic matching using key-value tags
+    registry.add_rule("p_low", [{"type": "key", "key": "service", "value": "auth"}], 1)
+    registry.add_rule("p_high", [{"type": "key", "key": "service", "value": "auth"}], 10)
 
     # match_policy returns None if no match, which is correct for default ctx
     ctx = faultcore.CallContext("test")
     assert registry.match_policy(ctx) is None
 
-    # Now set host to match
-    ctx.host = "test"
+    # Now set tag to match
+    ctx.set_tag("service", "auth")
     assert registry.match_policy(ctx) == "p_high"
 
 

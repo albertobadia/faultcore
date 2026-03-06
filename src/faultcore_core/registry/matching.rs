@@ -1,9 +1,7 @@
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum MatchCondition {
-    Host(String),
-    Path(String),
-    Method(String),
-    Header(String, String),
+    Key { key: String, value: String },
+    Prefix { key: String, prefix: String },
 }
 
 #[derive(Clone, Debug)]

@@ -13,13 +13,7 @@ pub struct CallContext {
     #[pyo3(get, set)]
     pub call_id: u64,
     #[pyo3(get, set)]
-    pub host: Option<String>,
-    #[pyo3(get, set)]
-    pub path: Option<String>,
-    #[pyo3(get, set)]
-    pub method: Option<String>,
-    #[pyo3(get, set)]
-    pub headers: HashMap<String, String>,
+    pub tags: HashMap<String, String>,
     pub fallback_func: Option<pyo3::Py<pyo3::PyAny>>,
 }
 
@@ -29,10 +23,7 @@ impl Clone for CallContext {
             function_name: self.function_name.clone(),
             thread_id: self.thread_id,
             call_id: self.call_id,
-            host: self.host.clone(),
-            path: self.path.clone(),
-            method: self.method.clone(),
-            headers: self.headers.clone(),
+            tags: self.tags.clone(),
             fallback_func: self.fallback_func.as_ref().map(|f| f.clone_ref(py)),
         })
     }
@@ -44,10 +35,7 @@ impl std::fmt::Debug for CallContext {
             .field("function_name", &self.function_name)
             .field("thread_id", &self.thread_id)
             .field("call_id", &self.call_id)
-            .field("host", &self.host)
-            .field("path", &self.path)
-            .field("method", &self.method)
-            .field("headers", &self.headers)
+            .field("tags", &self.tags)
             .field(
                 "fallback_func",
                 &self.fallback_func.as_ref().map(|_| "Py<PyAny>"),
@@ -66,16 +54,17 @@ impl CallContext {
             function_name,
             thread_id,
             call_id,
-            host: None,
-            path: None,
-            method: None,
-            headers: HashMap::new(),
+            tags: HashMap::new(),
             fallback_func: None,
         }
     }
 
-    pub fn set_header(&mut self, key: String, value: String) {
-        self.headers.insert(key, value);
+    pub fn set_tag(&mut self, key: String, value: String) {
+        self.tags.insert(key, value);
+    }
+
+    pub fn get_tag(&self, key: &str) -> Option<String> {
+        self.tags.get(key).cloned()
     }
 }
 

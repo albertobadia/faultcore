@@ -336,16 +336,14 @@ impl PolicyRegistry {
 
         for rule in rules.iter() {
             let matches = rule.conditions.iter().all(|cond| match cond {
-                MatchCondition::Host(h) => ctx.host.as_ref().map(|ch| ch == h).unwrap_or(false),
-                MatchCondition::Path(p) => ctx
-                    .path
-                    .as_ref()
-                    .map(|cp| cp.starts_with(p))
-                    .unwrap_or(false),
-                MatchCondition::Method(m) => ctx.method.as_ref().map(|cm| cm == m).unwrap_or(false),
-                MatchCondition::Header(k, v) => {
-                    ctx.headers.get(k).map(|cv| cv == v).unwrap_or(false)
+                MatchCondition::Key { key, value } => {
+                    ctx.tags.get(key).map(|v| v == value).unwrap_or(false)
                 }
+                MatchCondition::Prefix { key, prefix } => ctx
+                    .tags
+                    .get(key)
+                    .map(|v| v.starts_with(prefix))
+                    .unwrap_or(false),
             });
 
             if matches {
@@ -420,41 +418,31 @@ impl PolicyRegistry {
                 .extract()?;
 
             match type_str.as_str() {
-                "host" => {
-                    let host: String = dict
-                        .get_item("value")?
-                        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("value is required"))?
-                        .extract()?;
-                    parsed_conditions.push(MatchCondition::Host(host));
-                }
-                "path" => {
-                    let path: String = dict
-                        .get_item("value")?
-                        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("value is required"))?
-                        .extract()?;
-                    parsed_conditions.push(MatchCondition::Path(path));
-                }
-                "method" => {
-                    let method: String = dict
-                        .get_item("value")?
-                        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("value is required"))?
-                        .extract()?;
-                    parsed_conditions.push(MatchCondition::Method(method));
-                }
-                "header" => {
-                    let name: String = dict
-                        .get_item("name")?
-                        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("name is required"))?
+                "key" => {
+                    let key: String = dict
+                        .get_item("key")?
+                        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("key is required"))?
                         .extract()?;
                     let value: String = dict
                         .get_item("value")?
                         .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("value is required"))?
                         .extract()?;
-                    parsed_conditions.push(MatchCondition::Header(name, value));
+                    parsed_conditions.push(MatchCondition::Key { key, value });
+                }
+                "prefix" => {
+                    let key: String = dict
+                        .get_item("key")?
+                        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("key is required"))?
+                        .extract()?;
+                    let prefix: String = dict
+                        .get_item("prefix")?
+                        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("prefix is required"))?
+                        .extract()?;
+                    parsed_conditions.push(MatchCondition::Prefix { key, prefix });
                 }
                 _ => {
                     return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                        "Unknown condition type: {}",
+                        "Unknown condition type: {}. Valid types are: key, prefix",
                         type_str
                     )));
                 }
