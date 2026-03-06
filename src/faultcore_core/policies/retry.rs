@@ -69,6 +69,9 @@ impl RetryPolicy {
     }
 
     pub fn backoff_duration(&self, attempt: u32) -> Duration {
-        self.backoff * (1u32 << attempt)
+        let shift = attempt.min(20);
+        let backoff_ms = self.backoff.as_millis() as u64;
+        let multiplier = if shift < 64 { 1u64 << shift } else { u64::MAX };
+        Duration::from_millis(backoff_ms.saturating_mul(multiplier))
     }
 }

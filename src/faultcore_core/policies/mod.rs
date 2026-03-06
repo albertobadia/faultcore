@@ -418,6 +418,9 @@ impl NetworkQueuePolicy {
             Err(QueueError::Timeout) => Err(pyo3::exceptions::PyTimeoutError::new_err(
                 "Queue operation timed out",
             )),
+            Err(QueueError::ShmWriteFailed) => Err(pyo3::exceptions::PyIOError::new_err(
+                "Failed to write to shared memory",
+            )),
         }
     }
 
@@ -522,6 +525,9 @@ impl NetworkQueuePolicy {
             )),
             Err(QueueError::Timeout) => Err(pyo3::exceptions::PyTimeoutError::new_err(
                 "Queue operation timed out",
+            )),
+            Err(QueueError::ShmWriteFailed) => Err(pyo3::exceptions::PyIOError::new_err(
+                "Failed to write to shared memory",
             )),
         }
     }

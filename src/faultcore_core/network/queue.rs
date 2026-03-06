@@ -161,12 +161,6 @@ impl NetworkQueueCore {
             return Err(QueueError::QueueFull);
         }
 
-        let mut fd_count = self.fd_count.lock().unwrap();
-        if *fd_count >= self.fd_limit {
-            stats.dropped += 1;
-            return Err(QueueError::FdLimitExceeded);
-        }
-
         let latency_ms = {
             let min = self.config.latency_min_ms;
             let max = self.config.latency_max_ms;
@@ -189,9 +183,19 @@ impl NetworkQueueCore {
             let _ = shm::create_shm(pid);
         }
         let tid = shm::get_thread_id();
-        let _ = shm::write_latency(tid, latency_ms);
-        let _ = shm::write_packet_loss(tid, packet_loss_ppm);
-        let _ = shm::write_bandwidth(tid, bandwidth_bps);
+        if shm::write_latency(tid, latency_ms).is_err()
+            || shm::write_packet_loss(tid, packet_loss_ppm).is_err()
+            || shm::write_bandwidth(tid, bandwidth_bps).is_err()
+        {
+            stats.dropped += 1;
+            return Err(QueueError::ShmWriteFailed);
+        }
+
+        let mut fd_count = self.fd_count.lock().unwrap();
+        if *fd_count >= self.fd_limit {
+            stats.dropped += 1;
+            return Err(QueueError::FdLimitExceeded);
+        }
 
         *fd_count += 1;
         let enqueued_at = Instant::now();
@@ -308,6 +312,7 @@ pub enum QueueError {
     FdLimitExceeded,
     PacketDropped,
     Timeout,
+    ShmWriteFailed,
 }
 
 impl std::fmt::Display for QueueError {
@@ -317,6 +322,7 @@ impl std::fmt::Display for QueueError {
             QueueError::FdLimitExceeded => write!(f, "File descriptor limit exceeded"),
             QueueError::PacketDropped => write!(f, "Packet dropped due to network simulation"),
             QueueError::Timeout => write!(f, "Queue operation timed out"),
+            QueueError::ShmWriteFailed => write!(f, "Failed to write to shared memory"),
         }
     }
 }
