@@ -6,7 +6,9 @@ pub mod timeout;
 
 pub use async_retry::AsyncRetryPolicy;
 
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+
+use parking_lot::RwLock;
 
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
@@ -210,7 +212,7 @@ impl CircuitBreakerPolicy {
         kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Py<PyAny>> {
         {
-            let mut guard = self.core.write().unwrap();
+            let mut guard = self.core.write();
             if guard.is_open() && !guard.can_attempt() {
                 return Err(pyo3::exceptions::PyRuntimeError::new_err(
                     "Circuit breaker is OPEN",
@@ -222,7 +224,7 @@ impl CircuitBreakerPolicy {
 
         let is_ok = result.is_ok();
         {
-            let mut guard = self.core.write().unwrap();
+            let mut guard = self.core.write();
             if is_ok {
                 guard.record_success();
             } else {
@@ -234,7 +236,7 @@ impl CircuitBreakerPolicy {
 
     #[getter]
     fn state(&self) -> String {
-        let guard = self.core.read().unwrap();
+        let guard = self.core.read();
         match guard.state {
             CircuitState::Closed => "closed".to_string(),
             CircuitState::Open => "open".to_string(),
@@ -243,7 +245,7 @@ impl CircuitBreakerPolicy {
     }
 
     fn __repr__(&self) -> String {
-        let guard = self.core.read().unwrap();
+        let guard = self.core.read();
         format!(
             "CircuitBreakerPolicy(state={:?}, failures={}/{})",
             guard.state, guard.failure_count, guard.failure_threshold
