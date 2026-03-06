@@ -38,7 +38,7 @@ impl ChaosLayer {
         if self.config.packet_loss_rate <= 0.0 {
             return false;
         }
-        use rand::RngExt;
+        use rand::Rng;
         let mut rng = rand::rng();
         let random: f64 = rng.random();
         random < self.config.packet_loss_rate

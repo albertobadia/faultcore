@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::system::shm;
+use rand::Rng;
 
 pub fn parse_size(s: &str) -> Option<u64> {
     let s = s.to_lowercase();
@@ -168,11 +169,8 @@ impl NetworkQueueCore {
                 min
             } else {
                 let range = max.saturating_sub(min);
-                let nanos = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .subsec_nanos();
-                min + ((nanos as u64) % range)
+                let mut rng = rand::rng();
+                min + rng.random_range(0..range)
             }
         };
         let packet_loss_ppm = (self.config.packet_loss_rate * 1_000_000.0) as u64;
