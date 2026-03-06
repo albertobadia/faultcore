@@ -1,6 +1,7 @@
 import asyncio
 import functools
 import inspect
+import logging
 import uuid
 
 from faultcore._faultcore import (
@@ -23,6 +24,9 @@ def _is_async(func):
 
 def _get_registry():
     return get_policy_registry()
+
+
+logger = logging.getLogger(__name__)
 
 
 def _create_sync_wrapper(func, policy):
@@ -62,7 +66,11 @@ def timeout(timeout_ms: int):
         registry = _get_registry()
         func_id = id(func)
         policy_name = f"_timeout_{func_id}"
-        registry.register_timeout_layer(policy_name, timeout_ms)
+        try:
+            registry.register_timeout_layer(policy_name, timeout_ms)
+        except Exception as e:
+            logger.warning(f"Failed to register timeout layer for {func}: {e}")
+            return func
         return _FaultWrapper(func, policy_name, registry)
 
     return decorator
@@ -74,7 +82,11 @@ def retry(max_retries: int = 3, backoff_ms: int = 100, retry_on: list = None):
         func_id = id(func)
         policy_name = f"_retry_{func_id}"
         retry_on_list = list(retry_on) if retry_on is not None else None
-        registry.register_retry_layer(policy_name, max_retries, backoff_ms, retry_on_list)
+        try:
+            registry.register_retry_layer(policy_name, max_retries, backoff_ms, retry_on_list)
+        except Exception as e:
+            logger.warning(f"Failed to register retry layer for {func}: {e}")
+            return func
         if _is_async(func):
             return _FaultAsyncRetryWrapper(func, policy_name, registry, max_retries, backoff_ms, retry_on_list)
         return _FaultWrapper(func, policy_name, registry)
@@ -87,7 +99,11 @@ def fallback(fallback_func):
         registry = _get_registry()
         func_id = id(func)
         policy_name = f"_fb_{func_id}"
-        registry.register_fallback_layer(policy_name, fallback_func)
+        try:
+            registry.register_fallback_layer(policy_name, fallback_func)
+        except Exception as e:
+            logger.warning(f"Failed to register fallback layer for {func}: {e}")
+            return func
         return _FaultFallbackWrapper(func, policy_name, registry, fallback_func)
 
     return decorator
@@ -98,7 +114,11 @@ def circuit_breaker(failure_threshold: int = 5, success_threshold: int = 2, time
         registry = _get_registry()
         func_id = id(func)
         policy_name = f"_cb_{func_id}"
-        registry.register_circuit_breaker_layer(policy_name, failure_threshold, success_threshold, timeout_ms)
+        try:
+            registry.register_circuit_breaker_layer(policy_name, failure_threshold, success_threshold, timeout_ms)
+        except Exception as e:
+            logger.warning(f"Failed to register circuit breaker layer for {func}: {e}")
+            return func
         return _FaultWrapper(func, policy_name, registry)
 
     return decorator
@@ -111,7 +131,11 @@ def rate_limit(rate: float, capacity: int):
         registry = _get_registry()
         func_id = id(func)
         policy_name = f"_ratelimit_{func_id}_{unique_id}"
-        registry.register_rate_limit_layer(policy_name, rate, capacity)
+        try:
+            registry.register_rate_limit_layer(policy_name, rate, capacity)
+        except Exception as e:
+            logger.warning(f"Failed to register rate limit layer for {func}: {e}")
+            return func
         return _FaultWrapper(func, policy_name, registry)
 
     return decorator
