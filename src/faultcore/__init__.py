@@ -35,6 +35,7 @@ from faultcore.decorator import (
 )
 
 _FAULTCORE_CONTEXT_KEYS = contextvars.ContextVar("faultcore_context_keys", default=None)
+_FAULTCORE_THREAD_POLICY = contextvars.ContextVar("faultcore_thread_policy", default=None)
 
 _cached_feature_flag_manager: FeatureFlagManager | None = None
 
@@ -129,19 +130,13 @@ class fault_context:
         self.path = path
         self.method = method
         self.headers = headers
-        self._prev_policy = None
-        self._prev_ctx = None
 
     def __enter__(self):
-        registry = get_policy_registry()
-        self._prev_policy = registry.get_thread_policy()
-        if self.policy_name is not None:
-            registry.set_thread_policy(self.policy_name)
+        self._token = _FAULTCORE_THREAD_POLICY.set(self.policy_name)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        registry = get_policy_registry()
-        registry.set_thread_policy(self._prev_policy)
+        _FAULTCORE_THREAD_POLICY.reset(self._token)
 
 
 def set_thread_policy(policy_name: str | None):
@@ -160,6 +155,7 @@ __all__ = [
     "ContextManager",
     "FeatureFlagManager",
     "PolicyRegistry",
+    "get_policy_registry",
     "classify_exception",
     "add_keys",
     "get_keys",
