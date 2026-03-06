@@ -107,7 +107,9 @@ fn enter_hook() -> bool {
         if !val.is_null() {
             return false;
         }
-        libc::pthread_setspecific(*RECURSION_GUARD_KEY, std::ptr::dangling::<c_void>());
+        if libc::pthread_setspecific(*RECURSION_GUARD_KEY, std::ptr::dangling::<c_void>()) != 0 {
+            return false;
+        }
         true
     }
 }
