@@ -256,7 +256,7 @@ impl CircuitBreakerPolicy {
 #[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct RateLimitPolicy {
-    core: RateLimitCore,
+    core: Arc<RwLock<RateLimitCore>>,
 }
 
 #[pymethods]
@@ -265,20 +265,22 @@ impl RateLimitPolicy {
     #[pyo3(signature = (rate, capacity))]
     fn new(rate: f64, capacity: u64) -> PyResult<Self> {
         RateLimitCore::new(rate, capacity)
-            .map(|core| Self { core })
+            .map(|core| Self {
+                core: Arc::new(RwLock::new(core)),
+            })
             .ok_or_else(|| {
                 pyo3::exceptions::PyValueError::new_err("rate must be > 0 and capacity must be > 0")
             })
     }
 
     fn __call__(
-        &mut self,
+        &self,
         py: Python,
         func: Py<PyAny>,
         args: &Bound<'_, PyTuple>,
         kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Py<PyAny>> {
-        if !self.core.try_acquire() {
+        if !self.core.write().try_acquire() {
             return Err(pyo3::exceptions::PyResourceWarning::new_err(
                 "Rate limit exceeded",
             ));
@@ -289,25 +291,26 @@ impl RateLimitPolicy {
 
     #[getter]
     fn rate(&self) -> f64 {
-        self.core.rate()
+        self.core.read().rate()
     }
 
     #[getter]
     fn capacity(&self) -> u64 {
-        self.core.capacity()
+        self.core.read().capacity()
     }
 
     #[getter]
     fn available_tokens(&self) -> f64 {
-        self.core.available_tokens()
+        self.core.read().available_tokens()
     }
 
     fn __repr__(&self) -> String {
+        let guard = self.core.read();
         format!(
             "RateLimitPolicy(rate={}/s, capacity={}, available={:.2})",
-            self.core.rate(),
-            self.core.capacity(),
-            self.core.available_tokens()
+            guard.rate(),
+            guard.capacity(),
+            guard.available_tokens()
         )
     }
 }
