@@ -99,6 +99,12 @@ lazy_static::lazy_static! {
             .and_then(|s| s.parse().ok())
             .unwrap_or(5000)  // Default 5 seconds if not set
     };
+    static ref DEFAULT_BURST_CAPACITY_SECONDS: f64 = {
+        std::env::var("FAULTCORE_BANDWIDTH_BURST_CAPACITY_SECONDS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(2.0)  // Default 2 seconds of burst capacity
+    };
 }
 
 fn enter_hook() -> bool {
@@ -165,7 +171,8 @@ fn apply_bandwidth_throttle(fd: c_int, bytes_to_send: u64) {
         if let Some(ref mut bucket) = *tokens {
             let elapsed = bucket.last_update.elapsed().as_secs_f64();
             let new_tokens = elapsed * rate;
-            bucket.tokens = (bucket.tokens + new_tokens).min(rate * 2.0);
+            let max_capacity = *DEFAULT_BURST_CAPACITY_SECONDS * rate;
+            bucket.tokens = (bucket.tokens + new_tokens).min(max_capacity);
             bucket.last_update = now;
 
             let bytes_needed = bytes_to_send as f64 * 8.0;
