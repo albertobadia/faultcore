@@ -17,7 +17,13 @@ impl AsyncRetryPolicy {
                     .map(|s| ErrorClass::from_error_str(&s))
                     .collect()
             })
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                vec![
+                    ErrorClass::Transient,
+                    ErrorClass::Timeout,
+                    ErrorClass::Network,
+                ]
+            });
         Self {
             max_retries,
             backoff_ms,
