@@ -32,7 +32,7 @@ pub fn get_policy_registry() -> &'static PolicyRegistry {
     POLICY_REGISTRY.get_or_init(PolicyRegistry::new)
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PolicyRegistry {
     policies: Arc<Mutex<HashMap<String, Arc<RwLock<Policy>>>>>,

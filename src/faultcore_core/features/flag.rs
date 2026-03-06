@@ -28,7 +28,7 @@ impl PolicyBundle {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 pub struct FeatureFlagManager {
     bundles: Mutex<std::collections::HashMap<String, PolicyBundle>>,
 }

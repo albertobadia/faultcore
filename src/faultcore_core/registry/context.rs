@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-#[pyclass]
+#[pyclass(from_py_object)]
 pub struct CallContext {
     #[pyo3(get, set)]
     pub function_name: String,

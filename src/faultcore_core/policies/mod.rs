@@ -18,7 +18,7 @@ use crate::policies::retry::{ErrorClass, RetryPolicy as RetryCore};
 use crate::policies::timeout::TimeoutPolicy as TimeoutCore;
 use crate::system::shm;
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct TimeoutPolicy {
     core: TimeoutCore,
@@ -68,7 +68,7 @@ impl TimeoutPolicy {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct RetryPolicy {
     core: RetryCore,
@@ -179,7 +179,7 @@ impl FallbackPolicy {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct CircuitBreakerPolicy {
     core: Arc<RwLock<CircuitBreakerCore>>,
@@ -248,7 +248,7 @@ impl CircuitBreakerPolicy {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct RateLimitPolicy {
     core: RateLimitCore,
@@ -307,7 +307,7 @@ impl RateLimitPolicy {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct NetworkQueuePolicy {
     core: NetworkQueueCoreInner,
