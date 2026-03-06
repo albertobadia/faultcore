@@ -3,7 +3,11 @@ import functools
 import inspect
 import uuid
 
-from faultcore._faultcore import classify_exception, get_policy_registry
+from faultcore._faultcore import (
+    AsyncRetryPolicy,
+    classify_exception,
+    get_policy_registry,
+)
 
 
 def _is_async(func):
@@ -331,6 +335,7 @@ class _FaultAsyncRetryWrapper:
         self._max_retries = max_retries
         self._backoff_ms = backoff_ms
         self._retry_on = retry_on
+        self._async_policy = AsyncRetryPolicy(max_retries, backoff_ms, retry_on)
         self.__name__ = func.__name__
         self.__doc__ = getattr(func, "__doc__", None)
 
@@ -339,10 +344,8 @@ class _FaultAsyncRetryWrapper:
             return True
         if len(self._retry_on) == 0:
             return False
-        exception_type = type(exception).__name__
         classified = classify_exception(exception)
-        retry_on_lower = [r.lower() for r in self._retry_on]
-        return exception_type.lower() in retry_on_lower or classified.lower() in retry_on_lower
+        return self._async_policy.should_retry(classified)
 
     async def __call__(self, *args, **kwargs):
         if not self._registry.is_policy_enabled(self._policy_name):

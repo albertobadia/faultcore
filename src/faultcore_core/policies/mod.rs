@@ -1,7 +1,10 @@
+pub mod async_retry;
 pub mod circuit_breaker;
 pub mod rate_limit;
 pub mod retry;
 pub mod timeout;
+
+pub use async_retry::AsyncRetryPolicy;
 
 use std::sync::{Arc, RwLock};
 

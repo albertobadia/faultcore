@@ -12,8 +12,8 @@ pub use policies::retry::{ErrorClass, RetryPolicy as RetryCore};
 pub use policies::timeout::TimeoutPolicy as TimeoutCore;
 
 pub use policies::{
-    CircuitBreakerPolicy, FallbackPolicy, NetworkQueuePolicy, RateLimitPolicy, RetryPolicy,
-    TimeoutPolicy,
+    AsyncRetryPolicy, CircuitBreakerPolicy, FallbackPolicy, NetworkQueuePolicy, RateLimitPolicy,
+    RetryPolicy, TimeoutPolicy,
 };
 
 pub use registry::PolicyRegistry;
@@ -105,6 +105,7 @@ fn _faultcore(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     m.add_class::<TimeoutPolicy>()?;
     m.add_class::<RetryPolicy>()?;
+    m.add_class::<AsyncRetryPolicy>()?;
     m.add_class::<FallbackPolicy>()?;
     m.add_class::<CircuitBreakerPolicy>()?;
     m.add_class::<RateLimitPolicy>()?;

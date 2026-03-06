@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 
 from faultcore._faultcore import (
+    AsyncRetryPolicy,
     CallContext,
     CircuitBreakerPolicy as CircuitBreaker,
     ContextManager,
@@ -150,6 +151,7 @@ def set_thread_policy(policy_name: str | None):
 __all__ = [
     "Timeout",
     "Retry",
+    "AsyncRetryPolicy",
     "Fallback",
     "CircuitBreaker",
     "RateLimit",
