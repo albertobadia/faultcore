@@ -1,5 +1,7 @@
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+
+use parking_lot::Mutex;
 
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
@@ -36,7 +38,7 @@ pub struct FeatureFlagManager {
 impl Clone for FeatureFlagManager {
     fn clone(&self) -> Self {
         Self {
-            bundles: Mutex::new(self.bundles.lock().unwrap().clone()),
+            bundles: Mutex::new(self.bundles.lock().clone()),
         }
     }
 }
@@ -58,7 +60,7 @@ impl FeatureFlagManager {
 
     fn clone_manager(&self) -> Self {
         Self {
-            bundles: Mutex::new(self.bundles.lock().unwrap().clone()),
+            bundles: Mutex::new(self.bundles.lock().clone()),
         }
     }
 
@@ -76,10 +78,7 @@ impl FeatureFlagManager {
         rate_limit_rate: Option<f64>,
         rate_limit_capacity: Option<u64>,
     ) -> PyResult<()> {
-        let mut bundles = self
-            .bundles
-            .lock()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let mut bundles = self.bundles.lock();
 
         let bundle = PolicyBundle {
             timeout_ms,
@@ -112,10 +111,7 @@ impl FeatureFlagManager {
         rate_limit_rate: Option<f64>,
         rate_limit_capacity: Option<u64>,
     ) -> PyResult<bool> {
-        let mut bundles = self
-            .bundles
-            .lock()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let mut bundles = self.bundles.lock();
 
         if let Some(bundle) = bundles.get_mut(&key) {
             if let Some(v) = timeout_ms {
@@ -152,10 +148,7 @@ impl FeatureFlagManager {
     }
 
     fn enable(&self, key: String) -> PyResult<bool> {
-        let bundles = self
-            .bundles
-            .lock()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let bundles = self.bundles.lock();
         if let Some(bundle) = bundles.get(&key) {
             bundle.set_enabled(true);
             Ok(true)
@@ -165,10 +158,7 @@ impl FeatureFlagManager {
     }
 
     fn disable(&self, key: String) -> PyResult<bool> {
-        let bundles = self
-            .bundles
-            .lock()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let bundles = self.bundles.lock();
         if let Some(bundle) = bundles.get(&key) {
             bundle.set_enabled(false);
             Ok(true)
@@ -178,10 +168,7 @@ impl FeatureFlagManager {
     }
 
     fn is_enabled(&self, key: String) -> PyResult<bool> {
-        let bundles = self
-            .bundles
-            .lock()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let bundles = self.bundles.lock();
         if let Some(bundle) = bundles.get(&key) {
             Ok(bundle.is_enabled())
         } else {
@@ -190,10 +177,7 @@ impl FeatureFlagManager {
     }
 
     fn get(&self, key: String) -> PyResult<Option<Py<PyAny>>> {
-        let bundles = self
-            .bundles
-            .lock()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let bundles = self.bundles.lock();
 
         if let Some(bundle) = bundles.get(&key) {
             let dict: Py<PyAny> = Python::attach(|py| {
@@ -237,26 +221,17 @@ impl FeatureFlagManager {
     }
 
     fn list_keys(&self) -> PyResult<Vec<String>> {
-        let bundles = self
-            .bundles
-            .lock()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let bundles = self.bundles.lock();
         Ok(bundles.keys().cloned().collect())
     }
 
     fn remove(&self, key: String) -> PyResult<bool> {
-        let mut bundles = self
-            .bundles
-            .lock()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let mut bundles = self.bundles.lock();
         Ok(bundles.remove(&key).is_some())
     }
 
     fn clear(&self) -> PyResult<()> {
-        let mut bundles = self
-            .bundles
-            .lock()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let mut bundles = self.bundles.lock();
         bundles.clear();
         Ok(())
     }
