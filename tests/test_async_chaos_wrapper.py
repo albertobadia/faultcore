@@ -14,7 +14,7 @@ async def test_async_chaos_wrapper_basic():
 
 
 async def test_async_chaos_wrapper_rate_limit_exceeded():
-    @faultcore.rate_limit(1.0, 1)
+    @faultcore.rate_limit(1.0)
     async def limited_coro():
         return "ok"
 

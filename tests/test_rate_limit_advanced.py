@@ -2,7 +2,7 @@ import faultcore
 
 
 def test_rate_limit_high_rate_low_capacity():
-    @faultcore.rate_limit(1000.0, 1)
+    @faultcore.rate_limit(1000.0)
     def limited_func():
         return "ok"
 
@@ -16,7 +16,7 @@ def test_rate_limit_high_rate_low_capacity():
 
 
 def test_rate_limit_function_preserves_metadata():
-    @faultcore.rate_limit(10.0, 100)
+    @faultcore.rate_limit(10.0)
     def my_function():
         """Docstring"""
         pass
@@ -76,7 +76,7 @@ def test_rate_limit_repr_contains_all_info():
 
 
 def test_rate_limit_with_very_high_rate():
-    @faultcore.rate_limit(100000.0, 10000)
+    @faultcore.rate_limit(100000.0)
     def limited_func():
         return "ok"
 

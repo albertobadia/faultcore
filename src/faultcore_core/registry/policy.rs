@@ -54,45 +54,36 @@ impl Policy {
             return func.call(py, (), None);
         }
 
-        let inner_call = {
-            let func = func.clone_ref(py);
-            move || -> PolicyResult {
-                Python::attach(|py| {
-                    func.call(py, (), None)
-                        .map(PolicyResult::Ok)
-                        .unwrap_or_else(|e| PolicyResult::Error {
-                            message: format!(
-                                "{}: {}",
-                                e.get_type(py)
-                                    .name()
-                                    .map(|n| n.to_string())
-                                    .unwrap_or_else(|_| "Error".to_string()),
-                                e
-                            ),
-                            exception: Some(e.into_py_any(py).unwrap()),
-                        })
-                })
-            }
+        let func = func.clone_ref(py);
+        let inner_call = move || -> PolicyResult {
+            Python::attach(|py| {
+                func.call(py, (), None)
+                    .map(PolicyResult::Ok)
+                    .unwrap_or_else(|e| PolicyResult::Error {
+                        message: e.to_string(),
+                        exception: Some(e.into_py_any(py).unwrap()),
+                    })
+            })
         };
 
         let mut next = Next::new(inner_call);
 
-        // Layers are executed in order: Chaos -> QoS -> Routing -> Transport
-        // To achieve this, we wrap them in reverse order (L4 -> L3 -> L2 -> L1)
+        let ctx_arc = Arc::new(ctx.clone());
+
         for layer in self.l4_transport.iter().rev() {
-            let (layer, ctx, prev) = (layer.clone(), ctx.clone(), next.clone());
+            let (layer, ctx, prev) = (layer.clone(), ctx_arc.clone(), next.clone());
             next = Next::new(move || layer.execute(&ctx, prev.clone()));
         }
         for layer in self.l3_routing.iter().rev() {
-            let (layer, ctx, prev) = (layer.clone(), ctx.clone(), next.clone());
+            let (layer, ctx, prev) = (layer.clone(), ctx_arc.clone(), next.clone());
             next = Next::new(move || layer.execute(&ctx, prev.clone()));
         }
         for layer in self.l2_qos.iter().rev() {
-            let (layer, ctx, prev) = (layer.clone(), ctx.clone(), next.clone());
+            let (layer, ctx, prev) = (layer.clone(), ctx_arc.clone(), next.clone());
             next = Next::new(move || layer.execute(&ctx, prev.clone()));
         }
         for layer in self.l1_chaos.iter().rev() {
-            let (layer, ctx, prev) = (layer.clone(), ctx.clone(), next.clone());
+            let (layer, ctx, prev) = (layer.clone(), ctx_arc.clone(), next.clone());
             next = Next::new(move || layer.execute(&ctx, prev.clone()));
         }
 

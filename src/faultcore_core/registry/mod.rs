@@ -95,8 +95,8 @@ impl PolicyRegistry {
         Python::attach(|py| {
             let config = config.into_bound(py);
 
-            if let Some(l4) = config.get_item("l4_transport")? {
-                for item in l4.cast::<PyList>()?.iter() {
+            if let Some(layers) = config.get_item("l4_transport")? {
+                for item in layers.cast::<PyList>()?.iter() {
                     let dict = item.cast::<PyDict>()?;
                     let ty: String = dict.get_item("type")?.unwrap().extract()?;
                     if ty == "timeout" {
@@ -110,8 +110,8 @@ impl PolicyRegistry {
                 }
             }
 
-            if let Some(l2) = config.get_item("l2_qos")? {
-                for item in l2.cast::<PyList>()?.iter() {
+            if let Some(layers) = config.get_item("l2_qos")? {
+                for item in layers.cast::<PyList>()?.iter() {
                     let dict = item.cast::<PyDict>()?;
                     let ty: String = dict.get_item("type")?.unwrap().extract()?;
                     if ty == "rate_limit" {
@@ -125,8 +125,8 @@ impl PolicyRegistry {
                 }
             }
 
-            if let Some(l1) = config.get_item("l1_chaos")? {
-                for item in l1.cast::<PyList>()?.iter() {
+            if let Some(layers) = config.get_item("l1_chaos")? {
+                for item in layers.cast::<PyList>()?.iter() {
                     let dict = item.cast::<PyDict>()?;
                     let ty: String = dict.get_item("type")?.unwrap().extract()?;
                     match ty.as_str() {
@@ -179,19 +179,19 @@ impl PolicyRegistry {
     }
 
     fn enable(&self, name: &str) -> bool {
-        let result = self._set_enabled(name, true);
-        if result {
+        if self._set_enabled(name, true) {
             get_shm_registry().set_enabled(name, true);
+            return true;
         }
-        result
+        false
     }
 
     fn disable(&self, name: &str) -> bool {
-        let result = self._set_enabled(name, false);
-        if result {
+        if self._set_enabled(name, false) {
             get_shm_registry().set_enabled(name, false);
+            return true;
         }
-        result
+        false
     }
 
     fn _set_enabled(&self, name: &str, enabled: bool) -> bool {
@@ -224,10 +224,11 @@ impl PolicyRegistry {
     }
 
     fn match_policy(&self, ctx: &CallContext) -> Option<String> {
-        let rules = self.rules.read().ok()?;
-        rules
+        self.rules
+            .read()
+            .ok()?
             .iter()
-            .filter(|rule| {
+            .find(|rule| {
                 rule.conditions.iter().all(|cond| match cond {
                     MatchCondition::Key { key, value } => ctx.tags.get(key) == Some(value),
                     MatchCondition::Prefix { key, prefix } => {
@@ -235,22 +236,26 @@ impl PolicyRegistry {
                     }
                 })
             })
-            .max_by_key(|r| r.priority)
             .map(|r| r.policy_name.clone())
     }
 
     fn execute_policy(&self, py: Python<'_>, name: String, func: Py<PyAny>) -> PyResult<Py<PyAny>> {
-        let mut final_name = self._get_thread_policy().unwrap_or(name);
-        let ctx = CallContext::default();
-
-        if final_name == "auto"
-            && let Some(matched) = self.match_policy(&ctx)
-        {
-            final_name = matched;
-        }
+        let final_name = self
+            ._get_thread_policy()
+            .or_else(|| {
+                if name == "auto" {
+                    self.match_policy(&CallContext::default())
+                } else {
+                    Some(name)
+                }
+            })
+            .unwrap_or_else(|| "default".to_string());
 
         let policy = self.get_or_create(&final_name);
-        policy.read().unwrap().execute(&ctx, func, py)
+        policy
+            .read()
+            .unwrap()
+            .execute(&CallContext::default(), func, py)
     }
 
     fn add_rule(
@@ -324,12 +329,7 @@ impl PolicyRegistry {
         Ok(())
     }
 
-    fn register_rate_limit_layer(
-        &self,
-        policy_name: &str,
-        rate: Bound<'_, PyAny>,
-        _capacity: Option<u64>,
-    ) -> PyResult<()> {
+    fn register_rate_limit_layer(&self, policy_name: &str, rate: Bound<'_, PyAny>) -> PyResult<()> {
         let rate_bps = self._extract_rate(rate)?;
         let policy = self.create_fresh(policy_name);
         let mut p = policy.write().map_err(|e| {

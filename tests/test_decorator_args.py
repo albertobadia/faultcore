@@ -29,7 +29,7 @@ def test_timeout_passes_mixed_args():
 
 
 def test_rate_limit_passes_args():
-    @faultcore.rate_limit(100.0, 50)
+    @faultcore.rate_limit(100.0)
     def func_with_args(a, b):
         return a**b
 
@@ -38,7 +38,7 @@ def test_rate_limit_passes_args():
 
 
 def test_rate_limit_passes_kwargs():
-    @faultcore.rate_limit(100.0, 50)
+    @faultcore.rate_limit(100.0)
     def func_with_kwargs(base=1, exp=1):
         return base**exp
 

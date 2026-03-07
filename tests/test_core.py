@@ -18,7 +18,7 @@ def test_timeout_decorator_zero():
 
 
 def test_rate_limit_decorator():
-    @faultcore.rate_limit(10.0, 100)
+    @faultcore.rate_limit(10.0)
     def my_func():
         return "ok"
 
@@ -26,7 +26,7 @@ def test_rate_limit_decorator():
 
 
 def test_rate_limit_decorator_exceeded():
-    @faultcore.rate_limit(1.0, 1)
+    @faultcore.rate_limit(1.0)
     def my_func():
         return "ok"
 

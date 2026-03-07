@@ -91,10 +91,7 @@ def test_apply_policy_decorator_only_rate_limit():
     result1 = my_func()
     assert result1 == "first"
 
-    # We use a high rate so we don't have to wait for tokens
-    # But capacity is 1, so second call should fail if called immediately
     try:
         my_func()
-        # It's possible tokens refilled if system is fast, but with rate=1000 and cap=1 it's unlikely
     except Exception as e:
         assert "rate limit" in str(e).lower() or "resource" in str(e).lower()

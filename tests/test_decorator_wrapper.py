@@ -10,7 +10,7 @@ def test_timeout_decorator_sets_policy_attribute():
 
 
 def test_rate_limit_decorator_sets_policy_attribute():
-    @faultcore.rate_limit(10.0, 100)
+    @faultcore.rate_limit(10.0)
     def func():
         return "ok"
 

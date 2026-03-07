@@ -45,8 +45,9 @@ def get_interceptor_path() -> str | None:
     lib = "libfaultcore_interceptor.so"
     for base in [Path.cwd(), Path(__file__).parent.parent]:
         for sub in ["", "target/release", "target/debug"]:
-            if (base / sub / lib).exists():
-                return str(base / sub / lib)
+            path = base / sub / lib
+            if path.exists():
+                return str(path)
     return None
 
 
@@ -75,11 +76,13 @@ class fault_context:
 
     def __enter__(self):
         self._token = _FAULTCORE_THREAD_POLICY.set(self.policy_name)
+        _set_thread_policy(self.policy_name)
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, *_args):
         if self._token:
             _FAULTCORE_THREAD_POLICY.reset(self._token)
+            _set_thread_policy(None)
 
 
 def set_thread_policy(policy_name: str | None):

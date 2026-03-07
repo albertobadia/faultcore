@@ -4,7 +4,7 @@ import faultcore
 
 
 def test_rate_limit_rapid_calls_exhaust_tokens():
-    @faultcore.rate_limit(1.0, 2)
+    @faultcore.rate_limit(1.0)
     def limited_func():
         return "ok"
 
@@ -18,7 +18,7 @@ def test_rate_limit_rapid_calls_exhaust_tokens():
 
 
 def test_rate_limit_tokens_refill_over_time():
-    @faultcore.rate_limit(100.0, 2)
+    @faultcore.rate_limit(100.0)
     def limited_func():
         return "ok"
 
@@ -49,7 +49,7 @@ def test_rate_limit_rate_getter():
 def test_rate_limit_decorator_reuses_policy():
     call_count = [0]
 
-    @faultcore.rate_limit(10.0, 5)
+    @faultcore.rate_limit(10.0)
     def limited_func():
         call_count[0] += 1
         return "ok"
@@ -73,7 +73,7 @@ def test_rate_limit_fractional_rate():
 
 
 def test_rate_limit_decorator_with_default_args():
-    @faultcore.rate_limit(10.0, 5)
+    @faultcore.rate_limit(10.0)
     def limited_func():
         return "ok"
 

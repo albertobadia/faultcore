@@ -4,7 +4,7 @@ import faultcore
 
 
 def test_rate_limit_token_replenishment():
-    @faultcore.rate_limit(10.0, 2)
+    @faultcore.rate_limit(10.0)
     def limited_func():
         return "ok"
 
@@ -76,7 +76,7 @@ def test_rate_limit_repr():
 
 
 def test_rate_limit_exceeded_error_message():
-    @faultcore.rate_limit(1.0, 1)
+    @faultcore.rate_limit(1.0)
     def limited_func():
         return "ok"
 

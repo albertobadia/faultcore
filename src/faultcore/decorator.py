@@ -19,7 +19,6 @@ class FaultWrapper:
         self._policy_name = policy_name
         self._key = key
         self._registry = _get_registry()
-        self._manager = None
 
     def __getattr__(self, name):
         return getattr(self._func, name)
@@ -30,44 +29,32 @@ class FaultWrapper:
         return functools.partial(self.__call__, obj)
 
     def __call__(self, *args, **kwargs):
-        registry = self._registry
         policy_name = self._policy_name
 
         if self._key:
-            if self._manager is None:
-                from faultcore._faultcore import get_feature_flag_manager
+            from faultcore._faultcore import get_feature_flag_manager
 
-                self._manager = get_feature_flag_manager()
+            manager = get_feature_flag_manager()
 
-            if not self._manager.is_enabled(self._key):
+            if not manager.is_enabled(self._key):
                 return self._func(*args, **kwargs)
 
-            config = self._manager.get(self._key)
-            if config is None:
-                return self._func(*args, **kwargs)
-
-            policy_name = self._ensure_policy(config)
+            config = manager.get(self._key)
+            if config:
+                policy_name = self._ensure_policy(config)
 
         if not policy_name:
             return self._func(*args, **kwargs)
 
-        def call():
-            return self._func(*args, **kwargs)
-
-        return registry.execute_policy(policy_name, call)
+        return self._registry.execute_policy(policy_name, lambda: self._func(*args, **kwargs))
 
     def _ensure_policy(self, config: dict) -> str:
-        parts = [self._key]
-        t = config.get("timeout_ms")
-        rl = config.get("rate_limit_rate")
+        t, rl = config.get("timeout_ms"), config.get("rate_limit_rate")
+        if not (t or rl):
+            return self._key
 
-        if t:
-            parts.append(f"t{t}")
-        if rl:
-            parts.append(f"rl{rl}")
-
-        name = "_".join(parts)
-        if (t or rl) and not self._registry.get_policy(name):
+        name = f"{self._key}_{f't{t}' if t else ''}_{f'rl{rl}' if rl else ''}".strip("_")
+        if not self._registry.get_policy(name):
             if t:
                 self._registry.register_timeout_layer(name, t)
             if rl:
@@ -80,36 +67,25 @@ class FaultWrapper:
 
 def timeout(timeout_ms: int):
     def decorator(func):
-        registry = _get_registry()
         policy_name = f"_timeout_{id(func)}"
-        try:
-            registry.register_timeout_layer(policy_name, timeout_ms)
-        except Exception as e:
-            logger.warning("Failed to register timeout for %s: %s", func, e)
-            return func
+        _get_registry().register_timeout_layer(policy_name, timeout_ms)
         return FaultWrapper(func, policy_name=policy_name)
 
     return decorator
 
 
-def rate_limit(rate: str | int, capacity: int = 100):
+def rate_limit(rate: str | int):
     def decorator(func):
-        registry = _get_registry()
         policy_name = f"_ratelimit_{id(func)}_{uuid.uuid4().hex[:8]}"
-        try:
-            rate_bps = _parse_rate(rate)
-            registry.register_rate_limit_layer(policy_name, rate_bps)
-        except Exception as e:
-            logger.warning("Failed to register rate limit for %s: %s", func, e)
-            return func
+        _get_registry().register_rate_limit_layer(policy_name, _parse_rate(rate))
         return FaultWrapper(func, policy_name=policy_name)
 
     return decorator
 
 
-def _parse_rate(rate: str | int) -> int:
-    if isinstance(rate, int):
-        return rate * 1_000_000
+def _parse_rate(rate: str | int | float) -> int:
+    if isinstance(rate, (int, float)):
+        return int(rate * 1_000_000)
     r = rate.lower()
     if r.endswith("mbps"):
         return int(float(r[:-4]) * 1_000_000)
@@ -119,14 +95,8 @@ def _parse_rate(rate: str | int) -> int:
 
 
 def apply_policy(key: str):
-    def decorator(func):
-        return FaultWrapper(func, key=key)
-
-    return decorator
+    return lambda func: FaultWrapper(func, key=key)
 
 
 def fault(policy_name: str = "auto"):
-    def decorator(func):
-        return FaultWrapper(func, policy_name=policy_name)
-
-    return decorator
+    return lambda func: FaultWrapper(func, policy_name=policy_name)

@@ -29,7 +29,7 @@ def test_timeout_decorator_with_args_and_kwargs():
 
 
 def test_rate_limit_decorator_with_args():
-    @faultcore.rate_limit(100.0, 50)
+    @faultcore.rate_limit(100.0)
     def func_with_varargs(*args):
         return len(args)
 
@@ -38,7 +38,7 @@ def test_rate_limit_decorator_with_args():
 
 
 def test_rate_limit_decorator_with_kwargs():
-    @faultcore.rate_limit(100.0, 50)
+    @faultcore.rate_limit(100.0)
     def func_with_kwargs(**kwargs):
         return len(kwargs)
 
