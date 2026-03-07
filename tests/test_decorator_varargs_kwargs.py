@@ -1,5 +1,3 @@
-import asyncio
-
 import faultcore
 
 
@@ -60,44 +58,6 @@ async def test_async_timeout_decorator_with_args():
 async def test_async_timeout_decorator_with_kwargs():
     @faultcore.timeout(1000)
     async def func_with_kwargs(**kwargs):
-        return sum(kwargs.values())
-
-    result = await func_with_kwargs(a=1, b=2, c=3)
-    assert result == 6
-
-
-def test_network_queue_decorator_with_args():
-    @faultcore.network_queue(rate="10mbps", capacity="1mb")
-    def func_with_varargs(*args):
-        return len(args)
-
-    result = func_with_varargs(1, 2, 3)
-    assert result == 3
-
-
-def test_network_queue_decorator_with_kwargs():
-    @faultcore.network_queue(rate="10mbps", capacity="1mb")
-    def func_with_kwargs(**kwargs):
-        return len(kwargs)
-
-    result = func_with_kwargs(a=1, b=2, c=3)
-    assert result == 3
-
-
-async def test_async_network_queue_decorator_with_args():
-    @faultcore.network_queue(rate="10mbps", capacity="1mb", latency_ms=10)
-    async def func_with_varargs(*args):
-        await asyncio.sleep(0.001)
-        return sum(args)
-
-    result = await func_with_varargs(1, 2, 3)
-    assert result == 6
-
-
-async def test_async_network_queue_decorator_with_kwargs():
-    @faultcore.network_queue(rate="10mbps", capacity="1mb", latency_ms=10)
-    async def func_with_kwargs(**kwargs):
-        await asyncio.sleep(0.001)
         return sum(kwargs.values())
 
     result = await func_with_kwargs(a=1, b=2, c=3)

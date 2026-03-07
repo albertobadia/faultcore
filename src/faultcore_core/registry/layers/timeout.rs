@@ -8,15 +8,17 @@ pub struct TimeoutLayer {
 
 impl TransportLayer for TimeoutLayer {
     fn execute(&self, _ctx: &CallContext, next: Next) -> PolicyResult {
-        if shm::is_shm_open() {
+        let tid = if shm::is_shm_open() {
             let tid = shm::get_thread_id();
             let _ = shm::write_timeouts(tid, self.timeout_ms, self.timeout_ms);
-        }
+            Some(tid)
+        } else {
+            None
+        };
 
         let result = next.call();
 
-        if shm::is_shm_open() {
-            let tid = shm::get_thread_id();
+        if let Some(tid) = tid {
             let _ = shm::clear_config(tid);
         }
 

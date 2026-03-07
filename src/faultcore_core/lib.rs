@@ -1,15 +1,13 @@
 pub mod features;
-pub mod network;
 pub mod policies;
 pub mod registry;
 pub mod system;
 
 pub use features::flag::FeatureFlagManager;
-pub use network::queue::{NetworkQueueCore as NetworkQueueCoreInner, QueueError, QueueStats};
 pub use policies::rate_limit::RateLimitPolicy as RateLimitCore;
 pub use policies::timeout::TimeoutPolicy as TimeoutCore;
 
-pub use policies::{FallbackPolicy, NetworkQueuePolicy, RateLimitPolicy, TimeoutPolicy};
+pub use policies::{FallbackPolicy, RateLimitPolicy, TimeoutPolicy};
 
 pub use registry::PolicyRegistry;
 pub use system::context::ContextManager;
@@ -19,35 +17,32 @@ use pyo3::prelude::*;
 
 #[pyfunction]
 fn classify_exception(exc: &Bound<'_, PyAny>) -> String {
-    let exc_type = exc.get_type();
-    let name = match exc_type.name() {
-        Ok(n) => n,
-        Err(_) => return "Transient".to_string(),
-    };
+    let name = exc
+        .get_type()
+        .name()
+        .map(|n| n.to_string())
+        .unwrap_or_else(|_| "Transient".into());
+    let name_lower = name.to_lowercase();
 
-    let name_lower = name.to_cow().unwrap_or_default().to_lowercase();
-
-    if name_lower.contains("timeout") || name_lower.contains("timedout") {
-        return "Timeout".to_string();
+    match name_lower.as_str() {
+        n if n.contains("timeout") || n.contains("timedout") => "Timeout".into(),
+        n if n.contains("rate") && (n.contains("limit") || n.contains("throttle")) => {
+            "RateLimit".into()
+        }
+        n if [
+            "connection",
+            "network",
+            "remote",
+            "disconnected",
+            "protocol",
+        ]
+        .iter()
+        .any(|&s| n.contains(s)) =>
+        {
+            "Network".into()
+        }
+        _ => "Transient".into(),
     }
-    if name_lower.contains("rate")
-        && (name_lower.contains("limit") || name_lower.contains("throttle"))
-    {
-        return "RateLimit".to_string();
-    }
-    if name_lower.contains("connection")
-        || name_lower.contains("network")
-        || name_lower.contains("remote")
-        || name_lower.contains("disconnected")
-        || name_lower.contains("protocol")
-    {
-        return "Network".to_string();
-    }
-    if name_lower.contains("transient") {
-        return "Transient".to_string();
-    }
-
-    "Transient".to_string()
 }
 
 #[pyfunction]
@@ -101,7 +96,6 @@ fn _faultcore(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<TimeoutPolicy>()?;
     m.add_class::<FallbackPolicy>()?;
     m.add_class::<RateLimitPolicy>()?;
-    m.add_class::<NetworkQueuePolicy>()?;
     m.add_class::<ContextManager>()?;
     m.add_class::<features::flag::FeatureFlagManager>()?;
     m.add_class::<registry::PolicyRegistry>()?;

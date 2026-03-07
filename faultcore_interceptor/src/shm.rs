@@ -54,6 +54,16 @@ impl FaultcoreConfig {
             && self.packet_loss_ppm <= 1_000_000
             && self.bandwidth_bps <= MAX_BANDWIDTH_BPS
     }
+
+    pub fn into_network_config(self) -> faultcore_network::Config {
+        faultcore_network::Config {
+            latency_ns: self.latency_ns,
+            packet_loss_ppm: self.packet_loss_ppm,
+            bandwidth_bps: self.bandwidth_bps,
+            connect_timeout_ms: self.connect_timeout_ms,
+            recv_timeout_ms: self.recv_timeout_ms,
+        }
+    }
 }
 
 pub const MAX_LATENCY_NS: u64 = 60_000_000_000;
@@ -63,30 +73,16 @@ static SHM_POINTER: RwLock<usize> = RwLock::new(0);
 static SHM_OPEN: AtomicU64 = AtomicU64::new(0);
 
 fn check_enabled() -> bool {
-    if let Ok(val) = std::env::var("FAULTCORE_ENABLED") {
-        match val.to_lowercase().as_str() {
-            "0" | "false" | "no" | "off" => return false,
-            _ => {}
-        }
-    }
-    true
-}
-
-fn get_shm_prefix() -> &'static str {
-    ""
+    !matches!(
+        std::env::var("FAULTCORE_ENABLED").as_deref(),
+        Ok("0" | "false" | "no" | "off")
+    )
 }
 
 fn get_shm_name() -> Option<String> {
-    let name = if let Ok(name) = std::env::var("FAULTCORE_CONFIG_SHM") {
-        if !name.is_empty() {
-            name
-        } else {
-            return None;
-        }
-    } else {
-        return None;
-    };
-    Some(name)
+    std::env::var("FAULTCORE_CONFIG_SHM")
+        .ok()
+        .filter(|s| !s.is_empty())
 }
 
 pub fn try_open_shm() -> bool {
@@ -94,12 +90,8 @@ pub fn try_open_shm() -> bool {
         return false;
     }
 
-    let shm_name = match get_shm_name() {
-        Some(name) => name,
-        None => format!("{}/faultcore_{}_config", get_shm_prefix(), unsafe {
-            libc::getpid()
-        }),
-    };
+    let shm_name = get_shm_name()
+        .unwrap_or_else(|| format!("/faultcore_{}_config", unsafe { libc::getpid() }));
 
     let name_cstr = std::ffi::CString::new(shm_name.as_bytes()).unwrap();
 

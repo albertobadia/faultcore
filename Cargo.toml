@@ -1,7 +1,8 @@
 [workspace]
 members = [
     ".",
-    "faultcore_interceptor"
+    "faultcore_interceptor",
+    "faultcore_network"
 ]
 
 [package]

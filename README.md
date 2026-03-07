@@ -4,14 +4,15 @@ A high-performance fault injection and network simulation library for Python, bu
 
 ## Overview
 
-`faultcore` provides decorators and policies for building network-aware applications. It includes timeout handling, rate limiting, and advanced network simulation capabilities like latency injection, packet loss, and bandwidth throttling.
+`faultcore` provides decorators and policies for building network-aware applications. It includes timeout handling, rate limiting, and advanced network simulation capabilities like latency injection, packet loss, and bandwidth throttling—all applied transparently via a high-performance Rust core and an optional network interceptor.
 
 ## Features
 
-- **Timeout** - Enforce execution time limits
-- **Rate Limiting** - Token bucket rate limiting for bandwidth or request control
-- **Network Queue** - Simulate complex network conditions (latency, packet loss, bandwidth throttling)
-- **High Performance** - Core logic implemented in Rust for minimal overhead
+- **Timeout** - Enforce execution time limits (function-level) or network timeouts (socket-level).
+- **Rate Limiting** - Bandwidth and request throttling using an optimized token bucket.
+- **Network Chaos** - Inject latency and packet loss transparently at the socket level.
+- **High Performance** - Core logic implemented in Rust for minimal overhead.
+- **Transparent Interception** - Use `LD_PRELOAD` to apply network policies without changing your application code.
 
 ## Installation
 
@@ -33,22 +34,21 @@ Requirements:
 import faultcore
 import time
 
-# Timeout
+# Timeout (Function level)
 @faultcore.timeout(timeout_ms=500)
 def slow_operation():
     time.sleep(1)
     return "done"
 
-# Rate Limit
-@faultcore.rate_limit(rate=10.0, capacity=100)
-def api_call():
-    return "ok"
-
-# Network Queue (bandwidth throttling and latency)
-@faultcore.network_queue(rate="1mbps", capacity="10mb", latency_ms=50, packet_loss=0.01)
-def download_file():
-    # Socket calls here will be intercepted if LD_PRELOAD is used
+# Bandwidth Rate Limit (Socket level via Interceptor)
+# When the interceptor is loaded, this applies a real bandwidth cap
+@faultcore.rate_limit(rate="10mbps", capacity=100)
+def download_large_file():
+    # Socket calls here will be throttled to 10Mbps if LD_PRELOAD is used
     return "data"
+
+# Latency & Packet Loss
+# Configure these via the Policy Registry for transparent injection
 ```
 
 ## API Reference
@@ -57,63 +57,37 @@ def download_file():
 
 | Decorator | Description |
 |-----------|-------------|
-| `@timeout(timeout_ms)` | Enforce timeout in milliseconds |
-| `@rate_limit(rate, capacity)` | Token bucket rate limiting |
-| `@network_queue(rate, capacity, max_queue_size, packet_loss, latency_ms, strategy, fd_limit)` | Network simulation and queuing |
+| `@timeout(timeout_ms)` | Enforce timing limits |
+| `@rate_limit(rate, capacity)` | Token bucket for requests or bandwidth (supports "mbps", "gbps") |
+| `@fault(policy_name)` | Apply a complex policy by name from the registry |
 
 ### Policy Classes
 
 | Class | Description |
 |-------|-------------|
-| `TimeoutPolicy` | Timeout policy implementation |
-| `RateLimitPolicy` | Rate limiting with token bucket |
-| `NetworkQueuePolicy` | Network simulation and bandwidth control |
+| `TimeoutPolicy` | Enforces execution deadlines |
+| `RateLimitPolicy` | Manages token-bucket based throttling |
+| `PolicyRegistry` | Central management for complex multi-layer policies |
 
 ### Context Management
 
 | Function | Description |
 |----------|-------------|
-| `add_keys(keys)` | Add context keys for multi-tenant limiting |
+| `add_keys(keys)` | Add context keys for scoped policies |
 | `get_keys()` | Get current context keys |
 | `remove_key(key)` | Remove a context key |
 | `clear_keys()` | Clear all context keys |
 
-## Network Queue
-
-The `network_queue` decorator simulates network conditions:
-
-```python
-@faultcore.network_queue(
-    rate="10mbps",      # Bandwidth limit (supports: bps, kbps, mbps, gbps)
-    capacity="50mb",    # Bucket capacity
-    max_queue_size=1000,
-    latency_ms=50,      # Simulated latency
-    packet_loss=0.01,   # 1% packet loss
-    strategy="wait",    # "wait" to queue or "reject" to fail immediately
-)
-def download():
-    return "data"
-```
-
-## Examples
-
-See the [`examples/`](examples/) directory for usage:
-
-- [`01_timeout.py`](examples/01_timeout.py) - Timeout usage
-- [`05_rate_limit.py`](examples/05_rate_limit.py) - Rate limiting
-- [`07_context.py`](examples/07_context.py) - Context management
-- [`08_bandwidth_throttle.py`](examples/08_bandwidth_throttle.py) - Bandwidth throttling
-- [`09_network_timeout.py`](examples/09_network_timeout.py) - Network-level timeout (requires interceptor)
-
 ## Architecture
 
-- **Python decorators** - User-facing API for function-level control
-- **Rust core** - High-performance policy implementation using PyO3
-- **Interceptor** - Process-level network interception (Linux only) for platform-agnostic fault injection
+- **Python Decorators**: High-level API for defining policies.
+- **Shared Memory (SHM)**: High-speed bridge between Python and the network layer.
+- **Faultcore Network (`ChaosEngine`)**: Unified Rust engine for applying network effects (QoS, Latency, Loss).
+- **Network Interceptor**: Transparent `LD_PRELOAD` library that intercepts syscalls and delegates to the `ChaosEngine`.
 
 ## Network Interceptor (Linux Only)
 
-The interceptor provides transparent network-level fault injection by intercepting socket calls.
+The interceptor provides transparent network-level fault injection by intercepting socket calls (`send`, `recv`, `connect`, etc.).
 
 **Usage:**
 ```bash
@@ -121,14 +95,14 @@ The interceptor provides transparent network-level fault injection by intercepti
 cargo build --package faultcore_interceptor --release
 
 # Run with interceptor
-LD_PRELOAD=target/release/libfaultcore_interceptor.so python your_script.py
+LD_PRELOAD=target/release/libfaultcore_interceptor.so FAULTCORE_ENABLED=1 python your_script.py
 ```
 
 The interceptor enables:
-- Network timeouts (connect, recv, send)
-- Latency injection at the socket level
-- Packet loss simulation
-- Bandwidth throttling
+- **Packet Loss**: Inject random packet drops.
+- **Latency**: Add delays to network operations.
+- **Bandwidth Throttling**: Real-time rate limiting for socket data using a centralized `ChaosEngine`.
+- **Network Timeouts**: Precise per-socket deadlines for connection and reception.
 
 ## License
 

@@ -1,230 +1,132 @@
-import asyncio
 import functools
-import inspect
 import logging
 import uuid
 
-from faultcore._faultcore import (
-    get_policy_registry,
-)
-
-
-def _is_async(func):
-    if getattr(func, "_is_async", False):
-        return True
-    if inspect.iscoroutinefunction(func):
-        return True
-    if callable(func):
-        if inspect.iscoroutinefunction(func.__call__):
-            return True
-    return False
-
-
-def _get_registry():
-    return get_policy_registry()
-
+from faultcore._faultcore import get_policy_registry
 
 logger = logging.getLogger(__name__)
 
 
-def _create_sync_wrapper(func, policy):
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        return policy(func, args, kwargs)
-
-    return wrapper
+@functools.lru_cache(maxsize=1)
+def _get_registry():
+    return get_policy_registry()
 
 
-def _create_simple_async_wrapper(func):
-    @functools.wraps(func)
-    async def async_wrapper(*args, **kwargs):
-        return await async_wrapper._wrapped_func(*args, **kwargs)
+class FaultWrapper:
+    def __init__(self, func, policy_name=None, key=None):
+        functools.update_wrapper(self, func)
+        self._func = func
+        self._policy_name = policy_name
+        self._key = key
+        self._registry = _get_registry()
+        self._manager = None
 
-    async_wrapper._wrapped_func = func
-    async_wrapper.__name__ = func.__name__
-    async_wrapper.__doc__ = getattr(func, "__doc__", None)
-    return async_wrapper
+    def __getattr__(self, name):
+        return getattr(self._func, name)
 
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self
+        return functools.partial(self.__call__, obj)
 
-def _attach_faultcore_attributes(wrapper, async_wrapper, func, policy):
-    return async_wrapper if _is_async(func) else wrapper
+    def __call__(self, *args, **kwargs):
+        registry = self._registry
+        policy_name = self._policy_name
 
+        if self._key:
+            if self._manager is None:
+                from faultcore._faultcore import get_feature_flag_manager
 
-def _decorate_func(func, policy, async_wrapper_generator=None):
-    wrapper = _create_sync_wrapper(func, policy)
-    if async_wrapper_generator:
-        async_wrapper = async_wrapper_generator(func)
-    else:
-        async_wrapper = _create_simple_async_wrapper(func)
-    return _attach_faultcore_attributes(wrapper, async_wrapper, func, policy)
+                self._manager = get_feature_flag_manager()
+
+            if not self._manager.is_enabled(self._key):
+                return self._func(*args, **kwargs)
+
+            config = self._manager.get(self._key)
+            if config is None:
+                return self._func(*args, **kwargs)
+
+            policy_name = self._ensure_policy(config)
+
+        if not policy_name:
+            return self._func(*args, **kwargs)
+
+        def call():
+            return self._func(*args, **kwargs)
+
+        return registry.execute_policy(policy_name, call)
+
+    def _ensure_policy(self, config: dict) -> str:
+        parts = [self._key]
+        t = config.get("timeout_ms")
+        rl = config.get("rate_limit_rate")
+
+        if t:
+            parts.append(f"t{t}")
+        if rl:
+            parts.append(f"rl{rl}")
+
+        name = "_".join(parts)
+        if (t or rl) and not self._registry.get_policy(name):
+            if t:
+                self._registry.register_timeout_layer(name, t)
+            if rl:
+                self._registry.register_rate_limit_layer(name, rl)
+        return name
+
+    def __repr__(self):
+        return f"<FaultWrapper(policy={self._policy_name}, key={self._key}) for {self._func!r}>"
 
 
 def timeout(timeout_ms: int):
     def decorator(func):
         registry = _get_registry()
-        func_id = id(func)
-        policy_name = f"_timeout_{func_id}"
+        policy_name = f"_timeout_{id(func)}"
         try:
             registry.register_timeout_layer(policy_name, timeout_ms)
         except Exception as e:
-            logger.warning(f"Failed to register timeout layer for {func}: {e}")
+            logger.warning("Failed to register timeout for %s: %s", func, e)
             return func
-        return _FaultWrapper(func, policy_name, registry)
+        return FaultWrapper(func, policy_name=policy_name)
 
     return decorator
 
 
-def rate_limit(rate: float, capacity: int):
-    unique_id = uuid.uuid4().hex
-
+def rate_limit(rate: str | int, capacity: int = 100):
     def decorator(func):
         registry = _get_registry()
-        func_id = id(func)
-        policy_name = f"_ratelimit_{func_id}_{unique_id}"
+        policy_name = f"_ratelimit_{id(func)}_{uuid.uuid4().hex[:8]}"
         try:
-            registry.register_rate_limit_layer(policy_name, rate, capacity)
+            rate_bps = _parse_rate(rate)
+            registry.register_rate_limit_layer(policy_name, rate_bps)
         except Exception as e:
-            logger.warning(f"Failed to register rate limit layer for {func}: {e}")
+            logger.warning("Failed to register rate limit for %s: %s", func, e)
             return func
-        return _FaultWrapper(func, policy_name, registry)
+        return FaultWrapper(func, policy_name=policy_name)
 
     return decorator
 
 
-def network_queue(
-    rate: str = "1gbps",
-    capacity: str = "10mb",
-    max_queue_size: int = 1000,
-    packet_loss: float = 0.0,
-    latency_ms: int = 0,
-):
-    def decorator(func):
-        from faultcore._faultcore import NetworkQueuePolicy
-
-        policy = NetworkQueuePolicy(
-            rate=rate, capacity=capacity, max_queue_size=max_queue_size, packet_loss=packet_loss, latency_ms=latency_ms
-        )
-
-        wrapper = _create_sync_wrapper(func, policy)
-
-        @functools.wraps(func)
-        async def async_wrapper(*args, **kwargs):
-            ticket_info = policy._prepare_async_ticket()
-
-            if isinstance(ticket_info, Exception):
-                raise ticket_info
-
-            latency_ms_val = ticket_info.get("latency_ms", 0)
-
-            policy._enter_thread_context()
-
-            try:
-                result = await func(*args, **kwargs)
-
-                if latency_ms_val > 0:
-                    await asyncio.sleep(latency_ms_val / 1000.0)
-
-                return result
-            finally:
-                policy._exit_thread_context()
-
-        async_wrapper._wrapped_func = func
-        async_wrapper.__name__ = func.__name__
-        async_wrapper.__doc__ = getattr(func, "__doc__", None)
-
-        return _attach_faultcore_attributes(wrapper, async_wrapper, func, policy)
-
-    return decorator
+def _parse_rate(rate: str | int) -> int:
+    if isinstance(rate, int):
+        return rate * 1_000_000
+    r = rate.lower()
+    if r.endswith("mbps"):
+        return int(float(r[:-4]) * 1_000_000)
+    if r.endswith("gbps"):
+        return int(float(r[:-4]) * 1_000_000_000)
+    return int(float(r))
 
 
 def apply_policy(key: str):
-    from faultcore._faultcore import get_feature_flag_manager
-
-    manager = get_feature_flag_manager()
-
     def decorator(func):
-        return _DynamicPolicyWrapper(func, key, manager)
+        return FaultWrapper(func, key=key)
 
     return decorator
-
-
-class _DynamicPolicyWrapper:
-    def __init__(self, func, key, manager):
-        self._func = func
-        self._key = key
-        self._manager = manager
-
-    def __call__(self, *args, **kwargs):
-        if not self._manager.is_enabled(self._key):
-            return self._func(*args, **kwargs)
-
-        config = self._manager.get(self._key)
-        if config is None:
-            return self._func(*args, **kwargs)
-
-        registry = _get_registry()
-
-        policy_parts = [self._key]
-        if config.get("timeout_ms"):
-            policy_parts.append(f"t{config['timeout_ms']}")
-        if config.get("rate_limit_rate") is not None:
-            policy_parts.append(f"rl{config['rate_limit_rate']}")
-
-        policy_name = "_".join(policy_parts)
-
-        if config.get("timeout_ms") and not registry.get_policy(policy_name):
-            registry.register_timeout_layer(policy_name, config["timeout_ms"])
-        if config.get("rate_limit_rate") is not None and not registry.get_policy(policy_name):
-            registry.register_rate_limit_layer(
-                policy_name, config["rate_limit_rate"], config.get("rate_limit_capacity", 100)
-            )
-
-        def func_to_call():
-            return self._func(*args, **kwargs)
-
-        return registry.execute_policy(policy_name, func_to_call)
-
-    def __get__(self, obj, objtype=None):
-        return self
 
 
 def fault(policy_name: str = "auto"):
-    registry = _get_registry()
-
     def decorator(func):
-        return _FaultWrapper(func, policy_name, registry)
+        return FaultWrapper(func, policy_name=policy_name)
 
     return decorator
-
-
-class _FaultWrapper:
-    _wrapper_attrs = ("__doc__", "__name__", "__module__", "__annotations__", "__wrapped__")
-
-    def __init__(self, func, policy_name, registry):
-        object.__setattr__(self, "_func", func)
-        object.__setattr__(self, "_policy_name", policy_name)
-        object.__setattr__(self, "_registry", registry)
-        object.__setattr__(self, "_is_async", _is_async(func))
-
-    def __getattribute__(self, name):
-        if name in object.__getattribute__(self, "_wrapper_attrs"):
-            return getattr(object.__getattribute__(self, "_func"), name)
-        return object.__getattribute__(self, name)
-
-    def __call__(self, *args, **kwargs):
-        if self._is_async:
-            return self._async_call(*args, **kwargs)
-
-        def func_to_call():
-            return self._func(*args, **kwargs)
-
-        return self._registry.execute_policy(self._policy_name, func_to_call)
-
-    async def _async_call(self, *args, **kwargs):
-        def func_to_call():
-            return self._func(*args, **kwargs)
-
-        return await self._registry.execute_policy(self._policy_name, func_to_call)
-
-    def __repr__(self):
-        return f"<FaultWrapper({self._policy_name}) for {self._func}>"

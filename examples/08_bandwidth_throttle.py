@@ -1,14 +1,14 @@
 import time
 
-from faultcore import network_queue
+from faultcore import rate_limit
 
 
-@network_queue(rate=1, capacity=10240, max_queue_size=100, latency_ms=0, packet_loss=0.0)
+@rate_limit(rate="1mbps", capacity=10240)
 def send_at_1mbps(data_size: int) -> int:
     return data_size
 
 
-@network_queue(rate=10, capacity=102400, max_queue_size=100, latency_ms=0, packet_loss=0.0)
+@rate_limit(rate="10mbps", capacity=102400)
 def send_at_10mbps(data_size: int) -> int:
     return data_size
 
@@ -43,7 +43,8 @@ if __name__ == "__main__":
     total = time.time() - start
     print(f"Total: {total:.2f}s\n")
 
-    print("Note: rate parameter is in Mbps (1 = 1 Mbps, 10 = 10 Mbps)")
+    print("Note: rate parameter now supports strings (e.g., '1mbps', '10mbps')")
+    print("This requires running with the network interceptor (LD_PRELOAD) for socket-level effects.")
     print()
 
     print("Tests finished.")

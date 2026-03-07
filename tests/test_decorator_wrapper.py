@@ -17,14 +17,6 @@ def test_rate_limit_decorator_sets_policy_attribute():
     assert func() == "ok"
 
 
-def test_network_queue_decorator_sets_policy_attribute():
-    @faultcore.network_queue(rate="10mbps", capacity="1mb")
-    def func():
-        return "ok"
-
-    assert func() == "ok"
-
-
 def test_decorator_preserves_function_name():
     @faultcore.timeout(1000)
     def my_function():

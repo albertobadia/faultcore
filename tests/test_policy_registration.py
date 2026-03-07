@@ -13,7 +13,7 @@ def test_register_policy_full_config():
                 {"type": "timeout", "timeout_ms": 1000},
             ],
             "l2_qos": [
-                {"type": "rate_limit", "rate": 100.0, "capacity": 10.0},
+                {"type": "rate_limit", "rate": 100, "capacity": 10},
             ],
             "l1_chaos": [
                 {"type": "latency", "latency_ms": 50},

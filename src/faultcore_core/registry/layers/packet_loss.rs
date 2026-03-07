@@ -8,15 +8,17 @@ pub struct PacketLossChaosLayer {
 
 impl ChaosLayer for PacketLossChaosLayer {
     fn execute(&self, _ctx: &CallContext, next: Next) -> PolicyResult {
-        if shm::is_shm_open() {
+        let tid = if shm::is_shm_open() {
             let tid = shm::get_thread_id();
             let _ = shm::write_packet_loss(tid, self.ppm);
-        }
+            Some(tid)
+        } else {
+            None
+        };
 
         let result = next.call();
 
-        if shm::is_shm_open() {
-            let tid = shm::get_thread_id();
+        if let Some(tid) = tid {
             let _ = shm::clear_config(tid);
         }
 

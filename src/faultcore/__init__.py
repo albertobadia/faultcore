@@ -6,7 +6,6 @@ from faultcore._faultcore import (
     CallContext,
     ContextManager,
     FeatureFlagManager,
-    NetworkQueuePolicy as NetworkQueue,
     PolicyRegistry,
     RateLimitPolicy as RateLimit,
     TimeoutPolicy as Timeout,
@@ -21,7 +20,6 @@ from faultcore._faultcore import (
 from faultcore.decorator import (
     apply_policy,
     fault,
-    network_queue,
     rate_limit,
     timeout,
 )
@@ -44,67 +42,44 @@ def is_interceptor_loaded() -> bool:
 
 
 def get_interceptor_path() -> str | None:
-    filename = "libfaultcore_interceptor.so"
-
+    lib = "libfaultcore_interceptor.so"
     for base in [Path.cwd(), Path(__file__).parent.parent]:
-        for subpath in ["", "target/release/", "target/debug/"]:
-            path = base / subpath / filename
-            if path.exists():
-                return str(path)
+        for sub in ["", "target/release", "target/debug"]:
+            if (base / sub / lib).exists():
+                return str(base / sub / lib)
     return None
 
 
 def register_policy_bundle(
     key: str,
     timeout_ms: int | None = None,
-    rate_limit_rate: float | None = None,
+    rate_limit_rate: int | None = None,
     rate_limit_capacity: int | None = None,
 ) -> None:
-    manager = get_feature_flag_manager()
-    manager.register(
-        key,
-        timeout_ms,
-        rate_limit_rate,
-        rate_limit_capacity,
-    )
+    get_feature_flag_manager().register(key, timeout_ms, rate_limit_rate, rate_limit_capacity)
 
 
 def update_policy_bundle(
     key: str,
     timeout_ms: int | None = None,
-    rate_limit_rate: float | None = None,
+    rate_limit_rate: int | None = None,
     rate_limit_capacity: int | None = None,
 ) -> bool:
-    manager = get_feature_flag_manager()
-    return manager.update(
-        key,
-        timeout_ms,
-        rate_limit_rate,
-        rate_limit_capacity,
-    )
+    return get_feature_flag_manager().update(key, timeout_ms, rate_limit_rate, rate_limit_capacity)
 
 
 class fault_context:
-    def __init__(
-        self,
-        policy_name: str | None = None,
-        host: str | None = None,
-        path: str | None = None,
-        method: str | None = None,
-        headers: dict | None = None,
-    ):
+    def __init__(self, policy_name: str | None = None, **_kwargs):
         self.policy_name = policy_name
-        self.host = host
-        self.path = path
-        self.method = method
-        self.headers = headers
+        self._token = None
 
     def __enter__(self):
         self._token = _FAULTCORE_THREAD_POLICY.set(self.policy_name)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        _FAULTCORE_THREAD_POLICY.reset(self._token)
+        if self._token:
+            _FAULTCORE_THREAD_POLICY.reset(self._token)
 
 
 def set_thread_policy(policy_name: str | None):
@@ -114,7 +89,6 @@ def set_thread_policy(policy_name: str | None):
 __all__ = [
     "Timeout",
     "RateLimit",
-    "NetworkQueue",
     "CallContext",
     "ContextManager",
     "FeatureFlagManager",
@@ -129,7 +103,6 @@ __all__ = [
     "update_policy_bundle",
     "timeout",
     "rate_limit",
-    "network_queue",
     "apply_policy",
     "fault",
     "fault_context",

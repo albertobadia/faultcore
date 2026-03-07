@@ -54,121 +54,64 @@ impl Policy {
             return func.call(py, (), None);
         }
 
-        let func = func.clone_ref(py);
-
-        let inner_call = move || -> PolicyResult {
-            Python::attach(|py| {
-                func.call(py, (), None)
-                    .map(PolicyResult::Ok)
-                    .unwrap_or_else(|e: pyo3::PyErr| {
-                        let err_type = e
-                            .get_type(py)
-                            .name()
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|_| "RuntimeError".to_string());
-                        let err_msg = e
-                            .value(py)
-                            .str()
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|_| e.to_string());
-                        PolicyResult::Error {
-                            message: format!("{}: {}", err_type, err_msg),
+        let inner_call = {
+            let func = func.clone_ref(py);
+            move || -> PolicyResult {
+                Python::attach(|py| {
+                    func.call(py, (), None)
+                        .map(PolicyResult::Ok)
+                        .unwrap_or_else(|e| PolicyResult::Error {
+                            message: format!(
+                                "{}: {}",
+                                e.get_type(py)
+                                    .name()
+                                    .map(|n| n.to_string())
+                                    .unwrap_or_else(|_| "Error".to_string()),
+                                e
+                            ),
                             exception: Some(e.into_py_any(py).unwrap()),
-                        }
-                    })
-            })
-        };
-
-        let base_next = Next::new(inner_call);
-
-        let next_l1: Next = if self.l1_chaos.is_empty() {
-            base_next.clone()
-        } else {
-            let mut next = base_next.clone();
-            for layer in self.l1_chaos.iter().rev() {
-                let layer = layer.clone();
-                let ctx = ctx.clone();
-                let prev_next = next.clone();
-                next = Next::new(move || layer.execute(&ctx, prev_next.clone()));
+                        })
+                })
             }
-            next
         };
 
-        let next_l2: Next = if self.l2_qos.is_empty() {
-            next_l1.clone()
-        } else {
-            let mut next = next_l1.clone();
-            for layer in self.l2_qos.iter().rev() {
-                let layer = layer.clone();
-                let ctx = ctx.clone();
-                let prev_next = next.clone();
-                next = Next::new(move || layer.execute(&ctx, prev_next.clone()));
-            }
-            next
-        };
+        let mut next = Next::new(inner_call);
 
-        let next_l3: Next = if self.l3_routing.is_empty() {
-            next_l2.clone()
-        } else {
-            let mut next = next_l2.clone();
-            for layer in self.l3_routing.iter().rev() {
-                let layer = layer.clone();
-                let ctx = ctx.clone();
-                let prev_next = next.clone();
-                next = Next::new(move || layer.execute(&ctx, prev_next.clone()));
-            }
-            next
-        };
+        // Layers are executed in order: Chaos -> QoS -> Routing -> Transport
+        // To achieve this, we wrap them in reverse order (L4 -> L3 -> L2 -> L1)
+        for layer in self.l4_transport.iter().rev() {
+            let (layer, ctx, prev) = (layer.clone(), ctx.clone(), next.clone());
+            next = Next::new(move || layer.execute(&ctx, prev.clone()));
+        }
+        for layer in self.l3_routing.iter().rev() {
+            let (layer, ctx, prev) = (layer.clone(), ctx.clone(), next.clone());
+            next = Next::new(move || layer.execute(&ctx, prev.clone()));
+        }
+        for layer in self.l2_qos.iter().rev() {
+            let (layer, ctx, prev) = (layer.clone(), ctx.clone(), next.clone());
+            next = Next::new(move || layer.execute(&ctx, prev.clone()));
+        }
+        for layer in self.l1_chaos.iter().rev() {
+            let (layer, ctx, prev) = (layer.clone(), ctx.clone(), next.clone());
+            next = Next::new(move || layer.execute(&ctx, prev.clone()));
+        }
 
-        let final_next: Next = if self.l4_transport.is_empty() {
-            next_l3.clone()
-        } else {
-            let mut next = next_l3.clone();
-            for layer in self.l4_transport.iter().rev() {
-                let layer = layer.clone();
-                let ctx = ctx.clone();
-                let prev_next = next.clone();
-                next = Next::new(move || layer.execute(&ctx, prev_next.clone()));
-            }
-            next
-        };
+        let result = next.call();
 
-        let result = final_next.call();
-
-        // Sync metrics with SHM for TUI
         crate::registry::shm_registry::get_shm_registry()
             .update_metrics(&self.name, matches!(result, PolicyResult::Ok(_)));
 
         match result {
-            PolicyResult::Ok(value) => Ok(value),
+            PolicyResult::Ok(val) => Ok(val),
             PolicyResult::Error { message, exception } => {
                 if let Some(exc) = exception {
-                    Python::attach(|py| {
-                        let err = exc.into_bound(py);
-                        Err(PyErr::from_value(err))
-                    })
+                    Err(PyErr::from_value(exc.into_bound(py)))
                 } else {
-                    let (err_type, err_msg) = if let Some(pos) = message.find(':') {
-                        (
-                            message[..pos].trim().to_string(),
-                            message[pos + 1..].trim().to_string(),
-                        )
-                    } else {
-                        ("RuntimeError".to_string(), message.clone())
-                    };
-
-                    Python::attach(|py| {
-                        if let Ok(exc_type) = py.import("builtins")?.getattr(err_type)
-                            && let Ok(instance) = exc_type.call1((err_msg,))
-                        {
-                            return Err(PyErr::from_value(instance));
-                        }
-                        Err(pyo3::exceptions::PyRuntimeError::new_err(message))
-                    })
+                    Err(pyo3::exceptions::PyRuntimeError::new_err(message))
                 }
             }
             PolicyResult::Drop { reason } => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                format!("Request dropped: {}", reason),
+                format!("Dropped: {reason}"),
             )),
         }
     }

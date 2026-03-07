@@ -24,37 +24,3 @@ def test_sync_timeout_error_propagation():
         failing_func()
     except RuntimeError as e:
         assert str(e) == "sync error"
-
-
-async def test_async_context_manager_enters():
-    entered = False
-
-    @faultcore.network_queue(rate="10mbps", capacity="1mb")
-    async def test_func():
-        nonlocal entered
-        entered = True
-        await asyncio.sleep(0.01)
-        return "ok"
-
-    result = await test_func()
-    assert result == "ok"
-    assert entered
-
-
-async def test_async_with_network_queue_latency():
-    @faultcore.network_queue(rate="10mbps", capacity="1mb", latency_ms=50)
-    async def test_func():
-        await asyncio.sleep(0.01)
-        return "ok"
-
-    result = await test_func()
-    assert result == "ok"
-
-
-def test_sync_with_network_queue_latency():
-    @faultcore.network_queue(rate="10mbps", capacity="1mb", latency_ms=50)
-    def test_func():
-        return "ok"
-
-    result = test_func()
-    assert result == "ok"

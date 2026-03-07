@@ -13,3 +13,4 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 rand = "0.8"
 parking_lot = "0.12.5"
+faultcore_network = { path = "../faultcore_network" }

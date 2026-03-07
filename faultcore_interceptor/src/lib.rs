@@ -1,3 +1,4 @@
+use faultcore_network::{ChaosEngine, LayerResult};
 use libc::{c_int, c_short, c_void, pollfd, size_t, sockaddr, socklen_t, ssize_t};
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -7,29 +8,14 @@ mod shm;
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Copy)]
-struct BandwidthTokenBucket {
-    tokens: f64,
-    last_update: std::time::Instant,
-}
-
-#[derive(Debug, Clone, Copy)]
 struct TimeoutState {
     connect_timeout_ms: u64,
     recv_timeout_ms: u64,
 }
 
 thread_local! {
-    static BANDWIDTH_TOKENS: RefCell<Option<BandwidthTokenBucket>> = const { RefCell::new(None) };
     static TIMEOUT_STATE: RefCell<Option<TimeoutState>> = const { RefCell::new(None) };
     static LATENCY_START: RefCell<std::collections::HashMap<c_int, std::time::Instant>> = RefCell::new(std::collections::HashMap::new());
-    static XORSHIFT_STATE: RefCell<u32> = const { RefCell::new(0xDEADBEEF) };
-}
-
-fn xorshift32(state: &mut u32) -> u32 {
-    *state ^= *state << 13;
-    *state ^= *state >> 17;
-    *state ^= *state << 5;
-    *state
 }
 
 type SendFn = unsafe extern "C" fn(c_int, *const c_void, size_t, c_int) -> ssize_t;
@@ -60,6 +46,8 @@ lazy_static::lazy_static! {
     pub static ref ORIG_RECV: RecvFn = unsafe { get_original_fn("recv") };
     pub static ref ORIG_SENDTO: SendToFn = unsafe { get_original_fn("sendto") };
     pub static ref ORIG_RECVFROM: RecvFromFn = unsafe { get_original_fn("recvfrom") };
+
+    pub static ref CHAOS_ENGINE: ChaosEngine = ChaosEngine::new();
 }
 
 unsafe fn get_original_fn<T>(name: &str) -> T {
@@ -99,12 +87,6 @@ lazy_static::lazy_static! {
             .and_then(|s| s.parse().ok())
             .unwrap_or(5000)  // Default 5 seconds if not set
     };
-    static ref DEFAULT_BURST_CAPACITY_SECONDS: f64 = {
-        std::env::var("FAULTCORE_BANDWIDTH_BURST_CAPACITY_SECONDS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(2.0)  // Default 2 seconds of burst capacity
-    };
 }
 
 fn enter_hook() -> bool {
@@ -124,6 +106,18 @@ fn exit_hook() {
     unsafe {
         libc::pthread_setspecific(*RECURSION_GUARD_KEY, std::ptr::null());
     }
+}
+
+fn with_hook<F, R>(f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    let _entered = enter_hook();
+    let res = f();
+    if _entered {
+        exit_hook();
+    }
+    res
 }
 
 fn initialize() {
@@ -146,98 +140,49 @@ fn is_non_blocking(fd: c_int) -> bool {
     (flags & libc::O_NONBLOCK) != 0
 }
 
-fn apply_bandwidth_throttle(fd: c_int, bytes_to_send: u64) {
-    let config = match shm::get_config_for_fd(fd) {
-        Some(c) => c,
-        None => return,
-    };
-    let rate = config.bandwidth_bps as f64;
-
-    if rate <= 0.0 {
-        return;
-    }
-
-    BANDWIDTH_TOKENS.with(|tb| {
-        let mut tokens = tb.borrow_mut();
-        let now = std::time::Instant::now();
-
-        if tokens.is_none() {
-            *tokens = Some(BandwidthTokenBucket {
-                tokens: 0.0,
-                last_update: now,
-            });
-        }
-
-        if let Some(ref mut bucket) = *tokens {
-            let elapsed = bucket.last_update.elapsed().as_secs_f64();
-            let new_tokens = elapsed * rate;
-            let max_capacity = *DEFAULT_BURST_CAPACITY_SECONDS * rate;
-            bucket.tokens = (bucket.tokens + new_tokens).min(max_capacity);
-            bucket.last_update = now;
-
-            let bytes_needed = bytes_to_send as f64 * 8.0;
-            if bucket.tokens >= bytes_needed {
-                bucket.tokens -= bytes_needed;
-            } else {
-                let deficit = bytes_needed - bucket.tokens;
-                let wait_time = deficit / rate;
-                bucket.tokens = 0.0;
-
-                if !is_non_blocking(fd) {
-                    std::thread::sleep(std::time::Duration::from_secs_f64(wait_time));
-                }
-            }
-        }
-    });
-}
-
-fn apply_chaos_from_shm(fd: c_int) -> Option<isize> {
+fn apply_chaos_from_shm(fd: c_int, bytes: u64, is_send: bool) -> Option<isize> {
     let config = shm::get_config_for_fd(fd)?;
 
-    if config.latency_ns > 0 {
-        let non_blocking = is_non_blocking(fd);
+    let network_config = config.into_network_config();
 
-        if non_blocking {
-            let mut elapsed = false;
-            LATENCY_START.with(|map| {
-                let mut m = map.borrow_mut();
-                if let Some(start) = m.get(&fd) {
-                    if start.elapsed().as_nanos() >= config.latency_ns as u128 {
-                        elapsed = true;
-                    }
-                } else {
-                    m.insert(fd, std::time::Instant::now());
-                }
-            });
+    let result = if is_send {
+        CHAOS_ENGINE.process_send(&network_config, bytes)
+    } else {
+        CHAOS_ENGINE.process_recv(&network_config, bytes)
+    };
 
-            if !elapsed {
-                set_errno(libc::EAGAIN);
-                return Some(-1);
-            } else {
+    match result {
+        LayerResult::Drop => return Some(0),
+        LayerResult::Error(_) => return Some(0),
+        LayerResult::Delay(latency_ns) => {
+            let non_blocking = is_non_blocking(fd);
+
+            if non_blocking {
+                let mut elapsed = false;
                 LATENCY_START.with(|map| {
-                    map.borrow_mut().remove(&fd);
+                    let mut m = map.borrow_mut();
+                    if let Some(start) = m.get(&fd) {
+                        if start.elapsed().as_nanos() >= latency_ns as u128 {
+                            elapsed = true;
+                        }
+                    } else {
+                        m.insert(fd, std::time::Instant::now());
+                    }
                 });
-            }
-        } else {
-            std::thread::sleep(std::time::Duration::from_nanos(config.latency_ns));
-        }
-    }
 
-    if config.packet_loss_ppm > 0 {
-        let drop_threshold = 1_000_000.0 / config.packet_loss_ppm as f64;
-        let mut should_drop = false;
-        let random = XORSHIFT_STATE.with(|s| {
-            let mut state = *s.borrow();
-            let result = xorshift32(&mut state);
-            *s.borrow_mut() = state;
-            result
-        });
-        if (random as f64) % drop_threshold < 1.0 {
-            should_drop = true;
+                if !elapsed {
+                    set_errno(libc::EAGAIN);
+                    return Some(-1);
+                } else {
+                    LATENCY_START.with(|map| {
+                        map.borrow_mut().remove(&fd);
+                    });
+                }
+            } else {
+                std::thread::sleep(std::time::Duration::from_nanos(latency_ns));
+            }
         }
-        if should_drop {
-            return Some(0);
-        }
+        LayerResult::Continue => {}
     }
 
     if config.connect_timeout_ms > 0 || config.recv_timeout_ms > 0 {
@@ -367,36 +312,30 @@ pub extern "C" fn socket(domain: c_int, ty: c_int, protocol: c_int) -> c_int {
 #[unsafe(no_mangle)]
 pub extern "C" fn send(s: c_int, b: *const c_void, l: size_t, f: c_int) -> ssize_t {
     initialize();
-    apply_bandwidth_throttle(s, l as u64);
     if !enter_hook() {
         return unsafe { (ORIG_SEND)(s, b, l, f) };
     }
-    let res = if let Some(e) = apply_chaos_from_shm(s) {
-        e
-    } else {
-        unsafe { (ORIG_SEND)(s, b, l, f) }
-    };
-    exit_hook();
-    res
+    with_hook(|| {
+        if let Some(e) = apply_chaos_from_shm(s, l as u64, true) {
+            e
+        } else {
+            unsafe { (ORIG_SEND)(s, b, l, f) }
+        }
+    })
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn recv(s: c_int, b: *mut c_void, l: size_t, f: c_int) -> ssize_t {
     initialize();
-    if !enter_hook() {
-        return unsafe { (ORIG_RECV)(s, b, l, f) };
-    }
-    if let Some(e) = apply_chaos_from_shm(s) {
-        exit_hook();
-        return e;
-    }
-    if let Some(e) = apply_timeout_recv(s) {
-        exit_hook();
-        return e;
-    }
-    let res = unsafe { (ORIG_RECV)(s, b, l, f) };
-    exit_hook();
-    res
+    with_hook(|| {
+        if let Some(e) = apply_chaos_from_shm(s, l as u64, false) {
+            return e;
+        }
+        if let Some(e) = apply_timeout_recv(s) {
+            return e;
+        }
+        unsafe { (ORIG_RECV)(s, b, l, f) }
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -410,20 +349,18 @@ pub extern "C" fn connect(s: c_int, a: *const sockaddr, l: socklen_t) -> c_int {
         return unsafe { (ORIG_CONNECT)(s, a, l) };
     }
 
-    if let Some(e) = apply_chaos_from_shm(s) {
-        exit_hook();
-        if e == -1 && get_errno() != libc::EAGAIN {
-            set_errno(libc::ECONNREFUSED);
+    with_hook(|| {
+        if let Some(e) = apply_chaos_from_shm(s, 0, true) {
+            if e == -1 && get_errno() != libc::EAGAIN {
+                set_errno(libc::ECONNREFUSED);
+            }
+            return e as c_int;
         }
-        return e as c_int;
-    }
-    if let Some(e) = apply_timeout_connect(s, a, l) {
-        exit_hook();
-        return e;
-    }
-    let res = unsafe { (ORIG_CONNECT)(s, a, l) };
-    exit_hook();
-    res
+        if let Some(e) = apply_timeout_connect(s, a, l) {
+            return e;
+        }
+        unsafe { (ORIG_CONNECT)(s, a, l) }
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -436,17 +373,16 @@ pub extern "C" fn sendto(
     dl: socklen_t,
 ) -> ssize_t {
     initialize();
-    apply_bandwidth_throttle(s, l as u64);
     if !enter_hook() {
         return unsafe { (ORIG_SENDTO)(s, b, l, f, d, dl) };
     }
-    let res = if let Some(e) = apply_chaos_from_shm(s) {
-        e
-    } else {
-        unsafe { (ORIG_SENDTO)(s, b, l, f, d, dl) }
-    };
-    exit_hook();
-    res
+    with_hook(|| {
+        if let Some(e) = apply_chaos_from_shm(s, l as u64, true) {
+            e
+        } else {
+            unsafe { (ORIG_SENDTO)(s, b, l, f, d, dl) }
+        }
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -462,15 +398,13 @@ pub extern "C" fn recvfrom(
     if !enter_hook() {
         return unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) };
     }
-    if let Some(e) = apply_chaos_from_shm(s) {
-        exit_hook();
-        return e;
-    }
-    if let Some(e) = apply_timeout_recv(s) {
-        exit_hook();
-        return e;
-    }
-    let res = unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) };
-    exit_hook();
-    res
+    with_hook(|| {
+        if let Some(e) = apply_chaos_from_shm(s, l as u64, false) {
+            return e;
+        }
+        if let Some(e) = apply_timeout_recv(s) {
+            return e;
+        }
+        unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) }
+    })
 }

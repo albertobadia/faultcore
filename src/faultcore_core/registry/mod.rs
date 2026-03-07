@@ -45,7 +45,7 @@ impl PolicyRegistry {
     }
 
     fn _get_policy(&self, name: &str) -> Option<Arc<RwLock<Policy>>> {
-        self.policies.lock().ok().and_then(|p| p.get(name).cloned())
+        self.policies.lock().ok()?.get(name).cloned()
     }
 
     pub fn get_or_create(&self, name: &str) -> Arc<RwLock<Policy>> {
@@ -53,31 +53,23 @@ impl PolicyRegistry {
             return policy;
         }
 
-        let policy = Policy::new(name.to_string());
-        let policy = Arc::new(RwLock::new(policy));
-
+        let policy = Arc::new(RwLock::new(Policy::new(name.to_string())));
         if let Ok(mut policies) = self.policies.lock() {
             policies.insert(name.to_string(), policy.clone());
         }
-
         policy
     }
 
     pub fn create_fresh(&self, name: &str) -> Arc<RwLock<Policy>> {
-        let policy = Policy::new(name.to_string());
-        let policy = Arc::new(RwLock::new(policy));
-
+        let policy = Arc::new(RwLock::new(Policy::new(name.to_string())));
         if let Ok(mut policies) = self.policies.lock() {
             policies.insert(name.to_string(), policy.clone());
         }
-
         policy
     }
 
     pub fn _set_thread_policy(&self, name: Option<String>) {
-        THREAD_POLICY.with(|p| {
-            *p.borrow_mut() = name;
-        });
+        THREAD_POLICY.with(|p| *p.borrow_mut() = name);
     }
 
     pub fn _get_thread_policy(&self) -> Option<String> {
@@ -94,80 +86,50 @@ impl Default for PolicyRegistry {
 #[pymethods]
 impl PolicyRegistry {
     pub fn register_policy(&self, name: String, config: Py<PyDict>) -> PyResult<()> {
-        let mut policies = self
-            .policies
-            .lock()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let mut policies = self.policies.lock().map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("Registry lock error: {e}"))
+        })?;
 
         let mut policy = Policy::new(name.clone());
 
-        Python::attach(move |py| {
-            let config_bound = config.into_bound(py);
+        Python::attach(|py| {
+            let config = config.into_bound(py);
 
-            // Parse L4 Transport
-            if let Some(l4) = config_bound.get_item("l4_transport")? {
-                let list = l4.cast::<PyList>()?;
-                for item in list.iter() {
+            if let Some(l4) = config.get_item("l4_transport")? {
+                for item in l4.cast::<PyList>()?.iter() {
                     let dict = item.cast::<PyDict>()?;
-                    let type_str: String = dict.get_item("type")?.unwrap().extract()?;
-                    match type_str.as_str() {
-                        "timeout" => {
-                            let ms: u64 = dict.get_item("timeout_ms")?.unwrap().extract()?;
-                            policy.add_transport_layer(Arc::new(TimeoutLayer { timeout_ms: ms }));
-                        }
-                        _ => {
-                            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                                "Unknown L4 type: {}",
-                                type_str
-                            )));
-                        }
+                    let ty: String = dict.get_item("type")?.unwrap().extract()?;
+                    if ty == "timeout" {
+                        let ms: u64 = dict.get_item("timeout_ms")?.unwrap().extract()?;
+                        policy.add_transport_layer(Arc::new(TimeoutLayer { timeout_ms: ms }));
+                    } else {
+                        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                            "Unknown L4 type: {ty}"
+                        )));
                     }
                 }
             }
 
-            // Parse L3 Routing (currently no layers)
-            if let Some(l3) = config_bound.get_item("l3_routing")? {
-                let list = l3.cast::<PyList>()?;
-                if !list.is_empty() {
-                    return Err(pyo3::exceptions::PyValueError::new_err(
-                        "L3 Routing layers are not supported in this version",
-                    ));
-                }
-            }
-
-            // Parse L2 QoS
-            if let Some(l2) = config_bound.get_item("l2_qos")? {
-                let list = l2.cast::<PyList>()?;
-                for item in list.iter() {
+            if let Some(l2) = config.get_item("l2_qos")? {
+                for item in l2.cast::<PyList>()?.iter() {
                     let dict = item.cast::<PyDict>()?;
-                    let type_str: String = dict.get_item("type")?.unwrap().extract()?;
-                    match type_str.as_str() {
-                        "rate_limit" => {
-                            let rate: f64 = dict.get_item("rate")?.unwrap().extract()?;
-                            let capacity: f64 = dict.get_item("capacity")?.unwrap().extract()?;
-                            policy.add_qos_layer(Arc::new(RateLimitQosLayer {
-                                rate,
-                                capacity,
-                                tokens: Arc::new(Mutex::new((capacity, std::time::Instant::now()))),
-                            }));
-                        }
-                        _ => {
-                            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                                "Unknown L2 type: {}",
-                                type_str
-                            )));
-                        }
+                    let ty: String = dict.get_item("type")?.unwrap().extract()?;
+                    if ty == "rate_limit" {
+                        let rate_bps: u64 = self._extract_rate(dict.get_item("rate")?.unwrap())?;
+                        policy.add_qos_layer(Arc::new(RateLimitQosLayer::new(rate_bps)));
+                    } else {
+                        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                            "Unknown L2 type: {ty}"
+                        )));
                     }
                 }
             }
 
-            // Parse L1 Chaos
-            if let Some(l1) = config_bound.get_item("l1_chaos")? {
-                let list = l1.cast::<PyList>()?;
-                for item in list.iter() {
+            if let Some(l1) = config.get_item("l1_chaos")? {
+                for item in l1.cast::<PyList>()?.iter() {
                     let dict = item.cast::<PyDict>()?;
-                    let type_str: String = dict.get_item("type")?.unwrap().extract()?;
-                    match type_str.as_str() {
+                    let ty: String = dict.get_item("type")?.unwrap().extract()?;
+                    match ty.as_str() {
                         "latency" => {
                             let ms: u64 = dict.get_item("latency_ms")?.unwrap().extract()?;
                             policy.add_chaos_layer(Arc::new(LatencyChaosLayer { latency_ms: ms }));
@@ -178,8 +140,7 @@ impl PolicyRegistry {
                         }
                         _ => {
                             return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                                "Unknown L1 type: {}",
-                                type_str
+                                "Unknown L1 type: {ty}"
                             )));
                         }
                     }
@@ -189,39 +150,36 @@ impl PolicyRegistry {
             policies.insert(name.clone(), Arc::new(RwLock::new(policy)));
             get_shm_registry().register_policy(&name, true);
             Ok(())
-        })?;
+        })
+    }
 
-        Ok(())
+    fn _extract_rate(&self, rate_any: Bound<'_, PyAny>) -> PyResult<u64> {
+        rate_any.extract::<u64>().or_else(|_| {
+            rate_any
+                .extract::<String>()?
+                .parse()
+                .map_err(|_| pyo3::exceptions::PyValueError::new_err("Invalid rate format"))
+        })
     }
 
     fn remove_policy(&self, name: &str) -> bool {
-        if let Ok(mut policies) = self.policies.lock() {
-            policies.remove(name).is_some()
-        } else {
-            false
-        }
+        self.policies
+            .lock()
+            .ok()
+            .and_then(|mut p| p.remove(name))
+            .is_some()
     }
 
     fn list_policies(&self) -> Vec<String> {
-        if let Ok(policies) = self.policies.lock() {
-            policies.keys().cloned().collect()
-        } else {
-            Vec::new()
-        }
+        self.policies
+            .lock()
+            .ok()
+            .map(|p| p.keys().cloned().collect())
+            .unwrap_or_default()
     }
 
     fn enable(&self, name: &str) -> bool {
-        let result = self
-            ._get_policy(name)
-            .map(|p| {
-                if let Ok(mut policy) = p.write() {
-                    policy.enabled = true;
-                    true
-                } else {
-                    false
-                }
-            })
-            .unwrap_or(false);
+        let result = self._set_enabled(name, true);
         if result {
             get_shm_registry().set_enabled(name, true);
         }
@@ -229,39 +187,31 @@ impl PolicyRegistry {
     }
 
     fn disable(&self, name: &str) -> bool {
-        let result = self
-            ._get_policy(name)
-            .map(|p| {
-                if let Ok(mut policy) = p.write() {
-                    policy.enabled = false;
-                    true
-                } else {
-                    false
-                }
-            })
-            .unwrap_or(false);
+        let result = self._set_enabled(name, false);
         if result {
             get_shm_registry().set_enabled(name, false);
         }
         result
     }
 
-    fn reset(&self, name: &str) -> bool {
+    fn _set_enabled(&self, name: &str, enabled: bool) -> bool {
         self._get_policy(name)
-            .map(|p| {
-                if let Ok(mut policy) = p.write() {
-                    policy.enabled = true;
+            .and_then(|p| {
+                p.write().ok().map(|mut policy| {
+                    policy.enabled = enabled;
                     true
-                } else {
-                    false
-                }
+                })
             })
             .unwrap_or(false)
     }
 
+    fn reset(&self, name: &str) -> bool {
+        self.enable(name)
+    }
+
     fn is_enabled(&self, name: &str) -> bool {
         self._get_policy(name)
-            .map(|p| p.read().map(|policy| policy.enabled).unwrap_or(false))
+            .and_then(|p| p.read().ok().map(|p| p.enabled))
             .unwrap_or(false)
     }
 
@@ -275,32 +225,18 @@ impl PolicyRegistry {
 
     fn match_policy(&self, ctx: &CallContext) -> Option<String> {
         let rules = self.rules.read().ok()?;
-        let mut best_rule: Option<&MatchingRule> = None;
-
-        for rule in rules.iter() {
-            let matches = rule.conditions.iter().all(|cond| match cond {
-                MatchCondition::Key { key, value } => {
-                    ctx.tags.get(key).map(|v| v == value).unwrap_or(false)
-                }
-                MatchCondition::Prefix { key, prefix } => ctx
-                    .tags
-                    .get(key)
-                    .map(|v| v.starts_with(prefix))
-                    .unwrap_or(false),
-            });
-
-            if matches {
-                if let Some(best) = best_rule {
-                    if rule.priority > best.priority {
-                        best_rule = Some(rule);
+        rules
+            .iter()
+            .filter(|rule| {
+                rule.conditions.iter().all(|cond| match cond {
+                    MatchCondition::Key { key, value } => ctx.tags.get(key) == Some(value),
+                    MatchCondition::Prefix { key, prefix } => {
+                        ctx.tags.get(key).is_some_and(|v| v.starts_with(prefix))
                     }
-                } else {
-                    best_rule = Some(rule);
-                }
-            }
-        }
-
-        best_rule.map(|r| r.policy_name.clone())
+                })
+            })
+            .max_by_key(|r| r.priority)
+            .map(|r| r.policy_name.clone())
     }
 
     fn execute_policy(&self, py: Python<'_>, name: String, func: Py<PyAny>) -> PyResult<Py<PyAny>> {
@@ -314,8 +250,7 @@ impl PolicyRegistry {
         }
 
         let policy = self.get_or_create(&final_name);
-        let p = policy.read().unwrap();
-        p.execute(&ctx, func, py)
+        policy.read().unwrap().execute(&ctx, func, py)
     }
 
     fn add_rule(
@@ -324,90 +259,67 @@ impl PolicyRegistry {
         conditions: Bound<'_, PyList>,
         priority: i32,
     ) -> PyResult<()> {
-        let mut parsed_conditions = Vec::new();
+        let mut parsed_conditions = Vec::with_capacity(conditions.len());
 
         for item in conditions.iter() {
-            let dict = item.cast::<PyDict>().map_err(|_| {
-                pyo3::exceptions::PyTypeError::new_err("Condition must be a dictionary")
-            })?;
+            let dict = item.cast::<PyDict>()?;
+            let ty: String = dict.get_item("type")?.unwrap().extract()?;
 
-            let type_str: String = dict
-                .get_item("type")?
-                .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("type is required"))?
-                .extract()?;
-
-            match type_str.as_str() {
+            match ty.as_str() {
                 "key" => {
-                    let key: String = dict
-                        .get_item("key")?
-                        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("key is required"))?
-                        .extract()?;
-                    let value: String = dict
-                        .get_item("value")?
-                        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("value is required"))?
-                        .extract()?;
-                    parsed_conditions.push(MatchCondition::Key { key, value });
+                    parsed_conditions.push(MatchCondition::Key {
+                        key: dict.get_item("key")?.unwrap().extract()?,
+                        value: dict.get_item("value")?.unwrap().extract()?,
+                    });
                 }
                 "prefix" => {
-                    let key: String = dict
-                        .get_item("key")?
-                        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("key is required"))?
-                        .extract()?;
-                    let prefix: String = dict
-                        .get_item("prefix")?
-                        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("prefix is required"))?
-                        .extract()?;
-                    parsed_conditions.push(MatchCondition::Prefix { key, prefix });
+                    parsed_conditions.push(MatchCondition::Prefix {
+                        key: dict.get_item("key")?.unwrap().extract()?,
+                        prefix: dict.get_item("prefix")?.unwrap().extract()?,
+                    });
                 }
                 _ => {
                     return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                        "Unknown condition type: {}. Valid types are: key, prefix",
-                        type_str
+                        "Unknown rule type: {ty}"
                     )));
                 }
             }
         }
 
-        let mut rules = self
-            .rules
-            .write()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let mut rules = self.rules.write().map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("Rules lock error: {e}"))
+        })?;
 
         rules.push(MatchingRule {
             conditions: parsed_conditions,
             policy_name,
             priority,
         });
-
-        rules.sort_by(|a, b| b.priority.cmp(&a.priority));
-
+        rules.sort_by_key(|r| std::cmp::Reverse(r.priority));
         Ok(())
     }
 
     fn remove_all_rules(&self) -> PyResult<()> {
-        let mut rules = self
-            .rules
-            .write()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let mut rules = self.rules.write().map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("Rules lock error: {e}"))
+        })?;
         rules.clear();
         Ok(())
     }
+
     fn get_policy(&self, name: &str) -> bool {
         self._get_policy(name).is_some()
     }
 
     fn is_policy_enabled(&self, name: &str) -> bool {
-        self._get_policy(name)
-            .map(|p| p.read().map(|policy| policy.enabled).unwrap_or(false))
-            .unwrap_or(false)
+        self.is_enabled(name)
     }
 
     fn register_timeout_layer(&self, policy_name: &str, timeout_ms: u64) -> PyResult<()> {
         let policy = self.create_fresh(policy_name);
-        let mut p = policy
-            .write()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
-
+        let mut p = policy.write().map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("Policy lock error: {e}"))
+        })?;
         p.add_transport_layer(Arc::new(TimeoutLayer { timeout_ms }));
         Ok(())
     }
@@ -415,30 +327,16 @@ impl PolicyRegistry {
     fn register_rate_limit_layer(
         &self,
         policy_name: &str,
-        rate: f64,
-        capacity: u64,
+        rate: Bound<'_, PyAny>,
+        _capacity: Option<u64>,
     ) -> PyResult<()> {
+        let rate_bps = self._extract_rate(rate)?;
         let policy = self.create_fresh(policy_name);
-        let mut p = policy
-            .write()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Lock error: {}", e)))?;
+        let mut p = policy.write().map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("Policy lock error: {e}"))
+        })?;
 
-        p.add_qos_layer(Arc::new(RateLimitQosLayer {
-            rate,
-            capacity: capacity as f64,
-            tokens: Arc::new(Mutex::new((capacity as f64, std::time::Instant::now()))),
-        }));
+        p.add_qos_layer(Arc::new(RateLimitQosLayer::new(rate_bps)));
         Ok(())
-    }
-
-    fn add_layer(&self, policy_name: &str, layer_type: &str, _layer_name: String) -> PyResult<()> {
-        let _policy = self.get_or_create(policy_name);
-        match layer_type {
-            "timeout" => self.register_timeout_layer(policy_name, 1000),
-            _ => Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "Unknown layer type: {}",
-                layer_type
-            ))),
-        }
     }
 }
