@@ -154,6 +154,10 @@ fn apply_chaos_from_shm(fd: c_int, bytes: u64, is_send: bool) -> Option<isize> {
     match result {
         LayerResult::Drop => return Some(0),
         LayerResult::Error(_) => return Some(0),
+        LayerResult::Timeout(_timeout_ms) => {
+            set_errno(libc::ETIMEDOUT);
+            return Some(-1);
+        }
         LayerResult::Delay(latency_ns) => {
             let non_blocking = is_non_blocking(fd);
 

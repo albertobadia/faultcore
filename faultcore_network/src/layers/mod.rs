@@ -15,6 +15,7 @@ pub enum LayerResult {
     Continue,
     Drop,
     Delay(u64),
+    Timeout(u64),
     Error(String),
 }
 

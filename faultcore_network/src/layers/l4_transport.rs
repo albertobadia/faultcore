@@ -23,7 +23,7 @@ impl L4Transport {
 
 impl Layer for L4Transport {
     fn process(&self, config: &Config) -> LayerResult {
-        let _timeout_ms = if config.connect_timeout_ms > 0 {
+        let timeout_ms = if config.connect_timeout_ms > 0 {
             config.connect_timeout_ms
         } else if config.recv_timeout_ms > 0 {
             config.recv_timeout_ms
@@ -31,7 +31,7 @@ impl Layer for L4Transport {
             return LayerResult::Continue;
         };
 
-        LayerResult::Continue
+        LayerResult::Timeout(timeout_ms)
     }
 
     fn name(&self) -> &str {
