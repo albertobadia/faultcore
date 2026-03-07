@@ -91,6 +91,10 @@ def _parse_rate(rate: str | int | float) -> int:
         return int(float(r[:-4]) * 1_000_000)
     if r.endswith("gbps"):
         return int(float(r[:-4]) * 1_000_000_000)
+    if r.endswith("kbps"):
+        return int(float(r[:-4]) * 1_000)
+    if r.endswith("bps"):
+        return int(float(r[:-3]))
     return int(float(r))
 
 

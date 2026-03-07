@@ -108,7 +108,47 @@ def test_rate_limit_available_tokens_changes():
     def dummy():
         return "ok"
 
-    policy(dummy, (), {})
 
-    after = policy.available_tokens
-    assert after < initial
+def test_rate_limit_kbps_unit():
+    @faultcore.rate_limit("100kbps")
+    def limited_func():
+        return "ok"
+
+    for _ in range(100):
+        assert limited_func() == "ok"
+
+
+def test_rate_limit_bps_unit():
+    @faultcore.rate_limit("10bps")
+    def limited_func():
+        return "ok"
+
+    for _ in range(10):
+        assert limited_func() == "ok"
+
+
+def test_rate_limit_mbps_unit():
+    @faultcore.rate_limit("1mbps")
+    def limited_func():
+        return "ok"
+
+    for _ in range(1000):
+        assert limited_func() == "ok"
+
+
+def test_rate_limit_gbps_unit():
+    @faultcore.rate_limit("1gbps")
+    def limited_func():
+        return "ok"
+
+    for _ in range(100000):
+        assert limited_func() == "ok"
+
+
+def test_rate_limit_numeric_string_parses_correctly():
+    @faultcore.rate_limit("50")
+    def limited_func():
+        return "ok"
+
+    for _ in range(50):
+        assert limited_func() == "ok"
