@@ -43,11 +43,7 @@ impl ShmPolicyRegistry {
     pub fn set_enabled(&self, name: &str, enabled: bool) {
         let map = self.name_to_idx.lock().unwrap();
         if let Some(&idx) = map.get(name) {
-            // We read the existing state to preserve metrics if we didn't have them in the map
-            // but for now write_policy_state is easier.
             let _ = shm::write_policy_state(idx, name, enabled, 0, 0);
-            // FIXME: Metrics are reset to 0 here if we don't read them first.
-            // But for initial implementation it's okay.
         }
     }
 }

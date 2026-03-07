@@ -1,6 +1,3 @@
-#![allow(clippy::collapsible_if)]
-#![allow(clippy::redundant_closure)]
-
 use pyo3::prelude::*;
 
 #[pyclass]
