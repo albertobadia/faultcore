@@ -68,6 +68,11 @@ class TestExports:
 
         assert callable(rate_limit)
 
+    def test_packet_loss_is_exported(self):
+        from faultcore import packet_loss
+
+        assert callable(packet_loss)
+
     def test_apply_policy_is_exported(self):
         from faultcore import apply_policy
 

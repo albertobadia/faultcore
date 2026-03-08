@@ -176,6 +176,47 @@ class TestRateLimitDecorator:
         assert result == 3
 
 
+class TestPacketLossDecorator:
+    def test_packet_loss_decorator_writes_packet_loss_to_shm(self):
+        from unittest.mock import MagicMock, patch
+
+        mock_shm = MagicMock()
+        mock_shm.write_packet_loss = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=91011):
+
+                @faultcore.packet_loss("2.5%")
+                def my_func():
+                    return "ok"
+
+                result = my_func()
+                assert result == "ok"
+                mock_shm.write_packet_loss.assert_called_once_with(91011, 25_000)
+                mock_shm.clear.assert_called_once_with(91011)
+
+    def test_parse_packet_loss_variants(self):
+        from faultcore.decorator import _parse_packet_loss
+
+        assert _parse_packet_loss(0.5) == 500_000
+        assert _parse_packet_loss("0.5") == 500_000
+        assert _parse_packet_loss(25) == 250_000
+        assert _parse_packet_loss("25%") == 250_000
+        assert _parse_packet_loss("250000ppm") == 250_000
+        assert _parse_packet_loss(250_000) == 250_000
+
+    def test_parse_packet_loss_rejects_invalid_values(self):
+        from faultcore.decorator import _parse_packet_loss
+
+        with pytest.raises(ValueError):
+            _parse_packet_loss(-1)
+        with pytest.raises(ValueError):
+            _parse_packet_loss("101%")
+        with pytest.raises(ValueError):
+            _parse_packet_loss("2000000ppm")
+
+
 class TestDecoratorMetadata:
     def test_decorator_preserves_function_name(self):
         @faultcore.timeout(1000)

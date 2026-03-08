@@ -15,12 +15,14 @@ class FaultWrapper:
         self,
         func: Callable[..., Any],
         latency_ms: int | None = None,
+        packet_loss_ppm: int | None = None,
         bandwidth_bps: int | None = None,
         timeouts: tuple[int, int] | None = None,
     ):
         functools.update_wrapper(self, func)
         self._func = func
         self._latency_ms = latency_ms
+        self._packet_loss_ppm = packet_loss_ppm
         self._bandwidth_bps = bandwidth_bps
         self._timeouts = timeouts
 
@@ -38,6 +40,9 @@ class FaultWrapper:
 
         if self._latency_ms:
             shm.write_latency(tid, self._latency_ms)
+
+        if self._packet_loss_ppm is not None:
+            shm.write_packet_loss(tid, self._packet_loss_ppm)
 
         if self._bandwidth_bps:
             shm.write_bandwidth(tid, self._bandwidth_bps)
@@ -79,6 +84,7 @@ class FaultWrapper:
         return (
             "<FaultWrapper("
             f"latency={self._latency_ms}, "
+            f"packet_loss_ppm={self._packet_loss_ppm}, "
             f"bandwidth={self._bandwidth_bps}, "
             f"timeouts={self._timeouts}) for {self._func!r}>"
         )
@@ -106,6 +112,14 @@ def rate_limit(rate: str | int):
     return decorator
 
 
+def packet_loss(loss: str | int | float):
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
+        ppm = _parse_packet_loss(loss)
+        return FaultWrapper(func, packet_loss_ppm=ppm)
+
+    return decorator
+
+
 def _parse_rate(rate: str | int | float) -> int:
     if isinstance(rate, (int, float)):
         return int(rate * 1_000_000)
@@ -119,6 +133,34 @@ def _parse_rate(rate: str | int | float) -> int:
     if r.endswith("bps"):
         return int(float(r[:-3]))
     return int(float(r))
+
+
+def _parse_packet_loss(loss: str | int | float) -> int:
+    if isinstance(loss, str):
+        raw = loss.strip().lower()
+        if raw.endswith("%"):
+            value = float(raw[:-1])
+            if value < 0 or value > 100:
+                raise ValueError("packet_loss percentage must be between 0 and 100")
+            return int(value * 10_000)
+        if raw.endswith("ppm"):
+            value = float(raw[:-3])
+            if value < 0 or value > 1_000_000:
+                raise ValueError("packet_loss ppm must be between 0 and 1000000")
+            return int(value)
+        value = float(raw)
+    else:
+        value = float(loss)
+
+    if value < 0:
+        raise ValueError("packet_loss must be >= 0")
+    if value <= 1:
+        return int(value * 1_000_000)
+    if value <= 100:
+        return int(value * 10_000)
+    if value <= 1_000_000:
+        return int(value)
+    raise ValueError("packet_loss must be <= 100%, <=1.0 ratio, or <=1000000ppm")
 
 
 def apply_policy(_key: str):
