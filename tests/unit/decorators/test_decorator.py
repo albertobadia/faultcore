@@ -1,3 +1,7 @@
+import time
+
+import pytest
+
 import faultcore
 
 
@@ -227,3 +231,41 @@ class TestAsyncTimeoutDecorator:
 
         result = await func_with_kwargs(a=1, b=2, c=3)
         assert result == 6
+
+
+class TestTimeoutContract:
+    def test_timeout_enforces_function_execution_deadline(self):
+        @faultcore.timeout(5)
+        def slow_operation():
+            time.sleep(0.02)
+            return "done"
+
+        with pytest.raises(TimeoutError):
+            slow_operation()
+
+
+class TestAsyncShmLifecycle:
+    async def test_async_decorator_keeps_policy_until_coroutine_finishes(self):
+        from unittest.mock import MagicMock, patch
+
+        mock_shm = MagicMock()
+        mock_shm.write_latency = MagicMock()
+        mock_shm.write_timeouts = MagicMock()
+        mock_shm.write_bandwidth = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=321):
+
+                @faultcore.timeout(100)
+                async def async_op():
+                    return "ok"
+
+                pending = async_op()
+                try:
+                    assert mock_shm.clear.call_count == 0
+                finally:
+                    result = await pending
+                    assert result == "ok"
+                mock_shm.write_timeouts.assert_called_once_with(321, 100, 100)
+                mock_shm.clear.assert_called_once_with(321)

@@ -25,23 +25,27 @@ impl L2QoS {
         Self::new(rate_bps, rate_bps as f64 * 2.0)
     }
 
-    fn refill(&self) {
+    fn refill(&self, rate_bps: u64, capacity_tokens: f64) {
+        if rate_bps == 0 {
+            return;
+        }
+
         let mut last = self.last_refill.lock();
         let elapsed = last.elapsed().as_secs_f64();
         if elapsed <= 0.0 {
             return;
         }
 
-        let new_tokens = elapsed * self.rate_bps as f64;
+        let new_tokens = elapsed * rate_bps as f64;
         *last = Instant::now();
 
         let current = self.tokens.load(Ordering::Acquire);
-        let new_value = (current as f64 + new_tokens).min(self.capacity_tokens) as u64;
+        let new_value = (current as f64 + new_tokens).min(capacity_tokens) as u64;
         self.tokens.store(new_value, Ordering::Release);
     }
 
-    fn try_acquire(&self, tokens_needed: u64) -> bool {
-        self.refill();
+    fn try_acquire(&self, tokens_needed: u64, rate_bps: u64, capacity_tokens: f64) -> bool {
+        self.refill(rate_bps, capacity_tokens);
 
         loop {
             let current = self.tokens.load(Ordering::Acquire);
@@ -70,12 +74,18 @@ impl L2QoS {
             return LayerResult::Continue;
         }
 
-        let bytes_needed = bytes;
-        if self.try_acquire(bytes_needed) {
+        let bits_needed = bytes.saturating_mul(8);
+        let capacity_tokens = if config.bandwidth_bps > 0 {
+            (rate as f64) * 2.0
+        } else {
+            self.capacity_tokens
+        };
+
+        if self.try_acquire(bits_needed, rate, capacity_tokens) {
             LayerResult::Continue
         } else {
             let current = self.tokens.load(Ordering::Acquire);
-            let deficit = bytes_needed.saturating_sub(current);
+            let deficit = bits_needed.saturating_sub(current);
             let delay_secs = deficit as f64 / rate as f64;
             let delay_ns = (delay_secs * 1_000_000_000.0) as u64;
 
@@ -103,6 +113,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::thread;
+    use std::time::Duration;
 
     #[test]
     fn test_qos_refill_concurrency() {
@@ -112,7 +123,7 @@ mod tests {
                 let qos_clone = Arc::clone(&qos);
                 thread::spawn(move || {
                     for _ in 0..100 {
-                        qos_clone.try_acquire(10);
+                        qos_clone.try_acquire(10, 1000, 2000.0);
                         thread::sleep(std::time::Duration::from_millis(1));
                     }
                 })
@@ -121,6 +132,41 @@ mod tests {
 
         for handle in handles {
             handle.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn test_process_with_dynamic_rate_refills_tokens() {
+        let qos = L2QoS::new(0, 0.0);
+        let config = Config {
+            bandwidth_bps: 80,
+            ..Default::default()
+        };
+
+        assert!(matches!(qos.process_with_bytes(1, &config), LayerResult::Delay(_)));
+
+        thread::sleep(Duration::from_millis(120));
+
+        assert!(matches!(
+            qos.process_with_bytes(1, &config),
+            LayerResult::Continue
+        ));
+    }
+
+    #[test]
+    fn test_bandwidth_bps_uses_bit_units_for_delay() {
+        let qos = L2QoS::new(0, 0.0);
+        let config = Config {
+            bandwidth_bps: 8,
+            ..Default::default()
+        };
+
+        match qos.process_with_bytes(1, &config) {
+            LayerResult::Delay(delay_ns) => {
+                assert!(delay_ns >= 900_000_000, "delay_ns={delay_ns}");
+                assert!(delay_ns <= 1_100_000_000, "delay_ns={delay_ns}");
+            }
+            other => panic!("expected Delay, got {other:?}"),
         }
     }
 }

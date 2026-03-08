@@ -1,6 +1,10 @@
 import functools
+import signal
 import threading
+import time
+from asyncio import iscoroutine, wait_for
 from collections.abc import Callable
+from inspect import iscoroutinefunction
 from typing import Any
 
 from faultcore.shm_writer import get_shm_writer
@@ -42,8 +46,32 @@ class FaultWrapper:
             connect_ms, recv_ms = self._timeouts
             shm.write_timeouts(tid, connect_ms, recv_ms)
 
+        timeout_ms = self._timeouts[0] if self._timeouts else None
+
+        if timeout_ms and timeout_ms > 0 and not iscoroutinefunction(self._func):
+            try:
+                return _run_sync_with_timeout(self._func, timeout_ms, args, kwargs)
+            finally:
+                shm.clear(tid)
+
+        result = self._func(*args, **kwargs)
+
+        if iscoroutine(result):
+            return self._run_async(result, shm, tid, timeout_ms)
+
         try:
-            return self._func(*args, **kwargs)
+            return result
+        finally:
+            shm.clear(tid)
+
+    async def _run_async(self, result: Any, shm: Any, tid: int, timeout_ms: int | None) -> Any:
+        try:
+            if timeout_ms and timeout_ms > 0:
+                try:
+                    return await wait_for(result, timeout_ms / 1000)
+                except TimeoutError as exc:
+                    raise TimeoutError(f"Function execution exceeded {timeout_ms}ms") from exc
+            return await result
         finally:
             shm.clear(tid)
 
@@ -105,3 +133,32 @@ def fault(_policy_name: str = "auto"):
         return FaultWrapper(func)
 
     return decorator
+
+
+def _run_sync_with_timeout(
+    func: Callable[..., Any],
+    timeout_ms: int,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> Any:
+    if threading.current_thread() is threading.main_thread() and hasattr(signal, "setitimer"):
+        previous_handler = signal.getsignal(signal.SIGALRM)
+        previous_timer = signal.getitimer(signal.ITIMER_REAL)
+
+        def handler(_signum: int, _frame: Any) -> None:
+            raise TimeoutError(f"Function execution exceeded {timeout_ms}ms")
+
+        signal.signal(signal.SIGALRM, handler)
+        signal.setitimer(signal.ITIMER_REAL, timeout_ms / 1000)
+        try:
+            return func(*args, **kwargs)
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, *previous_timer)
+            signal.signal(signal.SIGALRM, previous_handler)
+
+    started = time.perf_counter()
+    result = func(*args, **kwargs)
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    if elapsed_ms > timeout_ms:
+        raise TimeoutError(f"Function execution exceeded {timeout_ms}ms")
+    return result
