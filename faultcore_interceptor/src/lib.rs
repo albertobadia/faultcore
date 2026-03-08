@@ -22,6 +22,7 @@ type SendFn = unsafe extern "C" fn(c_int, *const c_void, size_t, c_int) -> ssize
 type RecvFn = unsafe extern "C" fn(c_int, *mut c_void, size_t, c_int) -> ssize_t;
 type ConnectFn = unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int;
 type SocketFn = unsafe extern "C" fn(c_int, c_int, c_int) -> c_int;
+type CloseFn = unsafe extern "C" fn(c_int) -> c_int;
 type SendToFn = unsafe extern "C" fn(
     c_int,
     *const c_void,
@@ -41,6 +42,7 @@ type RecvFromFn = unsafe extern "C" fn(
 
 lazy_static::lazy_static! {
     pub static ref ORIG_SOCKET: SocketFn = unsafe { get_original_fn("socket") };
+    pub static ref ORIG_CLOSE: CloseFn = unsafe { get_original_fn("close") };
     pub static ref ORIG_CONNECT: ConnectFn = unsafe { get_original_fn("connect") };
     pub static ref ORIG_SEND: SendFn = unsafe { get_original_fn("send") };
     pub static ref ORIG_RECV: RecvFn = unsafe { get_original_fn("recv") };
@@ -111,6 +113,7 @@ fn exit_hook() {
 fn initialize() {
     if !INITIALIZED.swap(true, Ordering::SeqCst) {
         lazy_static::initialize(&ORIG_SOCKET);
+        lazy_static::initialize(&ORIG_CLOSE);
         lazy_static::initialize(&ORIG_CONNECT);
         lazy_static::initialize(&ORIG_SEND);
         lazy_static::initialize(&ORIG_RECV);
@@ -306,6 +309,23 @@ pub extern "C" fn socket(domain: c_int, ty: c_int, protocol: c_int) -> c_int {
 
     exit_hook();
     fd
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn close(fd: c_int) -> c_int {
+    if !enter_hook() {
+        return unsafe { (ORIG_CLOSE)(fd) };
+    }
+
+    initialize();
+    LATENCY_START.with(|cell| {
+        cell.borrow_mut().remove(&fd);
+    });
+    shm::clear_rule_for_fd(fd);
+
+    let result = unsafe { (ORIG_CLOSE)(fd) };
+    exit_hook();
+    result
 }
 
 #[unsafe(no_mangle)]

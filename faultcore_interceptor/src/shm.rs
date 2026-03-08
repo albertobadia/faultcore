@@ -206,6 +206,17 @@ pub fn assign_rule_to_fd(fd: c_int, tid: usize) {
     }
 }
 
+pub fn clear_rule_for_fd(fd: c_int) {
+    if fd < 0 {
+        return;
+    }
+    unsafe {
+        if let Some(fd_ptr) = get_config_ptr(fd as usize, false) {
+            fd_ptr.write(FaultcoreConfig::default());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

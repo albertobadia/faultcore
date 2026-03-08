@@ -1,3 +1,4 @@
+import asyncio
 import time
 
 import pytest
@@ -242,6 +243,68 @@ class TestTimeoutContract:
 
         with pytest.raises(TimeoutError):
             slow_operation()
+
+
+class TestTimeoutShmLifecycle:
+    def test_sync_timeout_clears_shm_on_timeout_error(self):
+        from unittest.mock import MagicMock, patch
+
+        mock_shm = MagicMock()
+        mock_shm.write_timeouts = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=777):
+
+                @faultcore.timeout(5)
+                def slow_operation():
+                    time.sleep(0.02)
+
+                with pytest.raises(TimeoutError):
+                    slow_operation()
+
+                mock_shm.write_timeouts.assert_called_once_with(777, 5, 5)
+                mock_shm.clear.assert_called_once_with(777)
+
+    def test_sync_timeout_clears_shm_on_function_exception(self):
+        from unittest.mock import MagicMock, patch
+
+        mock_shm = MagicMock()
+        mock_shm.write_timeouts = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=778):
+
+                @faultcore.timeout(100)
+                def failing_operation():
+                    raise RuntimeError("boom")
+
+                with pytest.raises(RuntimeError, match="boom"):
+                    failing_operation()
+
+                mock_shm.write_timeouts.assert_called_once_with(778, 100, 100)
+                mock_shm.clear.assert_called_once_with(778)
+
+    async def test_async_timeout_clears_shm_on_timeout_error(self):
+        from unittest.mock import MagicMock, patch
+
+        mock_shm = MagicMock()
+        mock_shm.write_timeouts = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=779):
+
+                @faultcore.timeout(10)
+                async def slow_async():
+                    await asyncio.sleep(0.05)
+
+                with pytest.raises((TimeoutError, asyncio.TimeoutError)):
+                    await slow_async()
+
+                mock_shm.write_timeouts.assert_called_once_with(779, 10, 10)
+                mock_shm.clear.assert_called_once_with(779)
 
 
 class TestAsyncShmLifecycle:
