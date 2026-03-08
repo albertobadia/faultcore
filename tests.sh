@@ -6,11 +6,27 @@ set -e
 
 cd faultcore_interceptor
 cargo test
+cargo build --release
 
 cd ../faultcore_network
 cargo test
 
 cd ..
+
+ECHO_PID=""
+HTTP_PID=""
+
+cleanup() {
+    echo "Cleaning up servers..."
+    if [ -n "$ECHO_PID" ]; then
+        kill "$ECHO_PID" 2>/dev/null || true
+    fi
+    if [ -n "$HTTP_PID" ]; then
+        kill "$HTTP_PID" 2>/dev/null || true
+    fi
+}
+
+trap cleanup EXIT
 
 # Detect OS and set interceptor variables
 INTERCEPTOR=""
@@ -54,8 +70,3 @@ sleep 2
 PYTEST=".venv/bin/python -m pytest"
 echo "Running integration tests with interceptor..."
 LD_PRELOAD="$INTERCEPTOR" $PYTEST tests/unit -v -s
-
-# Cleanup
-echo "Cleaning up servers..."
-kill $ECHO_PID || true
-kill $HTTP_PID || true

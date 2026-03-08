@@ -263,20 +263,13 @@ mod tests {
 
     #[test]
     fn test_tid_collision() {
-        let shm_name = format!("/faultcore_test_{}_config", unsafe { libc::getpid() });
-        unsafe {
-            std::env::set_var("FAULTCORE_CONFIG_SHM", &shm_name);
-        }
+        let mut table = vec![FaultcoreConfig::default(); MAX_FDS + MAX_TIDS];
 
-        let name_cstr = std::ffi::CString::new(shm_name).unwrap();
-        unsafe {
-            let fd = libc::shm_open(name_cstr.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o600);
-            assert!(fd >= 0);
-            libc::ftruncate(fd, FAULTCORE_SHM_SIZE as i64);
-            libc::close(fd);
-        }
+        let prev_ptr = *SHM_POINTER.read();
+        let prev_open = SHM_OPEN.load(Ordering::SeqCst);
 
-        let _ = try_open_shm();
+        *SHM_POINTER.write() = table.as_mut_ptr() as usize;
+        SHM_OPEN.store(1, Ordering::SeqCst);
 
         let tid1 = 0;
         let tid2 = MAX_TIDS;
@@ -291,6 +284,9 @@ mod tests {
                 tid1, tid2
             );
         }
+
+        *SHM_POINTER.write() = prev_ptr;
+        SHM_OPEN.store(prev_open, Ordering::SeqCst);
     }
 
     #[test]

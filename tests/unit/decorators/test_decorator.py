@@ -639,7 +639,7 @@ class TestTimeoutShmLifecycle:
                 async def slow_async():
                     await asyncio.sleep(0.05)
 
-                with pytest.raises((TimeoutError, asyncio.TimeoutError)):
+                with pytest.raises(TimeoutError):
                     await slow_async()
 
                 mock_shm.write_timeouts.assert_called_once_with(779, 10, 10)

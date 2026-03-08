@@ -1,3 +1,4 @@
+import asyncio
 import functools
 import json
 import signal
@@ -90,7 +91,7 @@ class FaultWrapper:
             if timeout_ms and timeout_ms > 0:
                 try:
                     return await wait_for(result, timeout_ms / 1000)
-                except TimeoutError as exc:
+                except (asyncio.exceptions.TimeoutError, TimeoutError) as exc:
                     raise TimeoutError(f"Function execution exceeded {timeout_ms}ms") from exc
             return await result
         finally:
