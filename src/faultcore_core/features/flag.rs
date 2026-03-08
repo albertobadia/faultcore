@@ -6,12 +6,22 @@ use parking_lot::Mutex;
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 
-#[derive(Clone)]
 pub struct PolicyBundle {
     pub timeout_ms: Option<u64>,
     pub rate_limit_rate: Option<f64>,
     pub rate_limit_capacity: Option<u64>,
     pub enabled: Arc<AtomicBool>,
+}
+
+impl Clone for PolicyBundle {
+    fn clone(&self) -> Self {
+        Self {
+            timeout_ms: self.timeout_ms,
+            rate_limit_rate: self.rate_limit_rate,
+            rate_limit_capacity: self.rate_limit_capacity,
+            enabled: Arc::new(AtomicBool::new(self.enabled.load(Ordering::SeqCst))),
+        }
+    }
 }
 
 impl PolicyBundle {

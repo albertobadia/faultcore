@@ -65,7 +65,7 @@ class FaultWrapper:
 
 def timeout(timeout_ms: int):
     def decorator(func):
-        policy_name = f"_timeout_{id(func)}"
+        policy_name = f"_timeout_{id(func)}_{uuid.uuid4().hex[:8]}"
         _get_registry().register_timeout_layer(policy_name, timeout_ms)
         return FaultWrapper(func, policy_name=policy_name)
 
