@@ -6,22 +6,30 @@ pub struct TimeoutLayer {
     pub timeout_ms: u64,
 }
 
+struct ShmGuard {
+    tid: Option<u64>,
+}
+
+impl Drop for ShmGuard {
+    fn drop(&mut self) {
+        if let Some(tid) = self.tid {
+            let _ = shm::clear_config(tid);
+        }
+    }
+}
+
 impl TransportLayer for TimeoutLayer {
     fn execute(&self, _ctx: &CallContext, next: Next) -> PolicyResult {
-        let tid = if shm::is_shm_open() {
+        let guard = if shm::is_shm_open() {
             let tid = shm::get_thread_id();
             let _ = shm::write_timeouts(tid, self.timeout_ms, self.timeout_ms);
-            Some(tid)
+            ShmGuard { tid: Some(tid) }
         } else {
-            None
+            ShmGuard { tid: None }
         };
 
         let result = next.call();
-
-        if let Some(tid) = tid {
-            let _ = shm::clear_config(tid);
-        }
-
+        drop(guard);
         result
     }
 
