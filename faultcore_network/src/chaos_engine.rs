@@ -40,9 +40,13 @@ impl ChaosEngine {
         }
     }
 
-    pub fn process_recv(&self, config: &Config, _bytes: u64) -> LayerResult {
+    pub fn process_recv(&self, config: &Config, bytes: u64) -> LayerResult {
         let mut delay_ns: u64 = 0;
-        for layer_result in [self.l1.process(config), self.l3.process(config)] {
+        for layer_result in [
+            self.l1.process(config),
+            self.l2.process_with_bytes(bytes, config),
+            self.l3.process(config),
+        ] {
             match layer_result {
                 LayerResult::Continue => {}
                 LayerResult::Delay(ns) => delay_ns = delay_ns.saturating_add(ns),
@@ -97,5 +101,22 @@ mod tests {
         };
 
         assert!(matches!(engine.process_recv(&cfg, 0), LayerResult::Drop));
+    }
+
+    #[test]
+    fn recv_applies_bandwidth_qos_delay() {
+        let engine = ChaosEngine::new();
+        let cfg = Config {
+            bandwidth_bps: 8,
+            ..Default::default()
+        };
+
+        match engine.process_recv(&cfg, 1) {
+            LayerResult::Delay(ns) => {
+                assert!(ns >= 900_000_000, "ns={ns}");
+                assert!(ns <= 1_100_000_000, "ns={ns}");
+            }
+            other => panic!("expected Delay, got {other:?}"),
+        }
     }
 }
