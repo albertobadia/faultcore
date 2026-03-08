@@ -27,7 +27,7 @@ impl L1Chaos {
 
     fn random_u32(&self) -> u32 {
         if let Some(rng) = &self.seeded_rng {
-            rng.lock().r#gen::<u32>()
+            rng.lock().next_u32()
         } else {
             random::<u32>()
         }
