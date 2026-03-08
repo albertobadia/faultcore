@@ -63,6 +63,28 @@ def _build_correlated_loss_profile(
     return profile
 
 
+def _parse_error_kind(kind: str) -> int:
+    normalized = kind.strip().lower()
+    if normalized == "reset":
+        return 1
+    if normalized == "refused":
+        return 2
+    if normalized == "unreachable":
+        return 3
+    raise ValueError("error kind must be one of: reset, refused, unreachable")
+
+
+def _build_connection_error_profile(*, kind: str, prob: str | int | float = "100%") -> dict[str, int]:
+    return {"kind": _parse_error_kind(kind), "prob_ppm": _parse_packet_loss(prob)}
+
+
+def _build_half_open_profile(*, after_bytes: int, error: str = "reset") -> dict[str, int]:
+    threshold = int(after_bytes)
+    if threshold <= 0:
+        raise ValueError("after_bytes must be > 0")
+    return {"after_bytes": threshold, "err_kind": _parse_error_kind(error)}
+
+
 class FaultWrapper:
     def __init__(
         self,
@@ -76,6 +98,8 @@ class FaultWrapper:
         uplink_profile: dict[str, int] | None = None,
         downlink_profile: dict[str, int] | None = None,
         correlated_loss_profile: dict[str, int] | None = None,
+        connection_error_profile: dict[str, int] | None = None,
+        half_open_profile: dict[str, int] | None = None,
     ):
         functools.update_wrapper(self, func)
         self._func = func
@@ -88,6 +112,8 @@ class FaultWrapper:
         self._uplink_profile = uplink_profile or {}
         self._downlink_profile = downlink_profile or {}
         self._correlated_loss_profile = correlated_loss_profile or {}
+        self._connection_error_profile = connection_error_profile or {}
+        self._half_open_profile = half_open_profile or {}
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._func, name)
@@ -150,6 +176,20 @@ class FaultWrapper:
                 loss_bad_ppm=self._correlated_loss_profile.get("loss_bad_ppm", 0),
             )
 
+        if self._connection_error_profile:
+            shm.write_connection_error(
+                tid,
+                kind=self._connection_error_profile.get("kind", 0),
+                prob_ppm=self._connection_error_profile.get("prob_ppm", 0),
+            )
+
+        if self._half_open_profile:
+            shm.write_half_open(
+                tid,
+                after_bytes=self._half_open_profile.get("after_bytes", 0),
+                err_kind=self._half_open_profile.get("err_kind", 0),
+            )
+
         timeout_ms = self._timeouts[0] if self._timeouts else None
 
         if timeout_ms and timeout_ms > 0 and not iscoroutinefunction(self._func):
@@ -190,7 +230,9 @@ class FaultWrapper:
             f"timeouts={self._timeouts}, "
             f"uplink={self._uplink_profile}, "
             f"downlink={self._downlink_profile}, "
-            f"correlated_loss={self._correlated_loss_profile}) for {self._func!r}>"
+            f"correlated_loss={self._correlated_loss_profile}, "
+            f"connection_error={self._connection_error_profile}, "
+            f"half_open={self._half_open_profile}) for {self._func!r}>"
         )
 
 
@@ -337,6 +379,24 @@ def correlated_loss(
     return decorator
 
 
+def connection_error(*, kind: str, prob: str | int | float = "100%"):
+    profile = _build_connection_error_profile(kind=kind, prob=prob)
+
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
+        return FaultWrapper(func, connection_error_profile=profile)
+
+    return decorator
+
+
+def half_open(*, after_bytes: int, error: str = "reset"):
+    profile = _build_half_open_profile(after_bytes=after_bytes, error=error)
+
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
+        return FaultWrapper(func, half_open_profile=profile)
+
+    return decorator
+
+
 def _parse_rate(rate: str | int | float) -> int:
     if isinstance(rate, (int, float)):
         if rate < 0:
@@ -414,6 +474,8 @@ def apply_policy(_key: str):
             uplink_profile=policy.get("uplink_profile"),
             downlink_profile=policy.get("downlink_profile"),
             correlated_loss_profile=policy.get("correlated_loss_profile"),
+            connection_error_profile=policy.get("connection_error_profile"),
+            half_open_profile=policy.get("half_open_profile"),
         )
 
     return decorator
@@ -445,6 +507,8 @@ def register_policy(
     uplink: dict[str, Any] | None = None,
     downlink: dict[str, Any] | None = None,
     correlated_loss: dict[str, Any] | None = None,
+    connection_error: dict[str, Any] | None = None,
+    half_open: dict[str, Any] | None = None,
 ) -> None:
     if not name:
         raise ValueError("policy name must be non-empty")
@@ -506,6 +570,20 @@ def register_policy(
             p_bad_to_good=correlated_loss.get("p_bad_to_good", 0),
             loss_good=correlated_loss.get("loss_good", 0),
             loss_bad=correlated_loss.get("loss_bad", 0),
+        )
+    if connection_error is not None:
+        if not isinstance(connection_error, dict):
+            raise ValueError("connection_error must be a mapping when provided")
+        policy["connection_error_profile"] = _build_connection_error_profile(
+            kind=connection_error.get("kind", "reset"),
+            prob=connection_error.get("prob", "100%"),
+        )
+    if half_open is not None:
+        if not isinstance(half_open, dict):
+            raise ValueError("half_open must be a mapping when provided")
+        policy["half_open_profile"] = _build_half_open_profile(
+            after_bytes=half_open.get("after_bytes", 0),
+            error=half_open.get("error", "reset"),
         )
     with _POLICY_LOCK:
         _POLICY_REGISTRY[name] = policy
@@ -571,6 +649,8 @@ def load_policies(path: str | Path) -> int:
             uplink=cfg.get("uplink"),
             downlink=cfg.get("downlink"),
             correlated_loss=cfg.get("correlated_loss"),
+            connection_error=cfg.get("connection_error"),
+            half_open=cfg.get("half_open"),
         )
         loaded += 1
     return loaded

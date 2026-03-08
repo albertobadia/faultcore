@@ -18,6 +18,10 @@ thread_local! {
     static LATENCY_START: RefCell<HashMap<c_int, Instant>> = RefCell::new(HashMap::new());
 }
 
+lazy_static::lazy_static! {
+    static ref HALF_OPEN_BYTES: parking_lot::Mutex<HashMap<c_int, u64>> = parking_lot::Mutex::new(HashMap::new());
+}
+
 type SendFn = unsafe extern "C" fn(c_int, *const c_void, size_t, c_int) -> ssize_t;
 type RecvFn = unsafe extern "C" fn(c_int, *mut c_void, size_t, c_int) -> ssize_t;
 type ConnectFn = unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int;
@@ -69,6 +73,64 @@ fn set_errno(val: i32) {
     unsafe {
         *libc::__errno_location() = val;
     }
+}
+
+fn random_ppm_hit(prob_ppm: u64) -> bool {
+    if prob_ppm == 0 {
+        return false;
+    }
+    if prob_ppm >= 1_000_000 {
+        return true;
+    }
+    (rand::random::<u32>() % 1_000_000) < prob_ppm as u32
+}
+
+fn err_kind_to_errno(kind: u64) -> Option<i32> {
+    match kind {
+        1 => Some(libc::ECONNRESET),
+        2 => Some(libc::ECONNREFUSED),
+        3 => Some(libc::ENETUNREACH),
+        _ => None,
+    }
+}
+
+fn should_fail_connection(fd: c_int) -> Option<i32> {
+    let cfg = shm::get_config_for_fd(fd)?;
+    let errno = err_kind_to_errno(cfg.conn_err_kind)?;
+    if random_ppm_hit(cfg.conn_err_prob_ppm) {
+        Some(errno)
+    } else {
+        None
+    }
+}
+
+fn should_fail_stream(fd: c_int) -> Option<i32> {
+    let cfg = shm::get_config_for_fd(fd)?;
+    if cfg.half_open_after_bytes > 0 {
+        let current = HALF_OPEN_BYTES.lock().get(&fd).copied().unwrap_or(0);
+        if current >= cfg.half_open_after_bytes {
+            return err_kind_to_errno(if cfg.half_open_err_kind == 0 {
+                1
+            } else {
+                cfg.half_open_err_kind
+            });
+        }
+    }
+    let errno = err_kind_to_errno(cfg.conn_err_kind)?;
+    if random_ppm_hit(cfg.conn_err_prob_ppm) {
+        Some(errno)
+    } else {
+        None
+    }
+}
+
+fn record_stream_bytes(fd: c_int, bytes: u64) {
+    if bytes == 0 {
+        return;
+    }
+    let mut map = HALF_OPEN_BYTES.lock();
+    let current = map.get(&fd).copied().unwrap_or(0);
+    map.insert(fd, current.saturating_add(bytes));
 }
 
 lazy_static::lazy_static! {
@@ -321,6 +383,7 @@ pub extern "C" fn close(fd: c_int) -> c_int {
     LATENCY_START.with(|cell| {
         cell.borrow_mut().remove(&fd);
     });
+    HALF_OPEN_BYTES.lock().remove(&fd);
     shm::clear_rule_for_fd(fd);
 
     let result = unsafe { (ORIG_CLOSE)(fd) };
@@ -335,11 +398,18 @@ pub extern "C" fn send(s: c_int, b: *const c_void, l: size_t, f: c_int) -> ssize
     }
 
     initialize();
-    let result = if let Some((error, _)) = apply_chaos_from_shm(s, l as u64, true, false) {
+    let result = if let Some(errno) = should_fail_stream(s) {
+        set_errno(errno);
+        -1
+    } else if let Some((error, _)) = apply_chaos_from_shm(s, l as u64, true, false) {
         error
     } else {
         unsafe { (ORIG_SEND)(s, b, l, f) }
     };
+
+    if result > 0 {
+        record_stream_bytes(s, result as u64);
+    }
 
     exit_hook();
     result
@@ -352,13 +422,20 @@ pub extern "C" fn recv(s: c_int, b: *mut c_void, l: size_t, f: c_int) -> ssize_t
     }
 
     initialize();
-    let result = if let Some((error, _)) = apply_chaos_from_shm(s, l as u64, false, false) {
+    let result = if let Some(errno) = should_fail_stream(s) {
+        set_errno(errno);
+        -1
+    } else if let Some((error, _)) = apply_chaos_from_shm(s, l as u64, false, false) {
         error
     } else if let Some(error) = apply_timeout_recv(s) {
         error
     } else {
         unsafe { (ORIG_RECV)(s, b, l, f) }
     };
+
+    if result > 0 {
+        record_stream_bytes(s, result as u64);
+    }
 
     exit_hook();
     result
@@ -374,7 +451,10 @@ pub extern "C" fn connect(s: c_int, a: *const sockaddr, l: socklen_t) -> c_int {
     let tid = shm::get_thread_id() as usize;
     shm::assign_rule_to_fd(s, tid);
 
-    let result = if let Some((error, layer_result)) = apply_chaos_from_shm(s, 0, true, true) {
+    let result = if let Some(errno) = should_fail_connection(s) {
+        set_errno(errno);
+        -1
+    } else if let Some((error, layer_result)) = apply_chaos_from_shm(s, 0, true, true) {
         match layer_result {
             LayerResult::Timeout(_) => {}
             LayerResult::Drop | LayerResult::Error(_) => {
@@ -409,11 +489,18 @@ pub extern "C" fn sendto(
     }
 
     initialize();
-    let result = if let Some((error, _)) = apply_chaos_from_shm(s, l as u64, true, false) {
+    let result = if let Some(errno) = should_fail_stream(s) {
+        set_errno(errno);
+        -1
+    } else if let Some((error, _)) = apply_chaos_from_shm(s, l as u64, true, false) {
         error
     } else {
         unsafe { (ORIG_SENDTO)(s, b, l, f, addr, addr_len) }
     };
+
+    if result > 0 {
+        record_stream_bytes(s, result as u64);
+    }
 
     exit_hook();
     result
@@ -433,13 +520,20 @@ pub extern "C" fn recvfrom(
     }
 
     initialize();
-    let result = if let Some((error, _)) = apply_chaos_from_shm(s, l as u64, false, false) {
+    let result = if let Some(errno) = should_fail_stream(s) {
+        set_errno(errno);
+        -1
+    } else if let Some((error, _)) = apply_chaos_from_shm(s, l as u64, false, false) {
         error
     } else if let Some(error) = apply_timeout_recv(s) {
         error
     } else {
         unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) }
     };
+
+    if result > 0 {
+        record_stream_bytes(s, result as u64);
+    }
 
     exit_hook();
     result

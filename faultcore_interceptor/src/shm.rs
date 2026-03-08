@@ -52,6 +52,10 @@ pub struct FaultcoreConfig {
     pub ge_p_bad_to_good_ppm: u64,
     pub ge_loss_good_ppm: u64,
     pub ge_loss_bad_ppm: u64,
+    pub conn_err_kind: u64,
+    pub conn_err_prob_ppm: u64,
+    pub half_open_after_bytes: u64,
+    pub half_open_err_kind: u64,
     pub reserved: u32,
 }
 
@@ -87,6 +91,9 @@ impl FaultcoreConfig {
             && self.ge_p_bad_to_good_ppm <= 1_000_000
             && self.ge_loss_good_ppm <= 1_000_000
             && self.ge_loss_bad_ppm <= 1_000_000
+            && self.conn_err_kind <= 3
+            && self.conn_err_prob_ppm <= 1_000_000
+            && self.half_open_err_kind <= 3
     }
 
     pub fn into_network_config(self) -> faultcore_network::Config {
@@ -113,6 +120,10 @@ impl FaultcoreConfig {
             ge_p_bad_to_good_ppm: self.ge_p_bad_to_good_ppm,
             ge_loss_good_ppm: self.ge_loss_good_ppm,
             ge_loss_bad_ppm: self.ge_loss_bad_ppm,
+            conn_err_kind: self.conn_err_kind,
+            conn_err_prob_ppm: self.conn_err_prob_ppm,
+            half_open_after_bytes: self.half_open_after_bytes,
+            half_open_err_kind: self.half_open_err_kind,
         }
     }
 }
@@ -298,6 +309,10 @@ mod tests {
             ge_p_bad_to_good_ppm: 0,
             ge_loss_good_ppm: 0,
             ge_loss_bad_ppm: 0,
+            conn_err_kind: 0,
+            conn_err_prob_ppm: 0,
+            half_open_after_bytes: 0,
+            half_open_err_kind: 0,
             reserved: 0,
         };
         assert!(config.is_valid());
@@ -330,6 +345,10 @@ mod tests {
             ge_p_bad_to_good_ppm: 0,
             ge_loss_good_ppm: 0,
             ge_loss_bad_ppm: 0,
+            conn_err_kind: 0,
+            conn_err_prob_ppm: 0,
+            half_open_after_bytes: 0,
+            half_open_err_kind: 0,
             reserved: 0,
         };
         assert!(!config.is_valid());
@@ -401,6 +420,10 @@ mod tests {
                 ge_p_bad_to_good_ppm: 0,
                 ge_loss_good_ppm: 0,
                 ge_loss_bad_ppm: 0,
+                conn_err_kind: 0,
+                conn_err_prob_ppm: 0,
+                half_open_after_bytes: 0,
+                half_open_err_kind: 0,
                 reserved: 0,
             });
         }
@@ -434,6 +457,10 @@ mod tests {
             let ge_p_bad_to_good_ppm = ptr::read_unaligned(base.add(164) as *const u64);
             let ge_loss_good_ppm = ptr::read_unaligned(base.add(172) as *const u64);
             let ge_loss_bad_ppm = ptr::read_unaligned(base.add(180) as *const u64);
+            let conn_err_kind = ptr::read_unaligned(base.add(188) as *const u64);
+            let conn_err_prob_ppm = ptr::read_unaligned(base.add(196) as *const u64);
+            let half_open_after_bytes = ptr::read_unaligned(base.add(204) as *const u64);
+            let half_open_err_kind = ptr::read_unaligned(base.add(212) as *const u64);
             assert_eq!(magic, 0);
             assert_eq!(version, 0);
             assert_eq!(latency_ns, 0);
@@ -458,6 +485,10 @@ mod tests {
             assert_eq!(ge_p_bad_to_good_ppm, 0);
             assert_eq!(ge_loss_good_ppm, 0);
             assert_eq!(ge_loss_bad_ppm, 0);
+            assert_eq!(conn_err_kind, 0);
+            assert_eq!(conn_err_prob_ppm, 0);
+            assert_eq!(half_open_after_bytes, 0);
+            assert_eq!(half_open_err_kind, 0);
         }
 
         *SHM_POINTER.write() = prev_ptr;

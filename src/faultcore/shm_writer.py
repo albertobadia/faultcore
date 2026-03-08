@@ -6,7 +6,7 @@ import threading
 FAULTCORE_MAGIC = 0xFACC0DE
 MAX_FDS = 131072
 MAX_TIDS = 65536
-CONFIG_SIZE = 192
+CONFIG_SIZE = 224
 
 _OFFSET_MAGIC = 0
 _OFFSET_VERSION = 4
@@ -32,6 +32,10 @@ _OFFSET_GE_P_GOOD_TO_BAD_PPM = 156
 _OFFSET_GE_P_BAD_TO_GOOD_PPM = 164
 _OFFSET_GE_LOSS_GOOD_PPM = 172
 _OFFSET_GE_LOSS_BAD_PPM = 180
+_OFFSET_CONN_ERR_KIND = 188
+_OFFSET_CONN_ERR_PROB_PPM = 196
+_OFFSET_HALF_OPEN_AFTER_BYTES = 204
+_OFFSET_HALF_OPEN_ERR_KIND = 212
 
 
 class SHMWriter:
@@ -171,6 +175,20 @@ class SHMWriter:
             struct.pack_into("<Q", self._mmap, offset + _OFFSET_GE_P_BAD_TO_GOOD_PPM, p_bad_to_good_ppm)
             struct.pack_into("<Q", self._mmap, offset + _OFFSET_GE_LOSS_GOOD_PPM, loss_good_ppm)
             struct.pack_into("<Q", self._mmap, offset + _OFFSET_GE_LOSS_BAD_PPM, loss_bad_ppm)
+
+        self._write_versioned(tid, writer)
+
+    def write_connection_error(self, tid: int, *, kind: int, prob_ppm: int) -> None:
+        def writer(offset: int) -> None:
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_CONN_ERR_KIND, kind)
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_CONN_ERR_PROB_PPM, prob_ppm)
+
+        self._write_versioned(tid, writer)
+
+    def write_half_open(self, tid: int, *, after_bytes: int, err_kind: int) -> None:
+        def writer(offset: int) -> None:
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_HALF_OPEN_AFTER_BYTES, after_bytes)
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_HALF_OPEN_ERR_KIND, err_kind)
 
         self._write_versioned(tid, writer)
 

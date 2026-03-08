@@ -417,6 +417,56 @@ class TestCorrelatedLossDecorator:
                 mock_shm.clear.assert_called_once_with(975)
 
 
+class TestConnectionErrorDecorators:
+    def test_connection_error_writes_profile_to_shm(self):
+        from unittest.mock import MagicMock, patch
+
+        mock_shm = MagicMock()
+        mock_shm.write_connection_error = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=976):
+
+                @faultcore.connection_error(kind="refused", prob="2.5%")
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_connection_error.assert_called_once_with(
+                    976,
+                    kind=2,
+                    prob_ppm=25_000,
+                )
+                mock_shm.clear.assert_called_once_with(976)
+
+    def test_half_open_writes_profile_to_shm(self):
+        from unittest.mock import MagicMock, patch
+
+        mock_shm = MagicMock()
+        mock_shm.write_half_open = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=977):
+
+                @faultcore.half_open(after_bytes=4096, error="reset")
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_half_open.assert_called_once_with(
+                    977,
+                    after_bytes=4096,
+                    err_kind=1,
+                )
+                mock_shm.clear.assert_called_once_with(977)
+
+    def test_half_open_rejects_invalid_threshold(self):
+        with pytest.raises(ValueError):
+            faultcore.half_open(after_bytes=0)
+
+
 class TestPolicyRegistry:
     def test_apply_policy_uses_registered_policy(self):
         from unittest.mock import MagicMock, patch
@@ -585,6 +635,40 @@ class TestPolicyRegistry:
                 )
                 mock_shm.clear.assert_called_once_with(891)
 
+    def test_register_policy_with_connection_error_and_half_open(self):
+        from unittest.mock import MagicMock, patch
+
+        faultcore.register_policy(
+            "conn_policy",
+            connection_error={"kind": "reset", "prob": "5%"},
+            half_open={"after_bytes": 2048, "error": "unreachable"},
+        )
+
+        mock_shm = MagicMock()
+        mock_shm.write_connection_error = MagicMock()
+        mock_shm.write_half_open = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=892):
+
+                @faultcore.apply_policy("conn_policy")
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_connection_error.assert_called_once_with(
+                    892,
+                    kind=1,
+                    prob_ppm=50_000,
+                )
+                mock_shm.write_half_open.assert_called_once_with(
+                    892,
+                    after_bytes=2048,
+                    err_kind=3,
+                )
+                mock_shm.clear.assert_called_once_with(892)
+
     def test_register_policy_rejects_invalid_values(self):
         with pytest.raises(ValueError):
             faultcore.register_policy("", latency_ms=1)
@@ -606,6 +690,10 @@ class TestPolicyRegistry:
             faultcore.register_policy("bad8", downlink="invalid")
         with pytest.raises(ValueError):
             faultcore.register_policy("bad9", correlated_loss="invalid")
+        with pytest.raises(ValueError):
+            faultcore.register_policy("bad10", connection_error="invalid")
+        with pytest.raises(ValueError):
+            faultcore.register_policy("bad11", half_open="invalid")
 
     def test_registry_introspection_and_unregister(self):
         from faultcore.decorator import clear_policies

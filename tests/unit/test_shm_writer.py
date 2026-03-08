@@ -108,6 +108,16 @@ class TestExports:
 
         assert callable(correlated_loss)
 
+    def test_connection_error_is_exported(self):
+        from faultcore import connection_error
+
+        assert callable(connection_error)
+
+    def test_half_open_is_exported(self):
+        from faultcore import half_open
+
+        assert callable(half_open)
+
     def test_apply_policy_is_exported(self):
         from faultcore import apply_policy
 

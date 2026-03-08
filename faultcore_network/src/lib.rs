@@ -28,6 +28,10 @@ pub struct Config {
     pub ge_p_bad_to_good_ppm: u64,
     pub ge_loss_good_ppm: u64,
     pub ge_loss_bad_ppm: u64,
+    pub conn_err_kind: u64,
+    pub conn_err_prob_ppm: u64,
+    pub half_open_after_bytes: u64,
+    pub half_open_err_kind: u64,
 }
 
 impl Config {
@@ -50,6 +54,8 @@ impl Config {
             || self.downlink_burst_loss_len > 0
             || self.downlink_bandwidth_bps > 0
             || self.ge_enabled > 0
+            || self.conn_err_kind > 0
+            || self.half_open_after_bytes > 0
     }
 
     pub fn effective_for_send(&self) -> Self {
@@ -116,6 +122,10 @@ impl Config {
             ge_p_bad_to_good_ppm: self.ge_p_bad_to_good_ppm,
             ge_loss_good_ppm: self.ge_loss_good_ppm,
             ge_loss_bad_ppm: self.ge_loss_bad_ppm,
+            conn_err_kind: self.conn_err_kind,
+            conn_err_prob_ppm: self.conn_err_prob_ppm,
+            half_open_after_bytes: self.half_open_after_bytes,
+            half_open_err_kind: self.half_open_err_kind,
         }
     }
 }

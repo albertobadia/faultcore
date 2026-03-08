@@ -94,6 +94,26 @@ Required keyword fields:
 
 All values accept the same formats as `packet_loss(...)`.
 
+### `connection_error(...)`
+
+Inject explicit socket errors.
+
+Required keyword fields:
+- `kind`: one of `"reset"`, `"refused"`, `"unreachable"`
+
+Optional:
+- `prob`: probability of injection (same formats as `packet_loss(...)`, default `"100%"`)
+
+### `half_open(...)`
+
+Force stream failure after a byte threshold.
+
+Required keyword fields:
+- `after_bytes`: must be `> 0`
+
+Optional:
+- `error`: one of `"reset"`, `"refused"`, `"unreachable"` (default `"reset"`)
+
 ### `rate_limit(rate: str | int)`
 
 Set bandwidth in bits per second (bps) internally.
@@ -148,6 +168,8 @@ register_policy(
     uplink: dict[str, Any] | None = None,
     downlink: dict[str, Any] | None = None,
     correlated_loss: dict[str, Any] | None = None,
+    connection_error: dict[str, Any] | None = None,
+    half_open: dict[str, Any] | None = None,
 ) -> None
 ```
 
