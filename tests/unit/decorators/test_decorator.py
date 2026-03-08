@@ -100,6 +100,27 @@ class TestLatencyDecorator:
         assert my_function.__name__ == "my_function"
 
 
+class TestJitterDecorator:
+    def test_jitter_decorator_writes_jitter_to_shm(self):
+        from unittest.mock import MagicMock, patch
+
+        mock_shm = MagicMock()
+        mock_shm.write_jitter = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=999):
+
+                @faultcore.jitter(25)
+                def my_func():
+                    return "ok"
+
+                result = my_func()
+                assert result == "ok"
+                mock_shm.write_jitter.assert_called_once_with(999, 25)
+                mock_shm.clear.assert_called_once_with(999)
+
+
 class TestTimeoutDecoratorWritesCorrectFields:
     def test_timeout_writes_network_timeout_fields(self, monkeypatch):
         from unittest.mock import MagicMock, patch
@@ -221,10 +242,13 @@ class TestPolicyRegistry:
     def test_apply_policy_uses_registered_policy(self):
         from unittest.mock import MagicMock, patch
 
-        faultcore.register_policy("slow_link", latency_ms=50, packet_loss="1%", rate="2mbps", timeout_ms=20)
+        faultcore.register_policy(
+            "slow_link", latency_ms=50, jitter_ms=10, packet_loss="1%", rate="2mbps", timeout_ms=20
+        )
 
         mock_shm = MagicMock()
         mock_shm.write_latency = MagicMock()
+        mock_shm.write_jitter = MagicMock()
         mock_shm.write_packet_loss = MagicMock()
         mock_shm.write_bandwidth = MagicMock()
         mock_shm.write_timeouts = MagicMock()
@@ -239,6 +263,7 @@ class TestPolicyRegistry:
 
                 assert op() == "ok"
                 mock_shm.write_latency.assert_called_once_with(5150, 50)
+                mock_shm.write_jitter.assert_called_once_with(5150, 10)
                 mock_shm.write_packet_loss.assert_called_once_with(5150, 10_000)
                 mock_shm.write_bandwidth.assert_called_once_with(5150, 2_000_000)
                 mock_shm.write_timeouts.assert_called_once_with(5150, 20, 20)

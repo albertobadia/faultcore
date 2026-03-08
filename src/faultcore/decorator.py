@@ -18,6 +18,7 @@ class FaultWrapper:
         self,
         func: Callable[..., Any],
         latency_ms: int | None = None,
+        jitter_ms: int | None = None,
         packet_loss_ppm: int | None = None,
         bandwidth_bps: int | None = None,
         timeouts: tuple[int, int] | None = None,
@@ -25,6 +26,7 @@ class FaultWrapper:
         functools.update_wrapper(self, func)
         self._func = func
         self._latency_ms = latency_ms
+        self._jitter_ms = jitter_ms
         self._packet_loss_ppm = packet_loss_ppm
         self._bandwidth_bps = bandwidth_bps
         self._timeouts = timeouts
@@ -43,6 +45,9 @@ class FaultWrapper:
 
         if self._latency_ms:
             shm.write_latency(tid, self._latency_ms)
+
+        if self._jitter_ms:
+            shm.write_jitter(tid, self._jitter_ms)
 
         if self._packet_loss_ppm is not None:
             shm.write_packet_loss(tid, self._packet_loss_ppm)
@@ -87,6 +92,7 @@ class FaultWrapper:
         return (
             "<FaultWrapper("
             f"latency={self._latency_ms}, "
+            f"jitter={self._jitter_ms}, "
             f"packet_loss_ppm={self._packet_loss_ppm}, "
             f"bandwidth={self._bandwidth_bps}, "
             f"timeouts={self._timeouts}) for {self._func!r}>"
@@ -96,6 +102,13 @@ class FaultWrapper:
 def latency(latency_ms: int):
     def decorator(func: Callable[..., Any]) -> FaultWrapper:
         return FaultWrapper(func, latency_ms=latency_ms)
+
+    return decorator
+
+
+def jitter(jitter_ms: int):
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
+        return FaultWrapper(func, jitter_ms=jitter_ms)
 
     return decorator
 
@@ -174,6 +187,7 @@ def apply_policy(_key: str):
         return FaultWrapper(
             func,
             latency_ms=policy.get("latency_ms"),
+            jitter_ms=policy.get("jitter_ms"),
             packet_loss_ppm=policy.get("packet_loss_ppm"),
             bandwidth_bps=policy.get("bandwidth_bps"),
             timeouts=policy.get("timeouts"),
@@ -198,6 +212,7 @@ def register_policy(
     name: str,
     *,
     latency_ms: int | None = None,
+    jitter_ms: int | None = None,
     packet_loss: str | int | float | None = None,
     rate: str | int | float | None = None,
     timeout_ms: int | None = None,
@@ -205,6 +220,8 @@ def register_policy(
     policy: dict[str, Any] = {}
     if latency_ms is not None:
         policy["latency_ms"] = int(latency_ms)
+    if jitter_ms is not None:
+        policy["jitter_ms"] = int(jitter_ms)
     if packet_loss is not None:
         policy["packet_loss_ppm"] = _parse_packet_loss(packet_loss)
     if rate is not None:

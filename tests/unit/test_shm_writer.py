@@ -63,6 +63,11 @@ class TestExports:
 
         assert callable(timeout)
 
+    def test_jitter_is_exported(self):
+        from faultcore import jitter
+
+        assert callable(jitter)
+
     def test_rate_limit_is_exported(self):
         from faultcore import rate_limit
 

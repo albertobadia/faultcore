@@ -7,6 +7,7 @@ pub use layers::{L1Chaos, L2QoS, L3Routing, L4Transport, Layer, LayerResult};
 #[derive(Default)]
 pub struct Config {
     pub latency_ns: u64,
+    pub jitter_ns: u64,
     pub packet_loss_ppm: u64,
     pub bandwidth_bps: u64,
     pub connect_timeout_ms: u64,
@@ -16,6 +17,7 @@ pub struct Config {
 impl Config {
     pub fn is_enabled(&self) -> bool {
         self.latency_ns > 0
+            || self.jitter_ns > 0
             || self.packet_loss_ppm > 0
             || self.bandwidth_bps > 0
             || self.connect_timeout_ms > 0

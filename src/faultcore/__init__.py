@@ -5,6 +5,7 @@ from faultcore.decorator import (
     apply_policy,
     fault,
     get_thread_policy,
+    jitter,
     latency,
     packet_loss,
     rate_limit,
@@ -57,6 +58,7 @@ def set_thread_policy(policy_name: str | None):
 __all__ = [
     "timeout",
     "latency",
+    "jitter",
     "packet_loss",
     "rate_limit",
     "register_policy",
