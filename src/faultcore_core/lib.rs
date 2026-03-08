@@ -12,6 +12,7 @@ pub use policies::{FallbackPolicy, RateLimitPolicy, TimeoutPolicy};
 pub use registry::PolicyRegistry;
 pub use system::context::ContextManager;
 
+use log::LevelFilter;
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 
@@ -84,6 +85,10 @@ fn set_thread_policy(name: Option<String>) {
 
 #[pymodule]
 fn _faultcore(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    env_logger::Builder::new()
+        .filter_level(LevelFilter::Warn)
+        .init();
+
     m.add_function(wrap_pyfunction!(classify_exception, m)?)?;
     m.add_function(wrap_pyfunction!(add_keys, m)?)?;
     m.add_function(wrap_pyfunction!(get_keys, m)?)?;
