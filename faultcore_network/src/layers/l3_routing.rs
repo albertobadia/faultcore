@@ -1,4 +1,6 @@
-use crate::{Config, Layer, LayerResult};
+use crate::{
+    layers::{Layer, LayerDecision, LayerStage, PacketContext},
+};
 use parking_lot::Mutex;
 use rand::{Rng, SeedableRng, random, rngs::StdRng};
 
@@ -45,11 +47,19 @@ impl Default for L3Routing {
 }
 
 impl Layer for L3Routing {
-    fn process(&self, config: &Config) -> LayerResult {
-        if config.jitter_ns > 0 {
-            return LayerResult::Delay(self.random_u64_bounded(config.jitter_ns));
+    fn stage(&self) -> LayerStage {
+        LayerStage::L3
+    }
+
+    fn applies_to(&self, ctx: &PacketContext<'_>) -> bool {
+        !ctx.is_dns()
+    }
+
+    fn process(&self, ctx: &PacketContext<'_>) -> LayerDecision {
+        if ctx.config.jitter_ns > 0 {
+            return LayerDecision::DelayNs(self.random_u64_bounded(ctx.config.jitter_ns));
         }
-        LayerResult::Continue
+        LayerDecision::Continue
     }
 
     fn name(&self) -> &str {
@@ -64,14 +74,21 @@ mod tests {
     #[test]
     fn jitter_is_bounded_by_config() {
         let layer = L3Routing::with_seed(7);
-        let cfg = Config {
+        let cfg = crate::Config {
             jitter_ns: 5_000,
             ..Default::default()
         };
+        let ctx = PacketContext {
+            fd: 1,
+            bytes: 1,
+            operation: crate::layers::Operation::Recv,
+            direction: None,
+            config: &cfg,
+        };
 
         for _ in 0..256 {
-            match layer.process(&cfg) {
-                LayerResult::Delay(ns) => {
+            match layer.process(&ctx) {
+                LayerDecision::DelayNs(ns) => {
                     assert!(ns <= 5_000);
                 }
                 other => panic!("expected Delay, got {other:?}"),
@@ -81,22 +98,29 @@ mod tests {
 
     #[test]
     fn same_seed_produces_same_jitter_sequence() {
-        let cfg = Config {
+        let cfg = crate::Config {
             jitter_ns: 10_000,
             ..Default::default()
         };
         let a = L3Routing::with_seed(123);
         let b = L3Routing::with_seed(123);
+        let ctx = PacketContext {
+            fd: 1,
+            bytes: 1,
+            operation: crate::layers::Operation::Recv,
+            direction: None,
+            config: &cfg,
+        };
 
         let s1: Vec<u64> = (0..128)
-            .map(|_| match a.process(&cfg) {
-                LayerResult::Delay(ns) => ns,
+            .map(|_| match a.process(&ctx) {
+                LayerDecision::DelayNs(ns) => ns,
                 _ => 0,
             })
             .collect();
         let s2: Vec<u64> = (0..128)
-            .map(|_| match b.process(&cfg) {
-                LayerResult::Delay(ns) => ns,
+            .map(|_| match b.process(&ctx) {
+                LayerDecision::DelayNs(ns) => ns,
                 _ => 0,
             })
             .collect();

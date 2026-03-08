@@ -1,4 +1,4 @@
-use faultcore_network::{ChaosEngine, ConnectAction, DnsAction, StreamAction, StreamDirection};
+use faultcore_network::{ChaosEngine, Direction, LayerDecision};
 use libc::{addrinfo, c_char, c_int, c_void, size_t, sockaddr, socklen_t, ssize_t};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -98,39 +98,43 @@ fn network_config_for_fd(fd: c_int) -> Option<faultcore_network::Config> {
     Some(shm::get_config_for_fd(fd)?.into_network_config())
 }
 
-fn map_connect_action_to_result(action: ConnectAction) -> Option<c_int> {
-    match action {
-        ConnectAction::Continue => None,
-        ConnectAction::Drop => {
+fn map_connect_decision_to_result(decision: LayerDecision) -> Option<c_int> {
+    match decision {
+        LayerDecision::Continue => None,
+        LayerDecision::Drop => {
             set_errno(libc::ECONNREFUSED);
             Some(-1)
         }
-        ConnectAction::Delay(latency_ns) => {
+        LayerDecision::DelayNs(latency_ns) => {
             if latency_ns > 0 {
                 std::thread::sleep(std::time::Duration::from_nanos(latency_ns));
             }
             None
         }
-        ConnectAction::Timeout(_) => {
+        LayerDecision::TimeoutMs(_) => {
             set_errno(libc::ETIMEDOUT);
             Some(-1)
         }
-        ConnectAction::Error(_) => {
+        LayerDecision::Error(_) => {
             set_errno(libc::EIO);
             Some(-1)
         }
-        ConnectAction::ConnectionErrorKind(kind) => {
+        LayerDecision::ConnectionErrorKind(kind) => {
             set_errno(err_kind_to_errno(kind).unwrap_or(libc::EIO));
+            Some(-1)
+        }
+        LayerDecision::StageReorder | LayerDecision::Duplicate(_) | LayerDecision::NxDomain => {
+            set_errno(libc::EIO);
             Some(-1)
         }
     }
 }
 
-fn map_stream_action_to_result(fd: c_int, action: StreamAction) -> Option<ssize_t> {
-    match action {
-        StreamAction::Continue | StreamAction::StageReorder => None,
-        StreamAction::Drop => Some(0),
-        StreamAction::Delay(latency_ns) => {
+fn map_stream_decision_to_result(fd: c_int, decision: LayerDecision) -> Option<ssize_t> {
+    match decision {
+        LayerDecision::Continue | LayerDecision::StageReorder | LayerDecision::Duplicate(_) => None,
+        LayerDecision::Drop => Some(0),
+        LayerDecision::DelayNs(latency_ns) => {
             if is_non_blocking(fd) {
                 let mut elapsed = false;
                 LATENCY_START.with(|cell| {
@@ -153,16 +157,20 @@ fn map_stream_action_to_result(fd: c_int, action: StreamAction) -> Option<ssize_
             }
             None
         }
-        StreamAction::Timeout(_) => {
+        LayerDecision::TimeoutMs(_) => {
             set_errno(libc::ETIMEDOUT);
             Some(-1)
         }
-        StreamAction::Error(_) => {
+        LayerDecision::Error(_) => {
             set_errno(libc::EIO);
             Some(-1)
         }
-        StreamAction::ConnectionErrorKind(kind) => {
+        LayerDecision::ConnectionErrorKind(kind) => {
             set_errno(err_kind_to_errno(kind).unwrap_or(libc::EIO));
+            Some(-1)
+        }
+        LayerDecision::NxDomain => {
+            set_errno(libc::EIO);
             Some(-1)
         }
     }
@@ -180,7 +188,10 @@ fn maybe_duplicate_send(fd: c_int, b: *const c_void, sent: ssize_t, f: c_int) {
         return;
     };
     let network_cfg = cfg.into_network_config();
-    let count = CHAOS_ENGINE.duplicate_extra_count(&network_cfg, StreamDirection::Send);
+    let count = match CHAOS_ENGINE.evaluate_stream_post(&network_cfg, Direction::Uplink) {
+        LayerDecision::Duplicate(n) => n,
+        _ => 0,
+    };
     for _ in 0..count {
         unsafe {
             let _ = (ORIG_SEND)(fd, b, sent as size_t, f);
@@ -203,7 +214,10 @@ fn maybe_duplicate_sendto(
         return;
     };
     let network_cfg = cfg.into_network_config();
-    let count = CHAOS_ENGINE.duplicate_extra_count(&network_cfg, StreamDirection::Send);
+    let count = match CHAOS_ENGINE.evaluate_stream_post(&network_cfg, Direction::Uplink) {
+        LayerDecision::Duplicate(n) => n,
+        _ => 0,
+    };
     for _ in 0..count {
         unsafe {
             let _ = (ORIG_SENDTO)(fd, b, sent as size_t, f, addr, addr_len);
@@ -335,8 +349,8 @@ pub extern "C" fn send(s: c_int, b: *const c_void, l: size_t, f: c_int) -> ssize
 
     initialize();
     let result = if let Some(network_cfg) = network_config_for_fd(s) {
-        let action = CHAOS_ENGINE.process_stream_pre(s, &network_cfg, l as u64, StreamDirection::Send);
-        if let Some(error) = map_stream_action_to_result(s, action) {
+        let decision = CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Uplink);
+        if let Some(error) = map_stream_decision_to_result(s, decision) {
             error
         } else {
             unsafe { (ORIG_SEND)(s, b, l, f) }
@@ -362,8 +376,9 @@ pub extern "C" fn recv(s: c_int, b: *mut c_void, l: size_t, f: c_int) -> ssize_t
 
     initialize();
     let result = if let Some(network_cfg) = network_config_for_fd(s) {
-        let action = CHAOS_ENGINE.process_stream_pre(s, &network_cfg, l as u64, StreamDirection::Recv);
-        if let Some(error) = map_stream_action_to_result(s, action) {
+        let decision =
+            CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Downlink);
+        if let Some(error) = map_stream_decision_to_result(s, decision) {
             error
         } else {
             unsafe { (ORIG_RECV)(s, b, l, f) }
@@ -391,8 +406,8 @@ pub extern "C" fn connect(s: c_int, a: *const sockaddr, l: socklen_t) -> c_int {
     shm::assign_rule_to_fd(s, tid);
 
     let result = if let Some(network_cfg) = network_config_for_fd(s) {
-        let action = CHAOS_ENGINE.process_connect(s, &network_cfg);
-        if let Some(error) = map_connect_action_to_result(action) {
+        let decision = CHAOS_ENGINE.evaluate_connect(s, &network_cfg);
+        if let Some(error) = map_connect_decision_to_result(decision) {
             error
         } else {
             unsafe { (ORIG_CONNECT)(s, a, l) }
@@ -421,13 +436,13 @@ pub extern "C" fn sendto(
     initialize();
     let mut pending = REORDER_PENDING_SENDTO.lock().remove(&s);
     let result = if let Some(network_cfg) = network_config_for_fd(s) {
-        let action = CHAOS_ENGINE.process_stream_pre(s, &network_cfg, l as u64, StreamDirection::Send);
-        if let Some(error) = map_stream_action_to_result(s, action.clone()) {
+        let decision = CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Uplink);
+        if let Some(error) = map_stream_decision_to_result(s, decision.clone()) {
             if let Some(pkt) = pending.take() {
                 REORDER_PENDING_SENDTO.lock().insert(s, pkt);
             }
             error
-        } else if matches!(action, StreamAction::StageReorder) && pending.is_none() {
+        } else if matches!(decision, LayerDecision::StageReorder) && pending.is_none() {
             maybe_stage_reorder_sendto(s, b, l, f, addr, addr_len).unwrap_or(l as ssize_t)
         } else {
             unsafe { (ORIG_SENDTO)(s, b, l, f, addr, addr_len) }
@@ -477,8 +492,9 @@ pub extern "C" fn recvfrom(
 
     initialize();
     let result = if let Some(network_cfg) = network_config_for_fd(s) {
-        let action = CHAOS_ENGINE.process_stream_pre(s, &network_cfg, l as u64, StreamDirection::Recv);
-        if let Some(error) = map_stream_action_to_result(s, action) {
+        let decision =
+            CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Downlink);
+        if let Some(error) = map_stream_decision_to_result(s, decision) {
             error
         } else {
             unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) }
@@ -510,19 +526,27 @@ pub extern "C" fn getaddrinfo(
     let tid = shm::get_thread_id();
     if let Some(cfg) = shm::get_config_for_tid(tid) {
         let network_cfg = cfg.into_network_config();
-        match CHAOS_ENGINE.process_dns_lookup(&network_cfg) {
-            DnsAction::Continue => {}
-            DnsAction::Delay(ns) => {
+        match CHAOS_ENGINE.evaluate_dns_lookup(&network_cfg) {
+            LayerDecision::Continue => {}
+            LayerDecision::DelayNs(ns) => {
                 std::thread::sleep(std::time::Duration::from_nanos(ns));
             }
-            DnsAction::Timeout(ms) => {
+            LayerDecision::TimeoutMs(ms) => {
                 std::thread::sleep(std::time::Duration::from_millis(ms));
                 exit_hook();
                 return libc::EAI_AGAIN;
             }
-            DnsAction::NxDomain => {
+            LayerDecision::NxDomain => {
                 exit_hook();
                 return libc::EAI_NONAME;
+            }
+            LayerDecision::Drop
+            | LayerDecision::Error(_)
+            | LayerDecision::ConnectionErrorKind(_)
+            | LayerDecision::StageReorder
+            | LayerDecision::Duplicate(_) => {
+                exit_hook();
+                return libc::EAI_FAIL;
             }
         }
     }

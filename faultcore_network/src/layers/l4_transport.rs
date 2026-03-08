@@ -1,37 +1,24 @@
-use crate::{Config, Layer, LayerResult};
+use crate::{
+    Config,
+    layers::{Layer, LayerDecision, LayerStage, Operation, PacketContext},
+};
 use parking_lot::Mutex;
 use rand::{Rng, SeedableRng, random, rngs::StdRng};
 use std::collections::HashMap;
 
 pub struct L4Transport {
-    _connect_timeout_ms: u64,
-    _recv_timeout_ms: u64,
     seeded_rng: Option<Mutex<StdRng>>,
     stream_bytes: Mutex<HashMap<i32, u64>>,
 }
 
 impl L4Transport {
-    pub fn new(connect_timeout_ms: u64, recv_timeout_ms: u64) -> Self {
+    pub fn new() -> Self {
         let seeded_rng = std::env::var("FAULTCORE_SEED")
             .ok()
             .and_then(|raw| raw.parse::<u64>().ok())
             .map(|seed| Mutex::new(StdRng::seed_from_u64(seed)));
         Self {
-            _connect_timeout_ms: connect_timeout_ms,
-            _recv_timeout_ms: recv_timeout_ms,
             seeded_rng,
-            stream_bytes: Mutex::new(HashMap::new()),
-        }
-    }
-
-    pub fn with_config(config: &Config) -> Self {
-        Self {
-            _connect_timeout_ms: config.connect_timeout_ms,
-            _recv_timeout_ms: config.recv_timeout_ms,
-            seeded_rng: std::env::var("FAULTCORE_SEED")
-                .ok()
-                .and_then(|raw| raw.parse::<u64>().ok())
-                .map(|seed| Mutex::new(StdRng::seed_from_u64(seed))),
             stream_bytes: Mutex::new(HashMap::new()),
         }
     }
@@ -71,7 +58,7 @@ impl L4Transport {
         self.stream_bytes.lock().remove(&fd);
     }
 
-    pub fn connection_error_kind(&self, fd: i32, config: &Config, is_connect: bool) -> Option<u64> {
+    fn connection_error_kind(&self, fd: i32, config: &Config, is_connect: bool) -> Option<u64> {
         if !is_connect && config.half_open_after_bytes > 0 {
             let seen = self.stream_bytes.lock().get(&fd).copied().unwrap_or(0);
             if seen >= config.half_open_after_bytes {
@@ -88,30 +75,44 @@ impl L4Transport {
         }
         None
     }
-
-    pub fn timeout_for_connect(&self, config: &Config) -> LayerResult {
-        if config.connect_timeout_ms > 0 {
-            LayerResult::Timeout(config.connect_timeout_ms)
-        } else {
-            LayerResult::Continue
-        }
-    }
-
-    pub fn timeout_for_stream(&self, config: &Config, is_recv: bool) -> LayerResult {
-        if is_recv && config.recv_timeout_ms > 0 {
-            LayerResult::Timeout(config.recv_timeout_ms)
-        } else {
-            LayerResult::Continue
-        }
-    }
 }
 
 impl Layer for L4Transport {
-    fn process(&self, _config: &Config) -> LayerResult {
-        LayerResult::Continue
+    fn stage(&self) -> LayerStage {
+        LayerStage::L4
+    }
+
+    fn applies_to(&self, ctx: &PacketContext<'_>) -> bool {
+        !ctx.is_dns()
+    }
+
+    fn process(&self, ctx: &PacketContext<'_>) -> LayerDecision {
+        if let Some(kind) = self.connection_error_kind(
+            ctx.fd,
+            ctx.config,
+            matches!(ctx.operation, Operation::Connect),
+        ) {
+            return LayerDecision::ConnectionErrorKind(kind);
+        }
+
+        match ctx.operation {
+            Operation::Connect if ctx.config.connect_timeout_ms > 0 => {
+                LayerDecision::TimeoutMs(ctx.config.connect_timeout_ms)
+            }
+            Operation::Recv if ctx.config.recv_timeout_ms > 0 => {
+                LayerDecision::TimeoutMs(ctx.config.recv_timeout_ms)
+            }
+            _ => LayerDecision::Continue,
+        }
     }
 
     fn name(&self) -> &str {
         "L4_Transport"
+    }
+}
+
+impl Default for L4Transport {
+    fn default() -> Self {
+        Self::new()
     }
 }

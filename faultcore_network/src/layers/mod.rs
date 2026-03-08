@@ -12,21 +12,84 @@ pub use l3_routing::L3Routing;
 pub use l4_transport::L4Transport;
 pub use l5_session::L5Session;
 pub use l6_presentation::L6Presentation;
-pub use l7_resolver::{DnsAction, L7Resolver};
+pub use l7_resolver::L7Resolver;
 
 use std::sync::Arc;
 
-#[derive(Debug, Clone)]
-pub enum LayerResult {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    Uplink,
+    Downlink,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Operation {
+    Connect,
+    Send,
+    Recv,
+    DnsLookup,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayerStage {
+    L1,
+    L2,
+    L3,
+    L4,
+    L5,
+    L6,
+    L7,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LayerDecision {
     Continue,
+    DelayNs(u64),
     Drop,
-    Delay(u64),
-    Timeout(u64),
+    TimeoutMs(u64),
     Error(String),
+    ConnectionErrorKind(u64),
+    StageReorder,
+    Duplicate(u64),
+    NxDomain,
+}
+
+pub struct PacketContext<'a> {
+    pub fd: i32,
+    pub bytes: u64,
+    pub operation: Operation,
+    pub direction: Option<Direction>,
+    pub config: &'a super::Config,
+}
+
+impl PacketContext<'_> {
+    pub fn is_stream(&self) -> bool {
+        matches!(self.operation, Operation::Send | Operation::Recv)
+    }
+
+    pub fn is_dns(&self) -> bool {
+        matches!(self.operation, Operation::DnsLookup)
+    }
+
+    pub fn is_connect(&self) -> bool {
+        matches!(self.operation, Operation::Connect)
+    }
+
+    pub fn is_send(&self) -> bool {
+        matches!(self.operation, Operation::Send)
+    }
+
+    pub fn is_recv(&self) -> bool {
+        matches!(self.operation, Operation::Recv)
+    }
 }
 
 pub trait Layer: Send + Sync {
-    fn process(&self, config: &super::Config) -> LayerResult;
+    fn stage(&self) -> LayerStage;
+    fn applies_to(&self, _ctx: &PacketContext<'_>) -> bool {
+        true
+    }
+    fn process(&self, ctx: &PacketContext<'_>) -> LayerDecision;
     fn name(&self) -> &str;
 }
 

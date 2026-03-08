@@ -1,10 +1,10 @@
 pub mod chaos_engine;
 pub mod layers;
 
-pub use chaos_engine::{ChaosEngine, ConnectAction, StreamAction, StreamDirection};
+pub use chaos_engine::ChaosEngine;
 pub use layers::{
-    DnsAction, L1Chaos, L2QoS, L3Routing, L4Transport, L5Session, L6Presentation, L7Resolver, Layer,
-    LayerResult,
+    Direction, L1Chaos, L2QoS, L3Routing, L4Transport, L5Session, L6Presentation, L7Resolver, Layer,
+    LayerDecision, LayerStage, Operation, PacketContext,
 };
 
 #[derive(Default)]

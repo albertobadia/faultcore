@@ -1,4 +1,7 @@
-use crate::{Config, Layer, LayerResult};
+use crate::{
+    Config,
+    layers::{Layer, LayerDecision, LayerStage, PacketContext},
+};
 use parking_lot::Mutex;
 use rand::{Rng, SeedableRng, random, rngs::StdRng};
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
@@ -75,7 +78,7 @@ impl L1Chaos {
         }
     }
 
-    pub fn duplicate_extra(&self, config: &Config) -> u64 {
+    fn duplicate_extra(&self, config: &Config) -> u64 {
         if config.dup_prob_ppm == 0 {
             return 0;
         }
@@ -96,6 +99,23 @@ impl L1Chaos {
     pub fn should_reorder(&self, config: &Config) -> bool {
         self.event_happens(config.reorder_prob_ppm)
     }
+
+    pub fn duplicate_decision(&self, config: &Config) -> LayerDecision {
+        let count = self.duplicate_extra(config);
+        if count > 0 {
+            LayerDecision::Duplicate(count)
+        } else {
+            LayerDecision::Continue
+        }
+    }
+
+    pub fn reorder_decision(&self, config: &Config) -> LayerDecision {
+        if self.should_reorder(config) {
+            LayerDecision::StageReorder
+        } else {
+            LayerDecision::Continue
+        }
+    }
 }
 
 impl Default for L1Chaos {
@@ -105,7 +125,16 @@ impl Default for L1Chaos {
 }
 
 impl Layer for L1Chaos {
-    fn process(&self, config: &Config) -> LayerResult {
+    fn stage(&self) -> LayerStage {
+        LayerStage::L1
+    }
+
+    fn applies_to(&self, ctx: &PacketContext<'_>) -> bool {
+        !ctx.is_dns()
+    }
+
+    fn process(&self, ctx: &PacketContext<'_>) -> LayerDecision {
+        let config = ctx.config;
         if self
             .burst_remaining
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
@@ -117,7 +146,7 @@ impl Layer for L1Chaos {
             })
             .is_ok()
         {
-            return LayerResult::Drop;
+            return LayerDecision::Drop;
         }
 
         let effective_loss = self
@@ -128,14 +157,14 @@ impl Layer for L1Chaos {
                 self.burst_remaining
                     .store(config.burst_loss_len.saturating_sub(1), Ordering::Release);
             }
-            return LayerResult::Drop;
+            return LayerDecision::Drop;
         }
 
         if config.latency_ns > 0 {
-            return LayerResult::Delay(config.latency_ns);
+            return LayerDecision::DelayNs(config.latency_ns);
         }
 
-        LayerResult::Continue
+        LayerDecision::Continue
     }
 
     fn name(&self) -> &str {
@@ -146,6 +175,7 @@ impl Layer for L1Chaos {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::layers::Operation;
 
     fn drop_sequence(seed: u64, packet_loss_ppm: u64, n: usize) -> Vec<bool> {
         let layer = L1Chaos::with_seed(seed);
@@ -153,8 +183,15 @@ mod tests {
             packet_loss_ppm,
             ..Default::default()
         };
+        let ctx = PacketContext {
+            fd: 1,
+            bytes: 1,
+            operation: Operation::Recv,
+            direction: None,
+            config: &cfg,
+        };
         (0..n)
-            .map(|_| matches!(layer.process(&cfg), LayerResult::Drop))
+            .map(|_| matches!(layer.process(&ctx), LayerDecision::Drop))
             .collect()
     }
 
@@ -184,12 +221,19 @@ mod tests {
         };
         let first = L1Chaos::new();
         let second = L1Chaos::new();
+        let ctx = PacketContext {
+            fd: 1,
+            bytes: 1,
+            operation: Operation::Recv,
+            direction: None,
+            config: &cfg,
+        };
 
         let seq1: Vec<bool> = (0..256)
-            .map(|_| matches!(first.process(&cfg), LayerResult::Drop))
+            .map(|_| matches!(first.process(&ctx), LayerDecision::Drop))
             .collect();
         let seq2: Vec<bool> = (0..256)
-            .map(|_| matches!(second.process(&cfg), LayerResult::Drop))
+            .map(|_| matches!(second.process(&ctx), LayerDecision::Drop))
             .collect();
 
         assert_eq!(seq1, seq2);
@@ -204,10 +248,17 @@ mod tests {
         let layer = L1Chaos::with_seed(1);
         layer.burst_remaining.store(2, Ordering::Release);
         let cfg = Config::default();
+        let ctx = PacketContext {
+            fd: 1,
+            bytes: 1,
+            operation: Operation::Recv,
+            direction: None,
+            config: &cfg,
+        };
 
-        assert!(matches!(layer.process(&cfg), LayerResult::Drop));
-        assert!(matches!(layer.process(&cfg), LayerResult::Drop));
-        assert!(matches!(layer.process(&cfg), LayerResult::Continue));
+        assert!(matches!(layer.process(&ctx), LayerDecision::Drop));
+        assert!(matches!(layer.process(&ctx), LayerDecision::Drop));
+        assert!(matches!(layer.process(&ctx), LayerDecision::Continue));
     }
 
     #[test]
@@ -218,8 +269,15 @@ mod tests {
             burst_loss_len: 4,
             ..Default::default()
         };
+        let ctx = PacketContext {
+            fd: 1,
+            bytes: 1,
+            operation: Operation::Recv,
+            direction: None,
+            config: &cfg,
+        };
 
-        assert!(matches!(layer.process(&cfg), LayerResult::Drop));
+        assert!(matches!(layer.process(&ctx), LayerDecision::Drop));
         assert_eq!(layer.burst_remaining.load(Ordering::Acquire), 3);
     }
 
@@ -234,8 +292,15 @@ mod tests {
             ge_loss_bad_ppm: 1_000_000,
             ..Default::default()
         };
+        let ctx = PacketContext {
+            fd: 1,
+            bytes: 1,
+            operation: Operation::Recv,
+            direction: None,
+            config: &cfg,
+        };
 
-        assert!(matches!(layer.process(&cfg), LayerResult::Drop));
+        assert!(matches!(layer.process(&ctx), LayerDecision::Drop));
     }
 
     #[test]
@@ -249,7 +314,14 @@ mod tests {
             ge_loss_bad_ppm: 1_000_000,
             ..Default::default()
         };
+        let ctx = PacketContext {
+            fd: 1,
+            bytes: 1,
+            operation: Operation::Recv,
+            direction: None,
+            config: &cfg,
+        };
 
-        assert!(matches!(layer.process(&cfg), LayerResult::Continue));
+        assert!(matches!(layer.process(&ctx), LayerDecision::Continue));
     }
 }

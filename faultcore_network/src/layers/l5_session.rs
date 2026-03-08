@@ -1,4 +1,4 @@
-use crate::{Config, Layer, LayerResult};
+use crate::layers::{Layer, LayerDecision, LayerStage, PacketContext};
 
 pub struct L5Session;
 
@@ -15,8 +15,12 @@ impl Default for L5Session {
 }
 
 impl Layer for L5Session {
-    fn process(&self, _config: &Config) -> LayerResult {
-        LayerResult::Continue
+    fn stage(&self) -> LayerStage {
+        LayerStage::L5
+    }
+
+    fn process(&self, _ctx: &PacketContext<'_>) -> LayerDecision {
+        LayerDecision::Continue
     }
 
     fn name(&self) -> &str {

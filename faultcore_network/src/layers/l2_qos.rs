@@ -1,4 +1,7 @@
-use crate::{Config, Layer, LayerResult};
+use crate::{
+    Config,
+    layers::{Layer, LayerDecision, LayerStage, PacketContext},
+};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
@@ -63,7 +66,7 @@ impl L2QoS {
             }
         }
     }
-    pub fn process_with_bytes(&self, bytes: u64, config: &Config) -> LayerResult {
+    fn process_with_bytes(&self, bytes: u64, config: &Config) -> LayerDecision {
         let rate = if config.bandwidth_bps > 0 {
             config.bandwidth_bps
         } else {
@@ -71,7 +74,7 @@ impl L2QoS {
         };
 
         if rate == 0 {
-            return LayerResult::Continue;
+            return LayerDecision::Continue;
         }
 
         let bits_needed = bytes.saturating_mul(8);
@@ -82,7 +85,7 @@ impl L2QoS {
         };
 
         if self.try_acquire(bits_needed, rate, capacity_tokens) {
-            LayerResult::Continue
+            LayerDecision::Continue
         } else {
             let current = self.tokens.load(Ordering::Acquire);
             let deficit = bits_needed.saturating_sub(current);
@@ -90,17 +93,25 @@ impl L2QoS {
             let delay_ns = (delay_secs * 1_000_000_000.0) as u64;
 
             if delay_ns > 0 {
-                LayerResult::Delay(delay_ns)
+                LayerDecision::DelayNs(delay_ns)
             } else {
-                LayerResult::Continue
+                LayerDecision::Continue
             }
         }
     }
 }
 
 impl Layer for L2QoS {
-    fn process(&self, config: &Config) -> LayerResult {
-        self.process_with_bytes(0, config)
+    fn stage(&self) -> LayerStage {
+        LayerStage::L2
+    }
+
+    fn applies_to(&self, ctx: &PacketContext<'_>) -> bool {
+        ctx.is_stream()
+    }
+
+    fn process(&self, ctx: &PacketContext<'_>) -> LayerDecision {
+        self.process_with_bytes(ctx.bytes, ctx.config)
     }
 
     fn name(&self) -> &str {
@@ -142,15 +153,19 @@ mod tests {
             bandwidth_bps: 80,
             ..Default::default()
         };
+        let ctx = PacketContext {
+            fd: 1,
+            bytes: 1,
+            operation: crate::layers::Operation::Recv,
+            direction: None,
+            config: &config,
+        };
 
-        assert!(matches!(qos.process_with_bytes(1, &config), LayerResult::Delay(_)));
+        assert!(matches!(qos.process(&ctx), LayerDecision::DelayNs(_)));
 
         thread::sleep(Duration::from_millis(120));
 
-        assert!(matches!(
-            qos.process_with_bytes(1, &config),
-            LayerResult::Continue
-        ));
+        assert!(matches!(qos.process(&ctx), LayerDecision::Continue));
     }
 
     #[test]
@@ -160,9 +175,16 @@ mod tests {
             bandwidth_bps: 8,
             ..Default::default()
         };
+        let ctx = PacketContext {
+            fd: 1,
+            bytes: 1,
+            operation: crate::layers::Operation::Recv,
+            direction: None,
+            config: &config,
+        };
 
-        match qos.process_with_bytes(1, &config) {
-            LayerResult::Delay(delay_ns) => {
+        match qos.process(&ctx) {
+            LayerDecision::DelayNs(delay_ns) => {
                 assert!(delay_ns >= 900_000_000, "delay_ns={delay_ns}");
                 assert!(delay_ns <= 1_100_000_000, "delay_ns={delay_ns}");
             }

@@ -1,14 +1,6 @@
-use crate::Config;
+use crate::layers::{Layer, LayerDecision, LayerStage, PacketContext};
 use parking_lot::Mutex;
 use rand::{Rng, SeedableRng, random, rngs::StdRng};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DnsAction {
-    Continue,
-    Delay(u64),
-    Timeout(u64),
-    NxDomain,
-}
 
 pub struct L7Resolver {
     seeded_rng: Option<Mutex<StdRng>>,
@@ -42,17 +34,32 @@ impl L7Resolver {
         random < probability_ppm as u32
     }
 
-    pub fn process_dns(&self, config: &Config) -> DnsAction {
-        if config.dns_timeout_ms > 0 {
-            return DnsAction::Timeout(config.dns_timeout_ms);
+}
+
+impl Layer for L7Resolver {
+    fn stage(&self) -> LayerStage {
+        LayerStage::L7
+    }
+
+    fn applies_to(&self, ctx: &PacketContext<'_>) -> bool {
+        ctx.is_dns()
+    }
+
+    fn process(&self, ctx: &PacketContext<'_>) -> LayerDecision {
+        if ctx.config.dns_timeout_ms > 0 {
+            return LayerDecision::TimeoutMs(ctx.config.dns_timeout_ms);
         }
-        if self.event_happens(config.dns_nxdomain_ppm) {
-            return DnsAction::NxDomain;
+        if self.event_happens(ctx.config.dns_nxdomain_ppm) {
+            return LayerDecision::NxDomain;
         }
-        if config.dns_delay_ns > 0 {
-            return DnsAction::Delay(config.dns_delay_ns);
+        if ctx.config.dns_delay_ns > 0 {
+            return LayerDecision::DelayNs(ctx.config.dns_delay_ns);
         }
-        DnsAction::Continue
+        LayerDecision::Continue
+    }
+
+    fn name(&self) -> &str {
+        "L7_Resolver"
     }
 }
 
