@@ -39,14 +39,6 @@ impl L1Chaos {
         }
     }
 
-    fn random_u64_bounded(&self, upper_inclusive: u64) -> u64 {
-        if upper_inclusive == 0 {
-            return 0;
-        }
-        let v = self.random_u32() as u64;
-        v % (upper_inclusive + 1)
-    }
-
     fn should_drop(&self, packet_loss_ppm: u64) -> bool {
         if packet_loss_ppm == 0 {
             return false;
@@ -87,9 +79,8 @@ impl Layer for L1Chaos {
             return LayerResult::Drop;
         }
 
-        if config.latency_ns > 0 || config.jitter_ns > 0 {
-            let jitter = self.random_u64_bounded(config.jitter_ns);
-            return LayerResult::Delay(config.latency_ns.saturating_add(jitter));
+        if config.latency_ns > 0 {
+            return LayerResult::Delay(config.latency_ns);
         }
 
         LayerResult::Continue
@@ -153,26 +144,6 @@ mod tests {
 
         unsafe {
             std::env::remove_var("FAULTCORE_SEED");
-        }
-    }
-
-    #[test]
-    fn jitter_is_bounded_by_config() {
-        let layer = L1Chaos::with_seed(7);
-        let cfg = Config {
-            latency_ns: 1_000,
-            jitter_ns: 5_000,
-            ..Default::default()
-        };
-
-        for _ in 0..256 {
-            match layer.process(&cfg) {
-                LayerResult::Delay(ns) => {
-                    assert!(ns >= 1_000);
-                    assert!(ns <= 6_000);
-                }
-                other => panic!("expected Delay, got {other:?}"),
-            }
         }
     }
 
