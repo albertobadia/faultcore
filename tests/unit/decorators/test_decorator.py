@@ -144,6 +144,42 @@ class TestTimeoutDecoratorWritesCorrectFields:
                 mock_shm.write_latency.assert_not_called()
                 mock_shm.clear.assert_called_once_with(12345)
 
+    def test_connect_timeout_writes_connect_only(self):
+        from unittest.mock import MagicMock, patch
+
+        mock_shm = MagicMock()
+        mock_shm.write_timeouts = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=12346):
+
+                @faultcore.connect_timeout(1500)
+                def my_func():
+                    return "ok"
+
+                assert my_func() == "ok"
+                mock_shm.write_timeouts.assert_called_once_with(12346, 1500, 0)
+                mock_shm.clear.assert_called_once_with(12346)
+
+    def test_recv_timeout_writes_recv_only(self):
+        from unittest.mock import MagicMock, patch
+
+        mock_shm = MagicMock()
+        mock_shm.write_timeouts = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=12347):
+
+                @faultcore.recv_timeout(800)
+                def my_func():
+                    return "ok"
+
+                assert my_func() == "ok"
+                mock_shm.write_timeouts.assert_called_once_with(12347, 0, 800)
+                mock_shm.clear.assert_called_once_with(12347)
+
 
 class TestRateLimitDecorator:
     def test_rate_limit_decorator_basic(self):
@@ -339,6 +375,26 @@ class TestPolicyRegistry:
 
         assert get_thread_policy() == "outer"
         faultcore.set_thread_policy(None)
+
+    def test_register_policy_with_split_timeouts(self):
+        from unittest.mock import MagicMock, patch
+
+        faultcore.register_policy("split_timeouts", connect_timeout_ms=321, recv_timeout_ms=654)
+
+        mock_shm = MagicMock()
+        mock_shm.write_timeouts = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=612):
+
+                @faultcore.apply_policy("split_timeouts")
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_timeouts.assert_called_once_with(612, 321, 654)
+                mock_shm.clear.assert_called_once_with(612)
 
     def test_load_policies_from_json(self, tmp_path):
         file_path = tmp_path / "policies.json"

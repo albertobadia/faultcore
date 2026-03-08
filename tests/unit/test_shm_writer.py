@@ -63,6 +63,16 @@ class TestExports:
 
         assert callable(timeout)
 
+    def test_connect_timeout_is_exported(self):
+        from faultcore import connect_timeout
+
+        assert callable(connect_timeout)
+
+    def test_recv_timeout_is_exported(self):
+        from faultcore import recv_timeout
+
+        assert callable(recv_timeout)
+
     def test_jitter_is_exported(self):
         from faultcore import jitter
 

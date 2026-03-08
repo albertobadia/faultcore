@@ -4,6 +4,7 @@ from pathlib import Path
 from faultcore.decorator import (
     apply_policy,
     burst_loss,
+    connect_timeout,
     fault,
     get_thread_policy,
     jitter,
@@ -11,6 +12,7 @@ from faultcore.decorator import (
     load_policies,
     packet_loss,
     rate_limit,
+    recv_timeout,
     register_policy,
     set_thread_policy as _set_thread_policy,
     timeout,
@@ -59,6 +61,8 @@ def set_thread_policy(policy_name: str | None):
 
 __all__ = [
     "timeout",
+    "connect_timeout",
+    "recv_timeout",
     "latency",
     "jitter",
     "packet_loss",

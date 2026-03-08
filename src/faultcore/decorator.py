@@ -128,6 +128,20 @@ def timeout(timeout_ms: int):
     return decorator
 
 
+def connect_timeout(timeout_ms: int):
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
+        return FaultWrapper(func, timeouts=(timeout_ms, 0))
+
+    return decorator
+
+
+def recv_timeout(timeout_ms: int):
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
+        return FaultWrapper(func, timeouts=(0, timeout_ms))
+
+    return decorator
+
+
 def rate_limit(rate: str | int):
     def decorator(func: Callable[..., Any]) -> FaultWrapper:
         bps = _parse_rate(rate)
@@ -235,6 +249,8 @@ def register_policy(
     burst_loss_len: int | None = None,
     rate: str | int | float | None = None,
     timeout_ms: int | None = None,
+    connect_timeout_ms: int | None = None,
+    recv_timeout_ms: int | None = None,
 ) -> None:
     policy: dict[str, Any] = {}
     if latency_ms is not None:
@@ -253,6 +269,10 @@ def register_policy(
     if timeout_ms is not None:
         t = int(timeout_ms)
         policy["timeouts"] = (t, t)
+    if connect_timeout_ms is not None or recv_timeout_ms is not None:
+        connect_ms = int(connect_timeout_ms) if connect_timeout_ms is not None else 0
+        recv_ms = int(recv_timeout_ms) if recv_timeout_ms is not None else 0
+        policy["timeouts"] = (connect_ms, recv_ms)
     _POLICY_REGISTRY[name] = policy
 
 
@@ -292,6 +312,8 @@ def load_policies(path: str | Path) -> int:
             burst_loss_len=cfg.get("burst_loss_len"),
             rate=cfg.get("rate"),
             timeout_ms=cfg.get("timeout_ms"),
+            connect_timeout_ms=cfg.get("connect_timeout_ms"),
+            recv_timeout_ms=cfg.get("recv_timeout_ms"),
         )
         loaded += 1
     return loaded
