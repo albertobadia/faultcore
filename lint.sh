@@ -4,9 +4,6 @@
 
 set -e
 
-uv run cargo fmt
-uv run cargo clippy --all-targets --all-features -- -D warnings
-
 cd faultcore_network
 uv run cargo clippy --all-targets --all-features -- -D warnings
 

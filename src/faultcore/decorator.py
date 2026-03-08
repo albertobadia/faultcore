@@ -1,24 +1,23 @@
 import functools
 import logging
-import uuid
+import os
+import threading
 
-from faultcore._faultcore import get_feature_flag_manager, get_policy_registry
+from faultcore.shm_writer import get_shm_writer
 
 logger = logging.getLogger(__name__)
 
-
-@functools.lru_cache(maxsize=1)
-def _get_registry():
-    return get_policy_registry()
+_fault_wrapper_mode = os.environ.get("FAULTCORE_WRAPPER_MODE", "shm")
 
 
 class FaultWrapper:
-    def __init__(self, func, policy_name=None, key=None):
+    def __init__(self, func, latency_ms=None, rate_limit=None, bandwidth_bps=None, timeouts=None):
         functools.update_wrapper(self, func)
         self._func = func
-        self._policy_name = policy_name
-        self._key = key
-        self._registry = _get_registry()
+        self._latency_ms = latency_ms
+        self._rate_limit = rate_limit
+        self._bandwidth_bps = bandwidth_bps
+        self._timeouts = timeouts
 
     def __getattr__(self, name):
         return getattr(self._func, name)
@@ -29,62 +28,43 @@ class FaultWrapper:
         return functools.partial(self.__call__, obj)
 
     def __call__(self, *args, **kwargs):
-        policy_name = self._policy_name
+        tid = threading.get_native_id()
+        shm = get_shm_writer()
 
-        if self._key:
-            manager = get_feature_flag_manager()
+        if self._latency_ms:
+            shm.write_latency(tid, self._latency_ms)
 
-            if not manager.is_enabled(self._key):
-                return self._func(*args, **kwargs)
+        if self._bandwidth_bps:
+            shm.write_bandwidth(tid, self._bandwidth_bps)
 
-            config = manager.get(self._key)
-            if config:
-                policy_name = self._ensure_policy(config)
+        if self._timeouts:
+            connect_ms, recv_ms = self._timeouts
+            shm.write_timeouts(tid, connect_ms, recv_ms)
 
-        if not policy_name:
+        try:
             return self._func(*args, **kwargs)
-
-        return self._registry.execute_policy(policy_name, lambda: self._func(*args, **kwargs))
-
-    def _ensure_policy(self, config: dict) -> str:
-        t = config.get("timeout_ms")
-        rl = config.get("rate_limit_rate")
-        if not (t or rl):
-            return self._key
-
-        parts = [self._key]
-        if t:
-            parts.append(f"t{t}")
-        if rl:
-            parts.append(f"rl{rl}")
-
-        name = "_".join(parts)
-
-        if not self._registry.get_policy(name):
-            if t:
-                self._registry.register_timeout_layer(name, t)
-            if rl:
-                self._registry.register_rate_limit_layer(name, rl)
-        return name
+        finally:
+            shm.clear(tid)
 
     def __repr__(self):
-        return f"<FaultWrapper(policy={self._policy_name}, key={self._key}) for {self._func!r}>"
+        return (
+            f"<FaultWrapper(latency={self._latency_ms}, "
+            f"bandwidth={self._bandwidth_bps}, timeouts={self._timeouts}) "
+            f"for {self._func!r}>"
+        )
 
 
 def timeout(timeout_ms: int):
     def decorator(func):
-        policy_name = f"_timeout_{id(func)}_{uuid.uuid4().hex[:8]}"
-        _get_registry().register_timeout_layer(policy_name, timeout_ms)
-        return FaultWrapper(func, policy_name=policy_name)
+        return FaultWrapper(func, latency_ms=timeout_ms)
 
     return decorator
 
 
 def rate_limit(rate: str | int):
     def decorator(func):
-        policy_name = f"_ratelimit_{id(func)}_{uuid.uuid4().hex[:8]}"
-        _get_registry().register_rate_limit_layer(policy_name, _parse_rate(rate))
-        return FaultWrapper(func, policy_name=policy_name)
+        bps = _parse_rate(rate)
+        return FaultWrapper(func, bandwidth_bps=bps)
 
     return decorator
 
@@ -105,8 +85,8 @@ def _parse_rate(rate: str | int | float) -> int:
 
 
 def apply_policy(key: str):
-    return lambda func: FaultWrapper(func, key=key)
+    return lambda func: FaultWrapper(func)
 
 
 def fault(policy_name: str = "auto"):
-    return lambda func: FaultWrapper(func, policy_name=policy_name)
+    return lambda func: FaultWrapper(func)

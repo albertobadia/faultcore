@@ -1,9 +1,17 @@
 #!/bin/bash
 # Build script for faultcore
-# Builds the Rust extension and workspace
+# Builds the Python package and optionally the interceptor
 
 set -e
 
-uv run maturin develop --release
+echo "=== Building faultcore Python package ==="
+uv run python -m build
 
-uv run cargo build --workspace --release 
+echo "=== Building faultcore_interceptor ==="
+cd faultcore_interceptor
+cargo build --release
+cd ..
+
+echo "=== Build complete ==="
+echo "Python package: dist/"
+echo "Interceptor: faultcore_interceptor/target/release/libfaultcore_interceptor.so"

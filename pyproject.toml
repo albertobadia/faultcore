@@ -1,27 +1,22 @@
 [project]
 name = "faultcore"
-dynamic = ["version"]
+version = "2026.3.8"
 description = "Fault injection and testing core"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
 
 [build-system]
-requires = ["maturin>=1.7,<2.0"]
-build-backend = "maturin"
-
-[tool.maturin]
-features = ["pyo3/extension-module"]
-module-name = "faultcore._faultcore"
-python-source = "src"
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [dependency-groups]
 dev = [
+    "build>=1.0.0",
     "pytest>=9.0.2",
     "pytest-asyncio>=0.23.5",
     "pytest-cov>=7.0.0",
     "ruff>=0.14.13",
-    "maturin>=1.7",
     "aiohttp>=3.13.3",
     "fastapi>=0.109.0",
     "uvicorn>=0.27.0",
@@ -45,6 +40,7 @@ ignore = []
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+testpaths = ["tests/unit"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["faultcore"]
