@@ -217,6 +217,68 @@ class TestPacketLossDecorator:
             _parse_packet_loss("2000000ppm")
 
 
+class TestPolicyRegistry:
+    def test_apply_policy_uses_registered_policy(self):
+        from unittest.mock import MagicMock, patch
+
+        faultcore.register_policy("slow_link", latency_ms=50, packet_loss="1%", rate="2mbps", timeout_ms=20)
+
+        mock_shm = MagicMock()
+        mock_shm.write_latency = MagicMock()
+        mock_shm.write_packet_loss = MagicMock()
+        mock_shm.write_bandwidth = MagicMock()
+        mock_shm.write_timeouts = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=5150):
+
+                @faultcore.apply_policy("slow_link")
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_latency.assert_called_once_with(5150, 50)
+                mock_shm.write_packet_loss.assert_called_once_with(5150, 10_000)
+                mock_shm.write_bandwidth.assert_called_once_with(5150, 2_000_000)
+                mock_shm.write_timeouts.assert_called_once_with(5150, 20, 20)
+                mock_shm.clear.assert_called_once_with(5150)
+
+    def test_fault_auto_reads_thread_policy(self):
+        from unittest.mock import MagicMock, patch
+
+        faultcore.register_policy("auto_policy", packet_loss="0.1%")
+        faultcore.set_thread_policy("auto_policy")
+
+        mock_shm = MagicMock()
+        mock_shm.write_packet_loss = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=5151):
+
+                @faultcore.fault()
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_packet_loss.assert_called_once_with(5151, 1_000)
+                mock_shm.clear.assert_called_once_with(5151)
+
+        faultcore.set_thread_policy(None)
+
+    def test_fault_context_sets_and_restores_thread_policy(self):
+        faultcore.set_thread_policy("outer")
+        with faultcore.fault_context("inner"):
+            from faultcore.decorator import get_thread_policy
+
+            assert get_thread_policy() == "inner"
+        from faultcore.decorator import get_thread_policy
+
+        assert get_thread_policy() == "outer"
+        faultcore.set_thread_policy(None)
+
+
 class TestDecoratorMetadata:
     def test_decorator_preserves_function_name(self):
         @faultcore.timeout(1000)

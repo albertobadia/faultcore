@@ -9,6 +9,9 @@ from typing import Any
 
 from faultcore.shm_writer import get_shm_writer
 
+_POLICY_REGISTRY: dict[str, dict[str, Any]] = {}
+_THREAD_POLICY = threading.local()
+
 
 class FaultWrapper:
     def __init__(
@@ -165,16 +168,59 @@ def _parse_packet_loss(loss: str | int | float) -> int:
 
 def apply_policy(_key: str):
     def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        return FaultWrapper(func)
+        policy = _POLICY_REGISTRY.get(_key)
+        if policy is None:
+            return FaultWrapper(func)
+        return FaultWrapper(
+            func,
+            latency_ms=policy.get("latency_ms"),
+            packet_loss_ppm=policy.get("packet_loss_ppm"),
+            bandwidth_bps=policy.get("bandwidth_bps"),
+            timeouts=policy.get("timeouts"),
+        )
 
     return decorator
 
 
 def fault(_policy_name: str = "auto"):
     def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        return FaultWrapper(func)
+        name = _policy_name
+        if name == "auto":
+            name = get_thread_policy() or ""
+        if not name:
+            return FaultWrapper(func)
+        return apply_policy(name)(func)
 
     return decorator
+
+
+def register_policy(
+    name: str,
+    *,
+    latency_ms: int | None = None,
+    packet_loss: str | int | float | None = None,
+    rate: str | int | float | None = None,
+    timeout_ms: int | None = None,
+) -> None:
+    policy: dict[str, Any] = {}
+    if latency_ms is not None:
+        policy["latency_ms"] = int(latency_ms)
+    if packet_loss is not None:
+        policy["packet_loss_ppm"] = _parse_packet_loss(packet_loss)
+    if rate is not None:
+        policy["bandwidth_bps"] = _parse_rate(rate)
+    if timeout_ms is not None:
+        t = int(timeout_ms)
+        policy["timeouts"] = (t, t)
+    _POLICY_REGISTRY[name] = policy
+
+
+def set_thread_policy(policy_name: str | None) -> None:
+    _THREAD_POLICY.name = policy_name
+
+
+def get_thread_policy() -> str | None:
+    return getattr(_THREAD_POLICY, "name", None)
 
 
 def _run_sync_with_timeout(

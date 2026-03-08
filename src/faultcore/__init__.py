@@ -4,9 +4,12 @@ from pathlib import Path
 from faultcore.decorator import (
     apply_policy,
     fault,
+    get_thread_policy,
     latency,
     packet_loss,
     rate_limit,
+    register_policy,
+    set_thread_policy as _set_thread_policy,
     timeout,
 )
 
@@ -36,17 +39,19 @@ def get_interceptor_path() -> str | None:
 class fault_context:
     def __init__(self, policy_name: str | None = None, **_kwargs):
         self.policy_name = policy_name
-        self._token = None
+        self._previous: str | None = None
 
     def __enter__(self):
+        self._previous = get_thread_policy()
+        _set_thread_policy(self.policy_name)
         return self
 
     def __exit__(self, *_args):
-        pass
+        _set_thread_policy(self._previous)
 
 
 def set_thread_policy(policy_name: str | None):
-    pass
+    _set_thread_policy(policy_name)
 
 
 __all__ = [
@@ -54,6 +59,7 @@ __all__ = [
     "latency",
     "packet_loss",
     "rate_limit",
+    "register_policy",
     "apply_policy",
     "fault",
     "fault_context",
