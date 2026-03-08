@@ -46,6 +46,23 @@ def _build_direction_profile(
     return profile
 
 
+def _build_correlated_loss_profile(
+    *,
+    p_good_to_bad: str | int | float,
+    p_bad_to_good: str | int | float,
+    loss_good: str | int | float,
+    loss_bad: str | int | float,
+) -> dict[str, int]:
+    profile = {
+        "p_good_to_bad_ppm": _parse_packet_loss(p_good_to_bad),
+        "p_bad_to_good_ppm": _parse_packet_loss(p_bad_to_good),
+        "loss_good_ppm": _parse_packet_loss(loss_good),
+        "loss_bad_ppm": _parse_packet_loss(loss_bad),
+    }
+    profile["enabled"] = 1
+    return profile
+
+
 class FaultWrapper:
     def __init__(
         self,
@@ -58,6 +75,7 @@ class FaultWrapper:
         timeouts: tuple[int, int] | None = None,
         uplink_profile: dict[str, int] | None = None,
         downlink_profile: dict[str, int] | None = None,
+        correlated_loss_profile: dict[str, int] | None = None,
     ):
         functools.update_wrapper(self, func)
         self._func = func
@@ -69,6 +87,7 @@ class FaultWrapper:
         self._timeouts = timeouts
         self._uplink_profile = uplink_profile or {}
         self._downlink_profile = downlink_profile or {}
+        self._correlated_loss_profile = correlated_loss_profile or {}
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._func, name)
@@ -121,6 +140,16 @@ class FaultWrapper:
                 bandwidth_bps=self._downlink_profile.get("bandwidth_bps"),
             )
 
+        if self._correlated_loss_profile:
+            shm.write_correlated_loss(
+                tid,
+                enabled=bool(self._correlated_loss_profile.get("enabled", 0)),
+                p_good_to_bad_ppm=self._correlated_loss_profile.get("p_good_to_bad_ppm", 0),
+                p_bad_to_good_ppm=self._correlated_loss_profile.get("p_bad_to_good_ppm", 0),
+                loss_good_ppm=self._correlated_loss_profile.get("loss_good_ppm", 0),
+                loss_bad_ppm=self._correlated_loss_profile.get("loss_bad_ppm", 0),
+            )
+
         timeout_ms = self._timeouts[0] if self._timeouts else None
 
         if timeout_ms and timeout_ms > 0 and not iscoroutinefunction(self._func):
@@ -160,7 +189,8 @@ class FaultWrapper:
             f"bandwidth={self._bandwidth_bps}, "
             f"timeouts={self._timeouts}, "
             f"uplink={self._uplink_profile}, "
-            f"downlink={self._downlink_profile}) for {self._func!r}>"
+            f"downlink={self._downlink_profile}, "
+            f"correlated_loss={self._correlated_loss_profile}) for {self._func!r}>"
         )
 
 
@@ -287,6 +317,26 @@ def downlink(
     return decorator
 
 
+def correlated_loss(
+    *,
+    p_good_to_bad: str | int | float,
+    p_bad_to_good: str | int | float,
+    loss_good: str | int | float,
+    loss_bad: str | int | float,
+):
+    profile = _build_correlated_loss_profile(
+        p_good_to_bad=p_good_to_bad,
+        p_bad_to_good=p_bad_to_good,
+        loss_good=loss_good,
+        loss_bad=loss_bad,
+    )
+
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
+        return FaultWrapper(func, correlated_loss_profile=profile)
+
+    return decorator
+
+
 def _parse_rate(rate: str | int | float) -> int:
     if isinstance(rate, (int, float)):
         if rate < 0:
@@ -363,6 +413,7 @@ def apply_policy(_key: str):
             timeouts=policy.get("timeouts"),
             uplink_profile=policy.get("uplink_profile"),
             downlink_profile=policy.get("downlink_profile"),
+            correlated_loss_profile=policy.get("correlated_loss_profile"),
         )
 
     return decorator
@@ -393,6 +444,7 @@ def register_policy(
     recv_timeout_ms: int | None = None,
     uplink: dict[str, Any] | None = None,
     downlink: dict[str, Any] | None = None,
+    correlated_loss: dict[str, Any] | None = None,
 ) -> None:
     if not name:
         raise ValueError("policy name must be non-empty")
@@ -445,6 +497,15 @@ def register_policy(
             packet_loss=downlink.get("packet_loss"),
             burst_loss_len=downlink.get("burst_loss_len"),
             rate=downlink.get("rate"),
+        )
+    if correlated_loss is not None:
+        if not isinstance(correlated_loss, dict):
+            raise ValueError("correlated_loss must be a mapping when provided")
+        policy["correlated_loss_profile"] = _build_correlated_loss_profile(
+            p_good_to_bad=correlated_loss.get("p_good_to_bad", 0),
+            p_bad_to_good=correlated_loss.get("p_bad_to_good", 0),
+            loss_good=correlated_loss.get("loss_good", 0),
+            loss_bad=correlated_loss.get("loss_bad", 0),
         )
     with _POLICY_LOCK:
         _POLICY_REGISTRY[name] = policy
@@ -509,6 +570,7 @@ def load_policies(path: str | Path) -> int:
             recv_timeout_ms=cfg.get("recv_timeout_ms"),
             uplink=cfg.get("uplink"),
             downlink=cfg.get("downlink"),
+            correlated_loss=cfg.get("correlated_loss"),
         )
         loaded += 1
     return loaded

@@ -385,6 +385,38 @@ class TestDirectionalDecorators:
             faultcore.downlink()
 
 
+class TestCorrelatedLossDecorator:
+    def test_correlated_loss_writes_profile_to_shm(self):
+        from unittest.mock import MagicMock, patch
+
+        mock_shm = MagicMock()
+        mock_shm.write_correlated_loss = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=975):
+
+                @faultcore.correlated_loss(
+                    p_good_to_bad="1%",
+                    p_bad_to_good="20%",
+                    loss_good="0.1%",
+                    loss_bad="15%",
+                )
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_correlated_loss.assert_called_once_with(
+                    975,
+                    enabled=True,
+                    p_good_to_bad_ppm=10_000,
+                    p_bad_to_good_ppm=200_000,
+                    loss_good_ppm=1_000,
+                    loss_bad_ppm=150_000,
+                )
+                mock_shm.clear.assert_called_once_with(975)
+
+
 class TestPolicyRegistry:
     def test_apply_policy_uses_registered_policy(self):
         from unittest.mock import MagicMock, patch
@@ -518,6 +550,41 @@ class TestPolicyRegistry:
                 )
                 mock_shm.clear.assert_called_once_with(890)
 
+    def test_register_policy_with_correlated_loss_profile(self):
+        from unittest.mock import MagicMock, patch
+
+        faultcore.register_policy(
+            "ge_policy",
+            correlated_loss={
+                "p_good_to_bad": "2%",
+                "p_bad_to_good": "40%",
+                "loss_good": "0.2%",
+                "loss_bad": "18%",
+            },
+        )
+
+        mock_shm = MagicMock()
+        mock_shm.write_correlated_loss = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=891):
+
+                @faultcore.apply_policy("ge_policy")
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_correlated_loss.assert_called_once_with(
+                    891,
+                    enabled=True,
+                    p_good_to_bad_ppm=20_000,
+                    p_bad_to_good_ppm=400_000,
+                    loss_good_ppm=2_000,
+                    loss_bad_ppm=180_000,
+                )
+                mock_shm.clear.assert_called_once_with(891)
+
     def test_register_policy_rejects_invalid_values(self):
         with pytest.raises(ValueError):
             faultcore.register_policy("", latency_ms=1)
@@ -537,6 +604,8 @@ class TestPolicyRegistry:
             faultcore.register_policy("bad7", uplink="invalid")
         with pytest.raises(ValueError):
             faultcore.register_policy("bad8", downlink="invalid")
+        with pytest.raises(ValueError):
+            faultcore.register_policy("bad9", correlated_loss="invalid")
 
     def test_registry_introspection_and_unregister(self):
         from faultcore.decorator import clear_policies

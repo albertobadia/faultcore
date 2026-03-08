@@ -103,6 +103,11 @@ class TestExports:
 
         assert callable(downlink)
 
+    def test_correlated_loss_is_exported(self):
+        from faultcore import correlated_loss
+
+        assert callable(correlated_loss)
+
     def test_apply_policy_is_exported(self):
         from faultcore import apply_policy
 

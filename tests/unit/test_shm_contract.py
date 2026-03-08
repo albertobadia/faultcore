@@ -4,9 +4,9 @@ from faultcore.shm_writer import CONFIG_SIZE
 
 
 def test_faultcore_config_binary_layout_is_stable():
-    # magic (u32) + 18x u64 + reserved (u32) = 152 bytes
-    fmt = "<I" + ("Q" * 18) + "I"
-    assert struct.calcsize(fmt) == CONFIG_SIZE == 152
+    # magic (u32) + 23x u64 + reserved (u32) = 192 bytes
+    fmt = "<I" + ("Q" * 23) + "I"
+    assert struct.calcsize(fmt) == CONFIG_SIZE == 192
 
 
 def test_faultcore_config_offsets_are_stable():
@@ -30,9 +30,14 @@ def test_faultcore_config_offsets_are_stable():
         72,  # downlink_packet_loss_ppm
         73,  # downlink_burst_loss_len
         74,  # downlink_bandwidth_bps
+        80,  # ge_enabled
+        81,  # ge_p_good_to_bad_ppm
+        82,  # ge_p_bad_to_good_ppm
+        83,  # ge_loss_good_ppm
+        84,  # ge_loss_bad_ppm
         0,  # reserved
     )
-    blob = struct.pack("<I" + ("Q" * 18) + "I", *values)
+    blob = struct.pack("<I" + ("Q" * 23) + "I", *values)
 
     assert struct.unpack_from("<I", blob, 0)[0] == 0xFACC0DE
     assert struct.unpack_from("<Q", blob, 4)[0] == 2
@@ -53,4 +58,9 @@ def test_faultcore_config_offsets_are_stable():
     assert struct.unpack_from("<Q", blob, 124)[0] == 72
     assert struct.unpack_from("<Q", blob, 132)[0] == 73
     assert struct.unpack_from("<Q", blob, 140)[0] == 74
-    assert struct.unpack_from("<I", blob, 148)[0] == 0
+    assert struct.unpack_from("<Q", blob, 148)[0] == 80
+    assert struct.unpack_from("<Q", blob, 156)[0] == 81
+    assert struct.unpack_from("<Q", blob, 164)[0] == 82
+    assert struct.unpack_from("<Q", blob, 172)[0] == 83
+    assert struct.unpack_from("<Q", blob, 180)[0] == 84
+    assert struct.unpack_from("<I", blob, 188)[0] == 0

@@ -47,6 +47,11 @@ pub struct FaultcoreConfig {
     pub downlink_packet_loss_ppm: u64,
     pub downlink_burst_loss_len: u64,
     pub downlink_bandwidth_bps: u64,
+    pub ge_enabled: u64,
+    pub ge_p_good_to_bad_ppm: u64,
+    pub ge_p_bad_to_good_ppm: u64,
+    pub ge_loss_good_ppm: u64,
+    pub ge_loss_bad_ppm: u64,
     pub reserved: u32,
 }
 
@@ -78,6 +83,10 @@ impl FaultcoreConfig {
             && self.uplink_jitter_ns <= MAX_LATENCY_NS
             && self.downlink_latency_ns <= MAX_LATENCY_NS
             && self.downlink_jitter_ns <= MAX_LATENCY_NS
+            && self.ge_p_good_to_bad_ppm <= 1_000_000
+            && self.ge_p_bad_to_good_ppm <= 1_000_000
+            && self.ge_loss_good_ppm <= 1_000_000
+            && self.ge_loss_bad_ppm <= 1_000_000
     }
 
     pub fn into_network_config(self) -> faultcore_network::Config {
@@ -99,6 +108,11 @@ impl FaultcoreConfig {
             downlink_packet_loss_ppm: self.downlink_packet_loss_ppm,
             downlink_burst_loss_len: self.downlink_burst_loss_len,
             downlink_bandwidth_bps: self.downlink_bandwidth_bps,
+            ge_enabled: self.ge_enabled,
+            ge_p_good_to_bad_ppm: self.ge_p_good_to_bad_ppm,
+            ge_p_bad_to_good_ppm: self.ge_p_bad_to_good_ppm,
+            ge_loss_good_ppm: self.ge_loss_good_ppm,
+            ge_loss_bad_ppm: self.ge_loss_bad_ppm,
         }
     }
 }
@@ -279,6 +293,11 @@ mod tests {
             downlink_packet_loss_ppm: 0,
             downlink_burst_loss_len: 0,
             downlink_bandwidth_bps: 0,
+            ge_enabled: 0,
+            ge_p_good_to_bad_ppm: 0,
+            ge_p_bad_to_good_ppm: 0,
+            ge_loss_good_ppm: 0,
+            ge_loss_bad_ppm: 0,
             reserved: 0,
         };
         assert!(config.is_valid());
@@ -306,6 +325,11 @@ mod tests {
             downlink_packet_loss_ppm: 0,
             downlink_burst_loss_len: 0,
             downlink_bandwidth_bps: 0,
+            ge_enabled: 0,
+            ge_p_good_to_bad_ppm: 0,
+            ge_p_bad_to_good_ppm: 0,
+            ge_loss_good_ppm: 0,
+            ge_loss_bad_ppm: 0,
             reserved: 0,
         };
         assert!(!config.is_valid());
@@ -372,6 +396,11 @@ mod tests {
                 downlink_packet_loss_ppm: 0,
                 downlink_burst_loss_len: 0,
                 downlink_bandwidth_bps: 0,
+                ge_enabled: 0,
+                ge_p_good_to_bad_ppm: 0,
+                ge_p_bad_to_good_ppm: 0,
+                ge_loss_good_ppm: 0,
+                ge_loss_bad_ppm: 0,
                 reserved: 0,
             });
         }
@@ -400,6 +429,11 @@ mod tests {
             let downlink_packet_loss_ppm = ptr::read_unaligned(base.add(124) as *const u64);
             let downlink_burst_loss_len = ptr::read_unaligned(base.add(132) as *const u64);
             let downlink_bandwidth_bps = ptr::read_unaligned(base.add(140) as *const u64);
+            let ge_enabled = ptr::read_unaligned(base.add(148) as *const u64);
+            let ge_p_good_to_bad_ppm = ptr::read_unaligned(base.add(156) as *const u64);
+            let ge_p_bad_to_good_ppm = ptr::read_unaligned(base.add(164) as *const u64);
+            let ge_loss_good_ppm = ptr::read_unaligned(base.add(172) as *const u64);
+            let ge_loss_bad_ppm = ptr::read_unaligned(base.add(180) as *const u64);
             assert_eq!(magic, 0);
             assert_eq!(version, 0);
             assert_eq!(latency_ns, 0);
@@ -419,6 +453,11 @@ mod tests {
             assert_eq!(downlink_packet_loss_ppm, 0);
             assert_eq!(downlink_burst_loss_len, 0);
             assert_eq!(downlink_bandwidth_bps, 0);
+            assert_eq!(ge_enabled, 0);
+            assert_eq!(ge_p_good_to_bad_ppm, 0);
+            assert_eq!(ge_p_bad_to_good_ppm, 0);
+            assert_eq!(ge_loss_good_ppm, 0);
+            assert_eq!(ge_loss_bad_ppm, 0);
         }
 
         *SHM_POINTER.write() = prev_ptr;

@@ -23,6 +23,11 @@ pub struct Config {
     pub downlink_packet_loss_ppm: u64,
     pub downlink_burst_loss_len: u64,
     pub downlink_bandwidth_bps: u64,
+    pub ge_enabled: u64,
+    pub ge_p_good_to_bad_ppm: u64,
+    pub ge_p_bad_to_good_ppm: u64,
+    pub ge_loss_good_ppm: u64,
+    pub ge_loss_bad_ppm: u64,
 }
 
 impl Config {
@@ -44,6 +49,7 @@ impl Config {
             || self.downlink_packet_loss_ppm > 0
             || self.downlink_burst_loss_len > 0
             || self.downlink_bandwidth_bps > 0
+            || self.ge_enabled > 0
     }
 
     pub fn effective_for_send(&self) -> Self {
@@ -105,6 +111,11 @@ impl Config {
             downlink_packet_loss_ppm: self.downlink_packet_loss_ppm,
             downlink_burst_loss_len: self.downlink_burst_loss_len,
             downlink_bandwidth_bps: self.downlink_bandwidth_bps,
+            ge_enabled: self.ge_enabled,
+            ge_p_good_to_bad_ppm: self.ge_p_good_to_bad_ppm,
+            ge_p_bad_to_good_ppm: self.ge_p_bad_to_good_ppm,
+            ge_loss_good_ppm: self.ge_loss_good_ppm,
+            ge_loss_bad_ppm: self.ge_loss_bad_ppm,
         }
     }
 }

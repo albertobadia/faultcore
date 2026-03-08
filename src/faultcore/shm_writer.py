@@ -6,7 +6,7 @@ import threading
 FAULTCORE_MAGIC = 0xFACC0DE
 MAX_FDS = 131072
 MAX_TIDS = 65536
-CONFIG_SIZE = 152
+CONFIG_SIZE = 192
 
 _OFFSET_MAGIC = 0
 _OFFSET_VERSION = 4
@@ -27,6 +27,11 @@ _OFFSET_DOWNLINK_JITTER_NS = 116
 _OFFSET_DOWNLINK_PACKET_LOSS_PPM = 124
 _OFFSET_DOWNLINK_BURST_LOSS_LEN = 132
 _OFFSET_DOWNLINK_BANDWIDTH_BPS = 140
+_OFFSET_GE_ENABLED = 148
+_OFFSET_GE_P_GOOD_TO_BAD_PPM = 156
+_OFFSET_GE_P_BAD_TO_GOOD_PPM = 164
+_OFFSET_GE_LOSS_GOOD_PPM = 172
+_OFFSET_GE_LOSS_BAD_PPM = 180
 
 
 class SHMWriter:
@@ -147,6 +152,25 @@ class SHMWriter:
                 struct.pack_into("<Q", self._mmap, offset + _OFFSET_DOWNLINK_BURST_LOSS_LEN, burst_loss_len)
             if bandwidth_bps is not None:
                 struct.pack_into("<Q", self._mmap, offset + _OFFSET_DOWNLINK_BANDWIDTH_BPS, bandwidth_bps)
+
+        self._write_versioned(tid, writer)
+
+    def write_correlated_loss(
+        self,
+        tid: int,
+        *,
+        enabled: bool,
+        p_good_to_bad_ppm: int,
+        p_bad_to_good_ppm: int,
+        loss_good_ppm: int,
+        loss_bad_ppm: int,
+    ) -> None:
+        def writer(offset: int) -> None:
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_GE_ENABLED, 1 if enabled else 0)
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_GE_P_GOOD_TO_BAD_PPM, p_good_to_bad_ppm)
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_GE_P_BAD_TO_GOOD_PPM, p_bad_to_good_ppm)
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_GE_LOSS_GOOD_PPM, loss_good_ppm)
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_GE_LOSS_BAD_PPM, loss_bad_ppm)
 
         self._write_versioned(tid, writer)
 

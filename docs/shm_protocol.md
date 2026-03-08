@@ -11,7 +11,7 @@ Este documento define el contrato binario compartido entre:
   - Tabla de FDs + tabla hash de TIDs: `(MAX_FDS + MAX_TIDS) * CONFIG_SIZE`
   - En el interceptor además se reserva una región para `PolicyState`.
 
-## FaultcoreConfig (152 bytes)
+## FaultcoreConfig (192 bytes)
 - Endianness: little-endian
 - Layout fijo (packed)
 
@@ -36,11 +36,16 @@ Este documento define el contrato binario compartido entre:
 | `downlink_packet_loss_ppm` | 124 | 8 | `u64` |
 | `downlink_burst_loss_len` | 132 | 8 | `u64` |
 | `downlink_bandwidth_bps` | 140 | 8 | `u64` |
-| `reserved` | 148 | 4 | `u32` |
+| `ge_enabled` | 148 | 8 | `u64` |
+| `ge_p_good_to_bad_ppm` | 156 | 8 | `u64` |
+| `ge_p_bad_to_good_ppm` | 164 | 8 | `u64` |
+| `ge_loss_good_ppm` | 172 | 8 | `u64` |
+| `ge_loss_bad_ppm` | 180 | 8 | `u64` |
+| `reserved` | 188 | 4 | `u32` |
 
 Constantes:
 - `FAULTCORE_MAGIC = 0xFACC0DE`
-- `CONFIG_SIZE = 152`
+- `CONFIG_SIZE = 192`
 - `MAX_FDS = 131072`
 - `MAX_TIDS = 65536`
 

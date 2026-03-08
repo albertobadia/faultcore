@@ -82,6 +82,18 @@ Apply directional network profile for receive path (`recv`/`recvfrom`).
 Accepted keyword fields are the same as `uplink(...)`.
 Requires at least one field.
 
+### `correlated_loss(...)`
+
+Apply correlated packet loss using a two-state model (`GOOD`/`BAD`).
+
+Required keyword fields:
+- `p_good_to_bad`
+- `p_bad_to_good`
+- `loss_good`
+- `loss_bad`
+
+All values accept the same formats as `packet_loss(...)`.
+
 ### `rate_limit(rate: str | int)`
 
 Set bandwidth in bits per second (bps) internally.
@@ -135,6 +147,7 @@ register_policy(
     recv_timeout_ms: int | None = None,
     uplink: dict[str, Any] | None = None,
     downlink: dict[str, Any] | None = None,
+    correlated_loss: dict[str, Any] | None = None,
 ) -> None
 ```
 

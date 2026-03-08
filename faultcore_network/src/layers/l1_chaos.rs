@@ -1,11 +1,12 @@
 use crate::{Config, Layer, LayerResult};
 use parking_lot::Mutex;
 use rand::{Rng, SeedableRng, random, rngs::StdRng};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 
 pub struct L1Chaos {
     seeded_rng: Option<Mutex<StdRng>>,
     burst_remaining: AtomicU64,
+    ge_state: AtomicU8,
 }
 
 impl L1Chaos {
@@ -17,6 +18,7 @@ impl L1Chaos {
         Self {
             seeded_rng,
             burst_remaining: AtomicU64::new(0),
+            ge_state: AtomicU8::new(0),
         }
     }
 
@@ -24,6 +26,7 @@ impl L1Chaos {
         Self {
             seeded_rng: Some(Mutex::new(StdRng::seed_from_u64(seed))),
             burst_remaining: AtomicU64::new(0),
+            ge_state: AtomicU8::new(0),
         }
     }
 
@@ -39,13 +42,37 @@ impl L1Chaos {
         }
     }
 
-    fn should_drop(&self, packet_loss_ppm: u64) -> bool {
-        if packet_loss_ppm == 0 {
+    fn event_happens(&self, probability_ppm: u64) -> bool {
+        if probability_ppm == 0 {
             return false;
         }
-        let drop_threshold = 1_000_000.0 / packet_loss_ppm as f64;
-        let random = self.random_u32();
-        (random as f64) % drop_threshold < 1.0
+        if probability_ppm >= 1_000_000 {
+            return true;
+        }
+        let random = self.random_u32() % 1_000_000;
+        random < probability_ppm as u32
+    }
+
+    fn correlated_loss_ppm(&self, config: &Config) -> Option<u64> {
+        if config.ge_enabled == 0 {
+            return None;
+        }
+
+        let current_state = self.ge_state.load(Ordering::Acquire);
+        if current_state == 0 {
+            if self.event_happens(config.ge_p_good_to_bad_ppm) {
+                self.ge_state.store(1, Ordering::Release);
+            }
+        } else if self.event_happens(config.ge_p_bad_to_good_ppm) {
+            self.ge_state.store(0, Ordering::Release);
+        }
+
+        let state = self.ge_state.load(Ordering::Acquire);
+        if state == 1 {
+            Some(config.ge_loss_bad_ppm)
+        } else {
+            Some(config.ge_loss_good_ppm)
+        }
     }
 }
 
@@ -71,7 +98,10 @@ impl Layer for L1Chaos {
             return LayerResult::Drop;
         }
 
-        if self.should_drop(config.packet_loss_ppm) {
+        let effective_loss = self
+            .correlated_loss_ppm(config)
+            .unwrap_or(config.packet_loss_ppm);
+        if self.event_happens(effective_loss) {
             if config.burst_loss_len > 0 {
                 self.burst_remaining
                     .store(config.burst_loss_len.saturating_sub(1), Ordering::Release);
@@ -169,5 +199,35 @@ mod tests {
 
         assert!(matches!(layer.process(&cfg), LayerResult::Drop));
         assert_eq!(layer.burst_remaining.load(Ordering::Acquire), 3);
+    }
+
+    #[test]
+    fn correlated_loss_can_force_bad_state_and_drop() {
+        let layer = L1Chaos::with_seed(5);
+        let cfg = Config {
+            ge_enabled: 1,
+            ge_p_good_to_bad_ppm: 1_000_000,
+            ge_p_bad_to_good_ppm: 0,
+            ge_loss_good_ppm: 0,
+            ge_loss_bad_ppm: 1_000_000,
+            ..Default::default()
+        };
+
+        assert!(matches!(layer.process(&cfg), LayerResult::Drop));
+    }
+
+    #[test]
+    fn correlated_loss_in_good_state_can_avoid_drop() {
+        let layer = L1Chaos::with_seed(5);
+        let cfg = Config {
+            ge_enabled: 1,
+            ge_p_good_to_bad_ppm: 0,
+            ge_p_bad_to_good_ppm: 1_000_000,
+            ge_loss_good_ppm: 0,
+            ge_loss_bad_ppm: 1_000_000,
+            ..Default::default()
+        };
+
+        assert!(matches!(layer.process(&cfg), LayerResult::Continue));
     }
 }
