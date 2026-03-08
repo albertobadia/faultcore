@@ -415,6 +415,8 @@ pub extern "C" fn recvfrom(
     initialize();
     let result = if let Some((error, _)) = apply_chaos_from_shm(s, l as u64, false, false) {
         error
+    } else if let Some(error) = apply_timeout_recv(s) {
+        error
     } else {
         unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) }
     };
