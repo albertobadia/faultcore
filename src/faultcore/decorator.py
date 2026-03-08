@@ -323,6 +323,21 @@ def clear_policies() -> None:
     _POLICY_REGISTRY.clear()
 
 
+def list_policies() -> list[str]:
+    return sorted(_POLICY_REGISTRY.keys())
+
+
+def get_policy(name: str) -> dict[str, Any] | None:
+    policy = _POLICY_REGISTRY.get(name)
+    if policy is None:
+        return None
+    return dict(policy)
+
+
+def unregister_policy(name: str) -> bool:
+    return _POLICY_REGISTRY.pop(name, None) is not None
+
+
 def load_policies(path: str | Path) -> int:
     p = Path(path)
     ext = p.suffix.lower()

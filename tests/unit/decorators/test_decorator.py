@@ -433,6 +433,21 @@ class TestPolicyRegistry:
         with pytest.raises(ValueError):
             faultcore.register_policy("bad6", rate=-1)
 
+    def test_registry_introspection_and_unregister(self):
+        from faultcore.decorator import clear_policies
+
+        clear_policies()
+        faultcore.register_policy("b_policy", latency_ms=2)
+        faultcore.register_policy("a_policy", latency_ms=1)
+
+        assert faultcore.list_policies() == ["a_policy", "b_policy"]
+        assert faultcore.get_policy("a_policy") == {"latency_ms": 1}
+        assert faultcore.get_policy("missing") is None
+
+        assert faultcore.unregister_policy("a_policy") is True
+        assert faultcore.unregister_policy("a_policy") is False
+        assert faultcore.list_policies() == ["b_policy"]
+
     def test_load_policies_from_json(self, tmp_path):
         file_path = tmp_path / "policies.json"
         file_path.write_text(

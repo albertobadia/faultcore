@@ -103,6 +103,21 @@ class TestExports:
 
         assert callable(register_policy)
 
+    def test_list_policies_is_exported(self):
+        from faultcore import list_policies
+
+        assert callable(list_policies)
+
+    def test_get_policy_is_exported(self):
+        from faultcore import get_policy
+
+        assert callable(get_policy)
+
+    def test_unregister_policy_is_exported(self):
+        from faultcore import unregister_policy
+
+        assert callable(unregister_policy)
+
     def test_load_policies_is_exported(self):
         from faultcore import load_policies
 
