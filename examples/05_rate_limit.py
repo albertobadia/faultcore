@@ -4,7 +4,7 @@ import time
 from faultcore import rate_limit
 
 
-@rate_limit(rate=5.0, capacity=2)
+@rate_limit(rate=5.0)
 def limited_api_call():
     return "API Response"
 
@@ -19,21 +19,20 @@ if __name__ == "__main__":
     print(" Rate Limit Examples ".center(60, "="))
     print("=" * 60 + "\n")
 
-    print("--- Sync Rate Limit (5 req/s, burst of 2) ---")
+    print("--- Sync Rate Limit (5 requests/second) ---")
     start = time.time()
     for i in range(8):
         req_start = time.time()
         try:
-            result = limited_api_call()
+            limited_api_call()
             duration = (time.time() - req_start) * 1000
             print(f"Request {i + 1}: {duration:6.2f}ms")
         except Exception as e:
-            duration = (time.time() - req_start) * 1000
-            print(f"Request {i + 1}: REJECTED - {e}")
+            print(f"Request {i + 1}: ERROR - {e}")
     total = time.time() - start
-    print(f"Total time: {total:.2f}s (expected ~1.2s)\n")
+    print(f"Total time: {total:.2f}s\n")
 
-    print("--- Async Rate Limit (5 req/s) ---")
+    print("--- Async Rate Limit (5 requests/second) ---")
 
     async def run_async_calls():
         start = time.time()

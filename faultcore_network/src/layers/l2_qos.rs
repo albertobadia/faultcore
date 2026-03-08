@@ -109,7 +109,7 @@ mod tests {
         let qos = Arc::new(L2QoS::new(1000, 2000.0));
         let handles: Vec<_> = (0..10)
             .map(|_| {
-                let qos_clone = qos.clone();
+                let qos_clone = Arc::clone(&qos);
                 thread::spawn(move || {
                     for _ in 0..100 {
                         qos_clone.try_acquire(10);

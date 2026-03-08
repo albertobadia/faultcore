@@ -1,33 +1,34 @@
 import functools
-import logging
-import os
 import threading
+from collections.abc import Callable
+from typing import Any
 
 from faultcore.shm_writer import get_shm_writer
 
-logger = logging.getLogger(__name__)
-
-_fault_wrapper_mode = os.environ.get("FAULTCORE_WRAPPER_MODE", "shm")
-
 
 class FaultWrapper:
-    def __init__(self, func, latency_ms=None, rate_limit=None, bandwidth_bps=None, timeouts=None):
+    def __init__(
+        self,
+        func: Callable[..., Any],
+        latency_ms: int | None = None,
+        bandwidth_bps: int | None = None,
+        timeouts: tuple[int, int] | None = None,
+    ):
         functools.update_wrapper(self, func)
         self._func = func
         self._latency_ms = latency_ms
-        self._rate_limit = rate_limit
         self._bandwidth_bps = bandwidth_bps
         self._timeouts = timeouts
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> Any:
         return getattr(self._func, name)
 
-    def __get__(self, obj, objtype=None):
+    def __get__(self, obj: Any, objtype: type | None = None) -> Any:
         if obj is None:
             return self
         return functools.partial(self.__call__, obj)
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
         tid = threading.get_native_id()
         shm = get_shm_writer()
 
@@ -48,21 +49,22 @@ class FaultWrapper:
 
     def __repr__(self):
         return (
-            f"<FaultWrapper(latency={self._latency_ms}, "
-            f"bandwidth={self._bandwidth_bps}, timeouts={self._timeouts}) "
-            f"for {self._func!r}>"
+            "<FaultWrapper("
+            f"latency={self._latency_ms}, "
+            f"bandwidth={self._bandwidth_bps}, "
+            f"timeouts={self._timeouts}) for {self._func!r}>"
         )
 
 
 def timeout(timeout_ms: int):
-    def decorator(func):
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
         return FaultWrapper(func, latency_ms=timeout_ms)
 
     return decorator
 
 
 def rate_limit(rate: str | int):
-    def decorator(func):
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
         bps = _parse_rate(rate)
         return FaultWrapper(func, bandwidth_bps=bps)
 
@@ -84,9 +86,15 @@ def _parse_rate(rate: str | int | float) -> int:
     return int(float(r))
 
 
-def apply_policy(key: str):
-    return lambda func: FaultWrapper(func)
+def apply_policy(_key: str):
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
+        return FaultWrapper(func)
+
+    return decorator
 
 
-def fault(policy_name: str = "auto"):
-    return lambda func: FaultWrapper(func)
+def fault(_policy_name: str = "auto"):
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
+        return FaultWrapper(func)
+
+    return decorator

@@ -2,7 +2,6 @@ use faultcore_network::{ChaosEngine, LayerResult};
 use libc::{c_int, c_short, c_void, pollfd, size_t, sockaddr, socklen_t, ssize_t};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
@@ -22,7 +21,7 @@ struct TimeoutState {
 
 thread_local! {
     static TIMEOUT_STATE: RefCell<Option<TimeoutState>> = const { RefCell::new(None) };
-    static LATENCY_START: RefCell<Mutex<HashMap<c_int, Instant>>> = RefCell::new(Mutex::new(HashMap::new()));
+    static LATENCY_START: RefCell<HashMap<c_int, Instant>> = RefCell::new(HashMap::new());
 }
 
 type SendFn = unsafe extern "C" fn(c_int, *const c_void, size_t, c_int) -> ssize_t;
@@ -155,15 +154,14 @@ fn apply_chaos_from_shm(fd: c_int, bytes: u64, is_send: bool, is_connect: bool) 
             if is_non_blocking(fd) && !is_connect {
                 let mut elapsed = false;
                 LATENCY_START.with(|cell| {
-                    let binding = cell.borrow_mut();
-                    let mut m = binding.lock().unwrap();
-                    if let Some(start) = m.get(&fd) {
+                    let mut latency_start = cell.borrow_mut();
+                    if let Some(start) = latency_start.get(&fd) {
                         if start.elapsed().as_nanos() >= latency_ns as u128 {
                             elapsed = true;
-                            m.remove(&fd);
+                            latency_start.remove(&fd);
                         }
                     } else {
-                        m.insert(fd, Instant::now());
+                        latency_start.insert(fd, Instant::now());
                     }
                 });
 
@@ -334,14 +332,14 @@ pub extern "C" fn send(s: c_int, b: *const c_void, l: size_t, f: c_int) -> ssize
     }
 
     initialize();
-    let res = if let Some(e) = apply_chaos_from_shm(s, l as u64, true, false) {
-        e
+    let result = if let Some(error) = apply_chaos_from_shm(s, l as u64, true, false) {
+        error
     } else {
         unsafe { (ORIG_SEND)(s, b, l, f) }
     };
 
     exit_hook();
-    res
+    result
 }
 
 #[unsafe(no_mangle)]
@@ -351,16 +349,16 @@ pub extern "C" fn recv(s: c_int, b: *mut c_void, l: size_t, f: c_int) -> ssize_t
     }
 
     initialize();
-    let res = if let Some(e) = apply_chaos_from_shm(s, l as u64, false, false) {
-        e
-    } else if let Some(e) = apply_timeout_recv(s) {
-        e
+    let result = if let Some(error) = apply_chaos_from_shm(s, l as u64, false, false) {
+        error
+    } else if let Some(error) = apply_timeout_recv(s) {
+        error
     } else {
         unsafe { (ORIG_RECV)(s, b, l, f) }
     };
 
     exit_hook();
-    res
+    result
 }
 
 #[unsafe(no_mangle)]
@@ -373,19 +371,19 @@ pub extern "C" fn connect(s: c_int, a: *const sockaddr, l: socklen_t) -> c_int {
     let tid = shm::get_thread_id() as usize;
     shm::assign_rule_to_fd(s, tid);
 
-    let res = if let Some(e) = apply_chaos_from_shm(s, 0, true, true) {
-        if e == -1 && get_errno() != libc::EAGAIN {
+    let result = if let Some(error) = apply_chaos_from_shm(s, 0, true, true) {
+        if error == -1 && get_errno() != libc::EAGAIN {
             set_errno(libc::ECONNREFUSED);
         }
-        e as c_int
-    } else if let Some(e) = apply_timeout_connect(s, a, l) {
-        e
+        error as c_int
+    } else if let Some(timeout_result) = apply_timeout_connect(s, a, l) {
+        timeout_result
     } else {
         unsafe { (ORIG_CONNECT)(s, a, l) }
     };
 
     exit_hook();
-    res
+    result
 }
 
 #[unsafe(no_mangle)]
@@ -402,14 +400,14 @@ pub extern "C" fn sendto(
     }
 
     initialize();
-    let res = if let Some(e) = apply_chaos_from_shm(s, l as u64, true, false) {
-        e
+    let result = if let Some(error) = apply_chaos_from_shm(s, l as u64, true, false) {
+        error
     } else {
         unsafe { (ORIG_SENDTO)(s, b, l, f, addr, addr_len) }
     };
 
     exit_hook();
-    res
+    result
 }
 
 #[unsafe(no_mangle)]
@@ -426,14 +424,14 @@ pub extern "C" fn recvfrom(
     }
 
     initialize();
-    let res = if let Some(e) = apply_chaos_from_shm(s, l as u64, false, false) {
-        e
+    let result = if let Some(error) = apply_chaos_from_shm(s, l as u64, false, false) {
+        error
     } else {
         unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) }
     };
 
     exit_hook();
-    res
+    result
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn setpriority(which: c_int, who: c_int, prio: c_int) -> c_int {

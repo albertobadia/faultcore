@@ -19,7 +19,7 @@ pub fn get_thread_id() -> u64 {
 
 pub const FAULTCORE_MAGIC: u32 = 0xFACC0DE;
 pub const MAX_FDS: usize = 131072;
-pub const MAX_TIDS: usize = 65536; // Increased to match core
+pub const MAX_TIDS: usize = 65536;
 pub const MAX_POLICIES: usize = 1024;
 pub const FAULTCORE_SHM_SIZE: usize = ((MAX_FDS + MAX_TIDS)
     * std::mem::size_of::<FaultcoreConfig>())
@@ -143,7 +143,6 @@ pub(crate) unsafe fn get_config_ptr(
     unsafe {
         let array = ptr_val as *mut FaultcoreConfig;
         let idx = if is_tid {
-            // Match the hash in faultcore_core
             let hash = (tid_or_fd ^ (tid_or_fd >> 16)).wrapping_mul(0x45d9f3b) ^ (tid_or_fd >> 16);
             MAX_FDS + (hash % MAX_TIDS)
         } else {
@@ -167,7 +166,6 @@ pub fn get_config_for_fd(fd: c_int) -> Option<FaultcoreConfig> {
 
     unsafe {
         if let Some(config_ptr) = get_config_ptr(fd as usize, false) {
-            // Sequence lock: retry read if version changes or is odd
             for _ in 0..10 {
                 let v1 = ptr::read_volatile(&(*config_ptr).version);
                 if v1 % 2 != 0 {
@@ -245,7 +243,6 @@ mod tests {
             std::env::set_var("FAULTCORE_CONFIG_SHM", &shm_name);
         }
 
-        // Manually create SHM for the test
         let name_cstr = std::ffi::CString::new(shm_name).unwrap();
         unsafe {
             let fd = libc::shm_open(name_cstr.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o600);
@@ -256,7 +253,6 @@ mod tests {
 
         let _ = try_open_shm();
 
-        // TIDs that collide given MAX_TIDS = 8192
         let tid1 = 0;
         let tid2 = MAX_TIDS;
 
@@ -264,8 +260,6 @@ mod tests {
             let ptr1 = get_config_ptr(tid1, true);
             let ptr2 = get_config_ptr(tid2, true);
 
-            // This SHOULD be different (no collision), but it currently collides.
-            // We use assert_ne! so the test FAILS when the bug exists.
             assert_ne!(
                 ptr1, ptr2,
                 "TIDs {} and {} incorrectly collide in SHM mapping",

@@ -1,10 +1,7 @@
-import logging
 import mmap
 import os
 import struct
 import threading
-
-logger = logging.getLogger(__name__)
 
 FAULTCORE_MAGIC = 0xFACC0DE
 MAX_FDS = 131072
@@ -43,7 +40,7 @@ class SHMWriter:
         idx = MAX_FDS + (hash_val % MAX_TIDS)
         return idx * CONFIG_SIZE
 
-    def write_latency(self, tid: int, latency_ms: int) -> None:
+    def _write_versioned(self, tid: int, writer) -> None:
         if not self._is_available():
             return
 
@@ -52,61 +49,34 @@ class SHMWriter:
         with self._lock:
             version = struct.unpack_from("<Q", self._mmap, offset + _OFFSET_VERSION)[0]
             struct.pack_into("<Q", self._mmap, offset + _OFFSET_VERSION, version | 1)
-
             struct.pack_into("<I", self._mmap, offset + _OFFSET_MAGIC, FAULTCORE_MAGIC)
+            writer(offset)
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_VERSION, (version + 2) & ~1)
+
+    def write_latency(self, tid: int, latency_ms: int) -> None:
+        def writer(offset: int) -> None:
             struct.pack_into("<Q", self._mmap, offset + _OFFSET_LATENCY_NS, latency_ms * 1_000_000)
 
-            new_version = (version + 2) & ~1
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_VERSION, new_version)
+        self._write_versioned(tid, writer)
 
     def write_packet_loss(self, tid: int, ppm: int) -> None:
-        if not self._is_available():
-            return
-
-        offset = self._get_offset(tid)
-
-        with self._lock:
-            version = struct.unpack_from("<Q", self._mmap, offset + _OFFSET_VERSION)[0]
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_VERSION, version | 1)
-
-            struct.pack_into("<I", self._mmap, offset + _OFFSET_MAGIC, FAULTCORE_MAGIC)
+        def writer(offset: int) -> None:
             struct.pack_into("<Q", self._mmap, offset + _OFFSET_PACKET_LOSS_PPM, ppm)
 
-            new_version = (version + 2) & ~1
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_VERSION, new_version)
+        self._write_versioned(tid, writer)
 
     def write_bandwidth(self, tid: int, bps: int) -> None:
-        if not self._is_available():
-            return
-
-        offset = self._get_offset(tid)
-
-        with self._lock:
-            version = struct.unpack_from("<Q", self._mmap, offset + _OFFSET_VERSION)[0]
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_VERSION, version | 1)
-
-            struct.pack_into("<I", self._mmap, offset + _OFFSET_MAGIC, FAULTCORE_MAGIC)
+        def writer(offset: int) -> None:
             struct.pack_into("<Q", self._mmap, offset + _OFFSET_BANDWIDTH_BPS, bps)
 
-            new_version = (version + 2) & ~1
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_VERSION, new_version)
+        self._write_versioned(tid, writer)
 
     def write_timeouts(self, tid: int, connect_ms: int, recv_ms: int) -> None:
-        if not self._is_available():
-            return
-
-        offset = self._get_offset(tid)
-
-        with self._lock:
-            version = struct.unpack_from("<Q", self._mmap, offset + _OFFSET_VERSION)[0]
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_VERSION, version | 1)
-
-            struct.pack_into("<I", self._mmap, offset + _OFFSET_MAGIC, FAULTCORE_MAGIC)
+        def writer(offset: int) -> None:
             struct.pack_into("<Q", self._mmap, offset + _OFFSET_CONNECT_TIMEOUT_MS, connect_ms)
             struct.pack_into("<Q", self._mmap, offset + _OFFSET_RECV_TIMEOUT_MS, recv_ms)
 
-            new_version = (version + 2) & ~1
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_VERSION, new_version)
+        self._write_versioned(tid, writer)
 
     def clear(self, tid: int) -> None:
         if not self._is_available():
@@ -125,10 +95,10 @@ class SHMWriter:
             os.close(self._fd)
             self._fd = None
 
-    def __enter__(self):
+    def __enter__(self) -> "SHMWriter":
         return self
 
-    def __exit__(self, *args):
+    def __exit__(self, *_args: object) -> None:
         self.close()
 
 
