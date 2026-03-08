@@ -1,9 +1,11 @@
 use crate::system::shm;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 pub struct ShmPolicyRegistry {
     name_to_idx: Arc<Mutex<HashMap<String, usize>>>,
+    next_idx: Arc<AtomicUsize>,
 }
 
 impl Default for ShmPolicyRegistry {
@@ -16,13 +18,14 @@ impl ShmPolicyRegistry {
     pub fn new() -> Self {
         Self {
             name_to_idx: Arc::new(Mutex::new(HashMap::new())),
+            next_idx: Arc::new(AtomicUsize::new(0)),
         }
     }
 
     pub fn register_policy(&self, name: &str, enabled: bool) {
         let mut map = self.name_to_idx.lock().unwrap();
         if !map.contains_key(name) {
-            let idx = map.len();
+            let idx = self.next_idx.fetch_add(1, Ordering::Relaxed);
             if idx < shm::MAX_POLICIES {
                 map.insert(name.to_string(), idx);
                 let _ = shm::write_policy_state(idx, name, enabled, 0, 0);
