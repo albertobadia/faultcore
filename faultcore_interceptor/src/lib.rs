@@ -137,7 +137,6 @@ fn is_non_blocking(fd: c_int) -> bool {
 
 fn apply_chaos_from_shm(fd: c_int, bytes: u64, is_send: bool, is_connect: bool) -> Option<isize> {
     let config = shm::get_config_for_fd(fd)?;
-
     let network_config = config.into_network_config();
 
     let result = if is_send {
@@ -147,20 +146,17 @@ fn apply_chaos_from_shm(fd: c_int, bytes: u64, is_send: bool, is_connect: bool) 
     };
 
     match result {
-        LayerResult::Drop => return Some(0),
-        LayerResult::Error(_) => return Some(0),
-        LayerResult::Timeout(_timeout_ms) => {
+        LayerResult::Drop | LayerResult::Error(_) => return Some(0),
+        LayerResult::Timeout(_) => {
             set_errno(libc::ETIMEDOUT);
             return Some(-1);
         }
         LayerResult::Delay(latency_ns) => {
-            let non_blocking = is_non_blocking(fd);
-
-            if non_blocking && !is_connect {
+            if is_non_blocking(fd) && !is_connect {
                 let mut elapsed = false;
                 LATENCY_START.with(|cell| {
-                    let guard = cell.borrow_mut();
-                    let mut m = guard.lock().unwrap();
+                    let binding = cell.borrow_mut();
+                    let mut m = binding.lock().unwrap();
                     if let Some(start) = m.get(&fd) {
                         if start.elapsed().as_nanos() >= latency_ns as u128 {
                             elapsed = true;
@@ -441,10 +437,14 @@ pub extern "C" fn recvfrom(
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn setpriority(which: c_int, who: c_int, prio: c_int) -> c_int {
-    if which == FAULTCORE_SETPRIORITY_LATENCY
-        || which == FAULTCORE_SETPRIORITY_BANDWIDTH
-        || which == FAULTCORE_SETPRIORITY_TIMEOUT
-    {
+    let is_faultcore = matches!(
+        which,
+        FAULTCORE_SETPRIORITY_LATENCY
+            | FAULTCORE_SETPRIORITY_BANDWIDTH
+            | FAULTCORE_SETPRIORITY_TIMEOUT
+    );
+
+    if is_faultcore {
         let tid = shm::get_thread_id() as usize;
         if let Some(p) = unsafe { shm::get_config_ptr(tid, true) } {
             let mut config = unsafe { p.read() };

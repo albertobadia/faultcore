@@ -22,27 +22,26 @@ fn classify_exception(exc: &Bound<'_, PyAny>) -> String {
         .get_type()
         .name()
         .map(|n| n.to_string())
-        .unwrap_or_else(|_| "Transient".into());
-    let name_lower = name.to_lowercase();
+        .unwrap_or_else(|_| "Transient".into())
+        .to_lowercase();
 
-    match name_lower.as_str() {
-        n if n.contains("timeout") || n.contains("timedout") => "Timeout".into(),
-        n if n.contains("rate") && (n.contains("limit") || n.contains("throttle")) => {
-            "RateLimit".into()
-        }
-        n if [
-            "connection",
-            "network",
-            "remote",
-            "disconnected",
-            "protocol",
-        ]
-        .iter()
-        .any(|&s| n.contains(s)) =>
-        {
-            "Network".into()
-        }
-        _ => "Transient".into(),
+    if name.contains("timeout") || name.contains("timedout") {
+        "Timeout".into()
+    } else if name.contains("rate") && (name.contains("limit") || name.contains("throttle")) {
+        "RateLimit".into()
+    } else if [
+        "connection",
+        "network",
+        "remote",
+        "disconnected",
+        "protocol",
+    ]
+    .iter()
+    .any(|&s| name.contains(s))
+    {
+        "Network".into()
+    } else {
+        "Transient".into()
     }
 }
 

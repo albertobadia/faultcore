@@ -47,11 +47,20 @@ class FaultWrapper:
         return self._registry.execute_policy(policy_name, lambda: self._func(*args, **kwargs))
 
     def _ensure_policy(self, config: dict) -> str:
-        t, rl = config.get("timeout_ms"), config.get("rate_limit_rate")
+        t = config.get("timeout_ms")
+        rl = config.get("rate_limit_rate")
         if not (t or rl):
             return self._key
 
-        name = f"{self._key}_{f't{t}' if t else ''}_{f'rl{rl}' if rl else ''}".strip("_")
+        # Generate a unique policy name based on parameters
+        parts = [self._key]
+        if t:
+            parts.append(f"t{t}")
+        if rl:
+            parts.append(f"rl{rl}")
+
+        name = "_".join(parts)
+
         if not self._registry.get_policy(name):
             if t:
                 self._registry.register_timeout_layer(name, t)

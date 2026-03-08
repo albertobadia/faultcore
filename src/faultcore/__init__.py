@@ -41,17 +41,20 @@ def is_interceptor_loaded() -> bool:
     try:
         import ctypes
 
-        handle = ctypes.CDLL(None)
-        return hasattr(handle, "faultcore_interceptor_is_active")
+        return hasattr(ctypes.CDLL(None), "faultcore_interceptor_is_active")
     except Exception:
         return "LD_PRELOAD" in os.environ
 
 
 def get_interceptor_path() -> str | None:
-    lib = "libfaultcore_interceptor.so"
-    for base in [Path.cwd(), Path(__file__).parent.parent]:
-        for sub in ["", "target/release", "target/debug"]:
-            path = base / sub / lib
+    lib_name = "libfaultcore_interceptor.so"
+    # Search in current directory and package parent
+    search_dirs = [Path.cwd(), Path(__file__).parent.parent]
+    sub_dirs = ["", "target/release", "target/debug"]
+
+    for base in search_dirs:
+        for sub in sub_dirs:
+            path = base / sub / lib_name
             if path.exists():
                 return str(path)
     return None

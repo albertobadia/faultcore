@@ -221,4 +221,40 @@ mod tests {
         };
         assert!(!config.is_valid());
     }
+
+    #[test]
+    fn test_tid_collision() {
+        let shm_name = format!("/faultcore_test_{}_config", unsafe { libc::getpid() });
+        unsafe {
+            std::env::set_var("FAULTCORE_CONFIG_SHM", &shm_name);
+        }
+
+        // Manually create SHM for the test
+        let name_cstr = std::ffi::CString::new(shm_name).unwrap();
+        unsafe {
+            let fd = libc::shm_open(name_cstr.as_ptr(), libc::O_CREAT | libc::O_RDWR, 0o600);
+            assert!(fd >= 0);
+            libc::ftruncate(fd, FAULTCORE_SHM_SIZE as i64);
+            libc::close(fd);
+        }
+
+        let _ = try_open_shm();
+
+        // TIDs that collide given MAX_TIDS = 8192
+        let tid1 = 0;
+        let tid2 = MAX_TIDS;
+
+        unsafe {
+            let ptr1 = get_config_ptr(tid1, true);
+            let ptr2 = get_config_ptr(tid2, true);
+
+            // This SHOULD be different (no collision), but it currently collides.
+            // We use assert_ne! so the test FAILS when the bug exists.
+            assert_ne!(
+                ptr1, ptr2,
+                "TIDs {} and {} incorrectly collide in SHM mapping",
+                tid1, tid2
+            );
+        }
+    }
 }

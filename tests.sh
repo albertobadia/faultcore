@@ -41,10 +41,21 @@ HTTP_PID=$!
 # Wait for servers to be ready
 echo "Waiting for servers to start..."
 sleep 2
+# Set environment for unit tests
+export PYO3_PYTHON="$PWD/.venv/bin/python"
+# Found this path earlier to fix libpython3.10.so.1.0 missing error
+PYTHON_LIB_PATH="/home/bctm/.local/share/uv/python/cpython-3.10.19-linux-aarch64-gnu/lib"
+if [ -d "$PYTHON_LIB_PATH" ]; then
+    export LD_LIBRARY_PATH="$PYTHON_LIB_PATH:$LD_LIBRARY_PATH"
+fi
+
+# Run unittests
+echo "Running unit tests..."
+cargo test --all
 
 # Run pytest with the interceptor (using python directly to ensure env vars are passed)
 PYTEST=".venv/bin/python -m pytest"
-echo "Running tests with interceptor..."
+echo "Running integration tests with interceptor..."
 # Run full suite including integration tests (but only the ones in tests/ directory)
 LD_PRELOAD="$INTERCEPTOR" $PYTEST tests/ -v -s
 

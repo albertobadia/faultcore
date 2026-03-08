@@ -97,3 +97,30 @@ impl Layer for L2QoS {
         "L2_QoS"
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::thread;
+
+    #[test]
+    fn test_qos_refill_concurrency() {
+        let qos = Arc::new(L2QoS::new(1000, 2000.0));
+        let handles: Vec<_> = (0..10)
+            .map(|_| {
+                let qos_clone = qos.clone();
+                thread::spawn(move || {
+                    for _ in 0..100 {
+                        qos_clone.try_acquire(10);
+                        thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    }
+}

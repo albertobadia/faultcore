@@ -288,3 +288,53 @@ pub fn update_policy_metrics(idx: usize, success: bool) -> Result<(), String> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread;
+
+    #[test]
+    fn test_shm_atomic_consistency() {
+        create_shm().unwrap();
+        let tid = 1234;
+
+        let writer = thread::spawn(move || {
+            for i in 0..1000000 {
+                unsafe {
+                    if let Some(config_ptr) = get_config_ptr(tid as usize, true) {
+                        let mut cfg = config_ptr.read();
+                        cfg.magic = FAULTCORE_MAGIC;
+                        cfg.latency_ns = i * 1_000_000;
+                        cfg.packet_loss_ppm = i;
+                        cfg.bandwidth_bps = i;
+                        config_ptr.write(cfg);
+                    }
+                }
+            }
+        });
+
+        let reader = thread::spawn(move || {
+            for _ in 0..10000000 {
+                unsafe {
+                    if let Some(ptr) = get_config_ptr(tid as usize, true) {
+                        let cfg = ptr.read();
+                        if cfg.magic == FAULTCORE_MAGIC {
+                            // In a torn read, packet_loss_ppm might not match latency_ns / 1_000_000
+                            // because they are written non-atomically.
+                            if cfg.latency_ns / 1_000_000 != cfg.packet_loss_ppm {
+                                panic!(
+                                    "Torn read detected! latency_ns={} packet_loss_ppm={}",
+                                    cfg.latency_ns, cfg.packet_loss_ppm
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        writer.join().unwrap();
+        reader.join().unwrap();
+    }
+}
