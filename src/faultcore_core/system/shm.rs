@@ -124,6 +124,7 @@ pub fn is_shm_open() -> bool {
     SHM_STATE.get().is_some()
 }
 
+#[allow(unsafe_op_in_unsafe_fn)]
 unsafe fn get_config_ptr(tid_or_fd: usize, is_tid: bool) -> Option<*mut FaultcoreConfig> {
     let state = SHM_STATE.get()?;
     let base_ptr = state.pointer;
@@ -139,7 +140,7 @@ unsafe fn get_config_ptr(tid_or_fd: usize, is_tid: bool) -> Option<*mut Faultcor
         }
         tid_or_fd
     };
-    unsafe { Some(array.add(idx)) }
+    Some(array.add(idx))
 }
 
 pub fn write_latency(tid: u64, latency_ms: u64) -> Result<(), String> {
