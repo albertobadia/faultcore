@@ -28,7 +28,7 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy datetime.now().iso", "timestamp": format()}
+    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
 
 @app.get("/echo/{msg}")
