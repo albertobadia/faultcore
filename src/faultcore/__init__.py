@@ -82,7 +82,12 @@ class fault_context:
 
     def __enter__(self):
         self._token = _FAULTCORE_THREAD_POLICY.set(self.policy_name)
-        _set_thread_policy(self.policy_name)
+        try:
+            _set_thread_policy(self.policy_name)
+        except Exception:
+            _FAULTCORE_THREAD_POLICY.reset(self._token)
+            self._token = None
+            raise
         return self
 
     def __exit__(self, *_args):

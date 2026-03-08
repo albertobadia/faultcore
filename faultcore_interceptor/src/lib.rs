@@ -10,6 +10,10 @@ mod shm;
 
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
+const FAULTCORE_SETPRIORITY_LATENCY: c_int = 0xFA;
+const FAULTCORE_SETPRIORITY_BANDWIDTH: c_int = 0xFB;
+const FAULTCORE_SETPRIORITY_TIMEOUT: c_int = 0xFC;
+
 #[derive(Debug, Clone, Copy)]
 struct TimeoutState {
     connect_timeout_ms: u64,
@@ -437,19 +441,22 @@ pub extern "C" fn recvfrom(
 }
 #[unsafe(no_mangle)]
 pub extern "C" fn setpriority(which: c_int, who: c_int, prio: c_int) -> c_int {
-    if which == 0xFA || which == 0xFB || which == 0xFC {
+    if which == FAULTCORE_SETPRIORITY_LATENCY
+        || which == FAULTCORE_SETPRIORITY_BANDWIDTH
+        || which == FAULTCORE_SETPRIORITY_TIMEOUT
+    {
         let tid = shm::get_thread_id() as usize;
         if let Some(p) = unsafe { shm::get_config_ptr(tid, true) } {
             let mut config = unsafe { p.read() };
             match which {
-                0xFA => {
+                FAULTCORE_SETPRIORITY_LATENCY => {
                     config.latency_ns = (who as u64) * 1_000_000;
                     config.packet_loss_ppm = prio as u64;
                 }
-                0xFB => {
+                FAULTCORE_SETPRIORITY_BANDWIDTH => {
                     config.bandwidth_bps = (prio as u64) * 1024;
                 }
-                0xFC => {
+                FAULTCORE_SETPRIORITY_TIMEOUT => {
                     if who != -1 {
                         config.connect_timeout_ms = who as u64;
                     }
