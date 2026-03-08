@@ -54,7 +54,7 @@ if __name__ == "__main__":
         print(f"Error: {type(e).__name__}: {e}")
     print()
 
-    print("--- Rate Limited UDP (10 msg/s) ---")
+    print("--- UDP with Rate Setting (10 Mbps equivalent) ---")
     start = time.time()
     for i in range(5):
         req_start = time.time()

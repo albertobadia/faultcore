@@ -43,7 +43,7 @@ async def main():
             print(f"Error: {e}")
         print(f"Time: {time.time() - start:.3f}s\n")
 
-        print("--- Rate Limited Requests (10 req/s) ---")
+        print("--- Rate Setting (10 Mbps equivalent) ---")
         start = time.time()
         tasks = [fetch_url(session, "https://httpbin.org/get") for _ in range(5)]
         results = await asyncio.gather(*tasks, return_exceptions=True)

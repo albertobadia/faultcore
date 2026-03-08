@@ -49,8 +49,8 @@ def test_no_latency():
 
 
 if __name__ == "__main__":
-    print("\nNetwork Latency Examples using faultcore")
-    print("Uses @faultcore.timeout decorator to add latency")
+    print("\nExecution Timeout Examples using faultcore")
+    print("Uses @faultcore.timeout decorator to enforce execution deadlines")
     print("Make sure to run with LD_PRELOAD (Linux)")
     print()
 

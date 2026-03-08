@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import socket
+import sys
 import time
 from datetime import datetime
 
@@ -144,11 +145,15 @@ if __name__ == "__main__":
     parser.add_argument("--timeout", type=int, default=3000, help="Timeout in milliseconds")
     args = parser.parse_args()
 
+    result = None
     if args.mode == "connect":
-        test_connect_timeout(args.host, args.port, args.timeout)
+        result = test_connect_timeout(args.host, args.port, args.timeout)
     elif args.mode == "recv":
-        test_recv_timeout(args.host, args.port, args.timeout)
+        result = test_recv_timeout(args.host, args.port, args.timeout)
     elif args.mode == "send":
-        test_send_timeout(args.host, args.port, args.timeout)
+        result = test_send_timeout(args.host, args.port, args.timeout)
     elif args.mode == "disconnect":
-        test_graceful_disconnect(args.host, args.port)
+        result = test_graceful_disconnect(args.host, args.port)
+
+    if result is None or result is False:
+        sys.exit(1)

@@ -134,7 +134,7 @@ if __name__ == "__main__":
     mixed_policy_scenario(tcp_host, tcp_port)
 
     print("\nNote: Start the TCP echo server first:")
-    print("  python integration_tests/servers/tcp_echo_server.py --port 9000")
+    print("  python tests/integration/servers/tcp_echo_server.py --port 9000")
     print("Load the interceptor: LD_PRELOAD=./target/release/libfaultcore_interceptor.so")
     print("\n" + "=" * 60)
     print(" All scenarios completed! ".center(60, "="))

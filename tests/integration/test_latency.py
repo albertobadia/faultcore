@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import socket
+import sys
 import time
 from datetime import datetime
 
@@ -123,9 +124,13 @@ if __name__ == "__main__":
     parser.add_argument("--timeout", type=float, default=5.0, help="Timeout in seconds")
     args = parser.parse_args()
 
+    result = None
     if args.mode == "latency":
-        test_latency(args.host, args.port, args.message, args.count)
+        result = test_latency(args.host, args.port, args.message, args.count)
     elif args.mode == "connect-timeout":
-        test_connect_timeout(args.host, args.port, args.timeout)
+        result = test_connect_timeout(args.host, args.port, args.timeout)
     elif args.mode == "recv-timeout":
-        test_recv_timeout(args.host, args.port, args.timeout)
+        result = test_recv_timeout(args.host, args.port, args.timeout)
+
+    if result is None:
+        sys.exit(1)

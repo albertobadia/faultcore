@@ -2,6 +2,7 @@
 import argparse
 import socket
 import threading
+import time
 from datetime import datetime
 
 
@@ -51,6 +52,10 @@ class EchoServer:
                 message = data.decode("utf-8").strip()
                 print(f"[{datetime.now().isoformat()}] Client {client_id}: {message}")
 
+                if message == "STREAM":
+                    self.stream_to_client(client_socket, client_id)
+                    break
+
                 response = f"ECHO: {message}\n"
                 client_socket.sendall(response.encode("utf-8"))
 
@@ -59,6 +64,16 @@ class EchoServer:
         finally:
             client_socket.close()
             print(f"[{datetime.now().isoformat()}] Client {client_id} disconnected")
+
+    def stream_to_client(self, client_socket, client_id):
+        chunk = b"x" * 8192
+        started = time.perf_counter()
+        try:
+            while True:
+                client_socket.sendall(chunk)
+        except Exception as e:
+            elapsed = time.perf_counter() - started
+            print(f"[{datetime.now().isoformat()}] Client {client_id} stream ended after {elapsed:.2f}s: {e}")
 
     def stop(self):
         self.running = False

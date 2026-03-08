@@ -54,7 +54,7 @@ if __name__ == "__main__":
         print(f"Error: {type(e).__name__}: {e}")
     print()
 
-    print("--- Rate Limited TCP Echo (5 req/s) ---")
+    print("--- TCP Echo with Rate Setting (5 Mbps equivalent) ---")
     try:
         start = time.time()
         for i in range(5):
@@ -84,6 +84,6 @@ if __name__ == "__main__":
     print()
 
     print("Start the echo server first:")
-    print("  python integration_tests/servers/tcp_echo_server.py --port 9000")
+    print("  python tests/integration/servers/tcp_echo_server.py --port 9000")
     print("Load the interceptor: LD_PRELOAD=./target/release/libfaultcore_interceptor.so")
     print("\nDone.")

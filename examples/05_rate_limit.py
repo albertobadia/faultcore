@@ -19,7 +19,7 @@ if __name__ == "__main__":
     print(" Rate Limit Examples ".center(60, "="))
     print("=" * 60 + "\n")
 
-    print("--- Sync Rate Limit (5 requests/second) ---")
+    print("--- Sync Rate Setting (5 Mbps equivalent) ---")
     start = time.time()
     for i in range(8):
         req_start = time.time()
@@ -32,7 +32,7 @@ if __name__ == "__main__":
     total = time.time() - start
     print(f"Total time: {total:.2f}s\n")
 
-    print("--- Async Rate Limit (5 requests/second) ---")
+    print("--- Async workload (for comparison) ---")
 
     async def run_async_calls():
         start = time.time()

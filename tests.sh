@@ -66,7 +66,52 @@ HTTP_PID=$!
 echo "Waiting for servers to start..."
 sleep 2
 
-# Run pytest with the interceptor (using python directly to ensure env vars are passed)
+# Run pytest unit tests with the interceptor (using python directly to ensure env vars are passed)
 PYTEST=".venv/bin/python -m pytest"
-echo "Running integration tests with interceptor..."
+echo "Running unit tests with interceptor..."
 LD_PRELOAD="$INTERCEPTOR" $PYTEST tests/unit -v -s
+
+# Run integration CLI scripts (argument-driven probes, discovered dynamically)
+echo "Running integration CLI scripts with interceptor..."
+shopt -s nullglob
+INTEGRATION_SCRIPTS=(tests/integration/test_*.py)
+shopt -u nullglob
+
+if [ ${#INTEGRATION_SCRIPTS[@]} -eq 0 ]; then
+    echo "Warning: no integration scripts found in tests/integration/"
+else
+    run_integration_script() {
+        local script="$1"
+        shift
+        echo "Running integration script: $script $*"
+        LD_PRELOAD="$INTERCEPTOR" .venv/bin/python "$script" \
+            --host "$ECHO_SERVER_HOST" \
+            --port "$ECHO_SERVER_PORT" \
+            "$@"
+    }
+
+    for script in "${INTEGRATION_SCRIPTS[@]}"; do
+        case "$script" in
+            tests/integration/test_bandwidth.py)
+                run_integration_script "$script" --mode send --size 1024 --duration 2
+                run_integration_script "$script" --mode recv --duration 2
+                run_integration_script "$script" --mode throughput --messages 20
+                ;;
+            tests/integration/test_latency.py)
+                run_integration_script "$script" --mode latency --message "Hello FaultCore" --count 5
+                run_integration_script "$script" --mode connect-timeout --timeout 2
+                run_integration_script "$script" --mode recv-timeout --timeout 2
+                ;;
+            tests/integration/test_timeout.py)
+                run_integration_script "$script" --mode connect --timeout 1000
+                run_integration_script "$script" --mode recv --timeout 1000
+                run_integration_script "$script" --mode send --timeout 1000
+                run_integration_script "$script" --mode disconnect
+                ;;
+            *)
+                # Generic fallback for future integration scripts.
+                run_integration_script "$script"
+                ;;
+        esac
+    done
+fi

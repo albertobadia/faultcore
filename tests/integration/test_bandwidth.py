@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import argparse
+import select
 import socket
+import sys
 import time
 from datetime import datetime
 
@@ -25,9 +27,14 @@ def test_bandwidth_send(host: str, port: int, data_size: int, duration_sec: floa
             try:
                 sock.sendall(data)
                 total_sent += data_size
+                # Drain echoed data opportunistically to avoid backpressure deadlocks.
+                ready, _, _ = select.select([sock], [], [], 0)
+                if ready:
+                    _ = sock.recv(4096)
             except Exception as e:
                 print(f"Send error: {e}")
-                break
+                sock.close()
+                return None
 
         sock.close()
 
@@ -43,6 +50,8 @@ def test_bandwidth_send(host: str, port: int, data_size: int, duration_sec: floa
     print(f"Total sent: {total_sent} bytes in {elapsed:.2f} seconds")
     print(f"Bandwidth: {bytes_per_sec:.2f} bytes/s ({mbits_per_sec:.4f} Mbps)")
 
+    if total_sent == 0:
+        return None
     return bytes_per_sec
 
 
@@ -89,6 +98,8 @@ def test_bandwidth_recv(host: str, port: int, duration_sec: float = 5.0):
     print(f"Total received: {total_received} bytes in {elapsed:.2f} seconds")
     print(f"Bandwidth: {bytes_per_sec:.2f} bytes/s ({mbits_per_sec:.4f} Mbps)")
 
+    if total_received == 0:
+        return None
     return bytes_per_sec
 
 
@@ -126,6 +137,8 @@ def test_throughput(host: str, port: int, num_messages: int = 100):
     print(f"Time: {elapsed:.2f} seconds")
     print(f"Throughput: {msgs_per_sec:.2f} msgs/s")
 
+    if successful == 0:
+        return None
     return msgs_per_sec
 
 
@@ -139,9 +152,13 @@ if __name__ == "__main__":
     parser.add_argument("--messages", type=int, default=100, help="Number of messages for throughput")
     args = parser.parse_args()
 
+    result = None
     if args.mode == "send":
-        test_bandwidth_send(args.host, args.port, args.size, args.duration)
+        result = test_bandwidth_send(args.host, args.port, args.size, args.duration)
     elif args.mode == "recv":
-        test_bandwidth_recv(args.host, args.port, args.duration)
+        result = test_bandwidth_recv(args.host, args.port, args.duration)
     elif args.mode == "throughput":
-        test_throughput(args.host, args.port, args.messages)
+        result = test_throughput(args.host, args.port, args.messages)
+
+    if result is None:
+        sys.exit(1)

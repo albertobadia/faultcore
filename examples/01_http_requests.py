@@ -47,7 +47,7 @@ if __name__ == "__main__":
         print(f"Error: {e}")
     print(f"Time: {time.time() - start:.3f}s\n")
 
-    print("--- Rate Limited (10 req/s) ---")
+    print("--- Rate Setting (10 Mbps equivalent) ---")
     start = time.time()
     for i in range(5):
         try:
@@ -57,7 +57,7 @@ if __name__ == "__main__":
             print(f"Request {i + 1}: Error - {type(e).__name__}")
     print(f"Total time: {time.time() - start:.3f}s\n")
 
-    print("--- Rate Limited (5 req/s) with httpbin ---")
+    print("--- Rate Setting (5 Mbps equivalent) with httpbin ---")
     start = time.time()
     for i in range(5):
         try:
