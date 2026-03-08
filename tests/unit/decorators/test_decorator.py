@@ -325,6 +325,66 @@ class TestBurstLossDecorator:
                 return "x"
 
 
+class TestDirectionalDecorators:
+    def test_uplink_writes_directional_fields_to_shm(self):
+        from unittest.mock import MagicMock, patch
+
+        mock_shm = MagicMock()
+        mock_shm.write_uplink = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=731):
+
+                @faultcore.uplink(latency_ms=15, jitter_ms=3, packet_loss="0.5%", burst_loss_len=2, rate="2mbps")
+                def my_func():
+                    return "ok"
+
+                assert my_func() == "ok"
+                mock_shm.write_uplink.assert_called_once_with(
+                    731,
+                    latency_ms=15,
+                    jitter_ms=3,
+                    packet_loss_ppm=5_000,
+                    burst_loss_len=2,
+                    bandwidth_bps=2_000_000,
+                )
+                mock_shm.clear.assert_called_once_with(731)
+
+    def test_downlink_writes_directional_fields_to_shm(self):
+        from unittest.mock import MagicMock, patch
+
+        mock_shm = MagicMock()
+        mock_shm.write_downlink = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=732):
+
+                @faultcore.downlink(latency_ms=25, rate="1mbps")
+                def my_func():
+                    return "ok"
+
+                assert my_func() == "ok"
+                mock_shm.write_downlink.assert_called_once_with(
+                    732,
+                    latency_ms=25,
+                    jitter_ms=None,
+                    packet_loss_ppm=None,
+                    burst_loss_len=None,
+                    bandwidth_bps=1_000_000,
+                )
+                mock_shm.clear.assert_called_once_with(732)
+
+    def test_uplink_requires_at_least_one_field(self):
+        with pytest.raises(ValueError):
+            faultcore.uplink()
+
+    def test_downlink_requires_at_least_one_field(self):
+        with pytest.raises(ValueError):
+            faultcore.downlink()
+
+
 class TestPolicyRegistry:
     def test_apply_policy_uses_registered_policy(self):
         from unittest.mock import MagicMock, patch
@@ -418,6 +478,46 @@ class TestPolicyRegistry:
                 mock_shm.write_timeouts.assert_called_once_with(612, 321, 654)
                 mock_shm.clear.assert_called_once_with(612)
 
+    def test_register_policy_with_uplink_and_downlink_profiles(self):
+        from unittest.mock import MagicMock, patch
+
+        faultcore.register_policy(
+            "directional",
+            uplink={"latency_ms": 10, "rate": "5mbps"},
+            downlink={"packet_loss": "1.5%", "jitter_ms": 4},
+        )
+
+        mock_shm = MagicMock()
+        mock_shm.write_uplink = MagicMock()
+        mock_shm.write_downlink = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=890):
+
+                @faultcore.apply_policy("directional")
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_uplink.assert_called_once_with(
+                    890,
+                    latency_ms=10,
+                    jitter_ms=None,
+                    packet_loss_ppm=None,
+                    burst_loss_len=None,
+                    bandwidth_bps=5_000_000,
+                )
+                mock_shm.write_downlink.assert_called_once_with(
+                    890,
+                    latency_ms=None,
+                    jitter_ms=4,
+                    packet_loss_ppm=15_000,
+                    burst_loss_len=None,
+                    bandwidth_bps=None,
+                )
+                mock_shm.clear.assert_called_once_with(890)
+
     def test_register_policy_rejects_invalid_values(self):
         with pytest.raises(ValueError):
             faultcore.register_policy("", latency_ms=1)
@@ -433,6 +533,10 @@ class TestPolicyRegistry:
             faultcore.register_policy("bad5", recv_timeout_ms=-1)
         with pytest.raises(ValueError):
             faultcore.register_policy("bad6", rate=-1)
+        with pytest.raises(ValueError):
+            faultcore.register_policy("bad7", uplink="invalid")
+        with pytest.raises(ValueError):
+            faultcore.register_policy("bad8", downlink="invalid")
 
     def test_registry_introspection_and_unregister(self):
         from faultcore.decorator import clear_policies

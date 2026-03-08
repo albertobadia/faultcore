@@ -13,6 +13,16 @@ pub struct Config {
     pub bandwidth_bps: u64,
     pub connect_timeout_ms: u64,
     pub recv_timeout_ms: u64,
+    pub uplink_latency_ns: u64,
+    pub uplink_jitter_ns: u64,
+    pub uplink_packet_loss_ppm: u64,
+    pub uplink_burst_loss_len: u64,
+    pub uplink_bandwidth_bps: u64,
+    pub downlink_latency_ns: u64,
+    pub downlink_jitter_ns: u64,
+    pub downlink_packet_loss_ppm: u64,
+    pub downlink_burst_loss_len: u64,
+    pub downlink_bandwidth_bps: u64,
 }
 
 impl Config {
@@ -24,5 +34,77 @@ impl Config {
             || self.bandwidth_bps > 0
             || self.connect_timeout_ms > 0
             || self.recv_timeout_ms > 0
+            || self.uplink_latency_ns > 0
+            || self.uplink_jitter_ns > 0
+            || self.uplink_packet_loss_ppm > 0
+            || self.uplink_burst_loss_len > 0
+            || self.uplink_bandwidth_bps > 0
+            || self.downlink_latency_ns > 0
+            || self.downlink_jitter_ns > 0
+            || self.downlink_packet_loss_ppm > 0
+            || self.downlink_burst_loss_len > 0
+            || self.downlink_bandwidth_bps > 0
+    }
+
+    pub fn effective_for_send(&self) -> Self {
+        let mut out = self.clone_for_effective();
+        if self.uplink_latency_ns > 0 {
+            out.latency_ns = self.uplink_latency_ns;
+        }
+        if self.uplink_jitter_ns > 0 {
+            out.jitter_ns = self.uplink_jitter_ns;
+        }
+        if self.uplink_packet_loss_ppm > 0 {
+            out.packet_loss_ppm = self.uplink_packet_loss_ppm;
+        }
+        if self.uplink_burst_loss_len > 0 {
+            out.burst_loss_len = self.uplink_burst_loss_len;
+        }
+        if self.uplink_bandwidth_bps > 0 {
+            out.bandwidth_bps = self.uplink_bandwidth_bps;
+        }
+        out
+    }
+
+    pub fn effective_for_recv(&self) -> Self {
+        let mut out = self.clone_for_effective();
+        if self.downlink_latency_ns > 0 {
+            out.latency_ns = self.downlink_latency_ns;
+        }
+        if self.downlink_jitter_ns > 0 {
+            out.jitter_ns = self.downlink_jitter_ns;
+        }
+        if self.downlink_packet_loss_ppm > 0 {
+            out.packet_loss_ppm = self.downlink_packet_loss_ppm;
+        }
+        if self.downlink_burst_loss_len > 0 {
+            out.burst_loss_len = self.downlink_burst_loss_len;
+        }
+        if self.downlink_bandwidth_bps > 0 {
+            out.bandwidth_bps = self.downlink_bandwidth_bps;
+        }
+        out
+    }
+
+    fn clone_for_effective(&self) -> Self {
+        Self {
+            latency_ns: self.latency_ns,
+            jitter_ns: self.jitter_ns,
+            packet_loss_ppm: self.packet_loss_ppm,
+            burst_loss_len: self.burst_loss_len,
+            bandwidth_bps: self.bandwidth_bps,
+            connect_timeout_ms: self.connect_timeout_ms,
+            recv_timeout_ms: self.recv_timeout_ms,
+            uplink_latency_ns: self.uplink_latency_ns,
+            uplink_jitter_ns: self.uplink_jitter_ns,
+            uplink_packet_loss_ppm: self.uplink_packet_loss_ppm,
+            uplink_burst_loss_len: self.uplink_burst_loss_len,
+            uplink_bandwidth_bps: self.uplink_bandwidth_bps,
+            downlink_latency_ns: self.downlink_latency_ns,
+            downlink_jitter_ns: self.downlink_jitter_ns,
+            downlink_packet_loss_ppm: self.downlink_packet_loss_ppm,
+            downlink_burst_loss_len: self.downlink_burst_loss_len,
+            downlink_bandwidth_bps: self.downlink_bandwidth_bps,
+        }
     }
 }

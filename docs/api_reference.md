@@ -62,6 +62,26 @@ Set burst packet loss length.
 
 - `length` must be `>= 0`.
 
+### `uplink(...)`
+
+Apply directional network profile for send path (`send`/`sendto`).
+
+Accepted keyword fields:
+- `latency_ms`
+- `jitter_ms`
+- `packet_loss` (same formats as `packet_loss(...)`)
+- `burst_loss_len`
+- `rate` (same formats as `rate_limit(...)`)
+
+Requires at least one field.
+
+### `downlink(...)`
+
+Apply directional network profile for receive path (`recv`/`recvfrom`).
+
+Accepted keyword fields are the same as `uplink(...)`.
+Requires at least one field.
+
 ### `rate_limit(rate: str | int)`
 
 Set bandwidth in bits per second (bps) internally.
@@ -113,6 +133,8 @@ register_policy(
     timeout_ms: int | None = None,
     connect_timeout_ms: int | None = None,
     recv_timeout_ms: int | None = None,
+    uplink: dict[str, Any] | None = None,
+    downlink: dict[str, Any] | None = None,
 ) -> None
 ```
 

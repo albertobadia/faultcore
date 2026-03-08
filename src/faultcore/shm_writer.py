@@ -6,7 +6,7 @@ import threading
 FAULTCORE_MAGIC = 0xFACC0DE
 MAX_FDS = 131072
 MAX_TIDS = 65536
-CONFIG_SIZE = 72
+CONFIG_SIZE = 152
 
 _OFFSET_MAGIC = 0
 _OFFSET_VERSION = 4
@@ -17,6 +17,16 @@ _OFFSET_BURST_LOSS_LEN = 36
 _OFFSET_BANDWIDTH_BPS = 44
 _OFFSET_CONNECT_TIMEOUT_MS = 52
 _OFFSET_RECV_TIMEOUT_MS = 60
+_OFFSET_UPLINK_LATENCY_NS = 68
+_OFFSET_UPLINK_JITTER_NS = 76
+_OFFSET_UPLINK_PACKET_LOSS_PPM = 84
+_OFFSET_UPLINK_BURST_LOSS_LEN = 92
+_OFFSET_UPLINK_BANDWIDTH_BPS = 100
+_OFFSET_DOWNLINK_LATENCY_NS = 108
+_OFFSET_DOWNLINK_JITTER_NS = 116
+_OFFSET_DOWNLINK_PACKET_LOSS_PPM = 124
+_OFFSET_DOWNLINK_BURST_LOSS_LEN = 132
+_OFFSET_DOWNLINK_BANDWIDTH_BPS = 140
 
 
 class SHMWriter:
@@ -89,6 +99,54 @@ class SHMWriter:
         def writer(offset: int) -> None:
             struct.pack_into("<Q", self._mmap, offset + _OFFSET_CONNECT_TIMEOUT_MS, connect_ms)
             struct.pack_into("<Q", self._mmap, offset + _OFFSET_RECV_TIMEOUT_MS, recv_ms)
+
+        self._write_versioned(tid, writer)
+
+    def write_uplink(
+        self,
+        tid: int,
+        *,
+        latency_ms: int | None = None,
+        jitter_ms: int | None = None,
+        packet_loss_ppm: int | None = None,
+        burst_loss_len: int | None = None,
+        bandwidth_bps: int | None = None,
+    ) -> None:
+        def writer(offset: int) -> None:
+            if latency_ms is not None:
+                struct.pack_into("<Q", self._mmap, offset + _OFFSET_UPLINK_LATENCY_NS, latency_ms * 1_000_000)
+            if jitter_ms is not None:
+                struct.pack_into("<Q", self._mmap, offset + _OFFSET_UPLINK_JITTER_NS, jitter_ms * 1_000_000)
+            if packet_loss_ppm is not None:
+                struct.pack_into("<Q", self._mmap, offset + _OFFSET_UPLINK_PACKET_LOSS_PPM, packet_loss_ppm)
+            if burst_loss_len is not None:
+                struct.pack_into("<Q", self._mmap, offset + _OFFSET_UPLINK_BURST_LOSS_LEN, burst_loss_len)
+            if bandwidth_bps is not None:
+                struct.pack_into("<Q", self._mmap, offset + _OFFSET_UPLINK_BANDWIDTH_BPS, bandwidth_bps)
+
+        self._write_versioned(tid, writer)
+
+    def write_downlink(
+        self,
+        tid: int,
+        *,
+        latency_ms: int | None = None,
+        jitter_ms: int | None = None,
+        packet_loss_ppm: int | None = None,
+        burst_loss_len: int | None = None,
+        bandwidth_bps: int | None = None,
+    ) -> None:
+        def writer(offset: int) -> None:
+            if latency_ms is not None:
+                struct.pack_into("<Q", self._mmap, offset + _OFFSET_DOWNLINK_LATENCY_NS, latency_ms * 1_000_000)
+            if jitter_ms is not None:
+                struct.pack_into("<Q", self._mmap, offset + _OFFSET_DOWNLINK_JITTER_NS, jitter_ms * 1_000_000)
+            if packet_loss_ppm is not None:
+                struct.pack_into("<Q", self._mmap, offset + _OFFSET_DOWNLINK_PACKET_LOSS_PPM, packet_loss_ppm)
+            if burst_loss_len is not None:
+                struct.pack_into("<Q", self._mmap, offset + _OFFSET_DOWNLINK_BURST_LOSS_LEN, burst_loss_len)
+            if bandwidth_bps is not None:
+                struct.pack_into("<Q", self._mmap, offset + _OFFSET_DOWNLINK_BANDWIDTH_BPS, bandwidth_bps)
 
         self._write_versioned(tid, writer)
 

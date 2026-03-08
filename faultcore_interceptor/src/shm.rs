@@ -37,6 +37,16 @@ pub struct FaultcoreConfig {
     pub bandwidth_bps: u64,
     pub connect_timeout_ms: u64,
     pub recv_timeout_ms: u64,
+    pub uplink_latency_ns: u64,
+    pub uplink_jitter_ns: u64,
+    pub uplink_packet_loss_ppm: u64,
+    pub uplink_burst_loss_len: u64,
+    pub uplink_bandwidth_bps: u64,
+    pub downlink_latency_ns: u64,
+    pub downlink_jitter_ns: u64,
+    pub downlink_packet_loss_ppm: u64,
+    pub downlink_burst_loss_len: u64,
+    pub downlink_bandwidth_bps: u64,
     pub reserved: u32,
 }
 
@@ -58,6 +68,16 @@ impl FaultcoreConfig {
             && self.packet_loss_ppm <= 1_000_000
             && self.burst_loss_len <= 1_000_000
             && self.bandwidth_bps <= MAX_BANDWIDTH_BPS
+            && self.uplink_packet_loss_ppm <= 1_000_000
+            && self.downlink_packet_loss_ppm <= 1_000_000
+            && self.uplink_burst_loss_len <= 1_000_000
+            && self.downlink_burst_loss_len <= 1_000_000
+            && self.uplink_bandwidth_bps <= MAX_BANDWIDTH_BPS
+            && self.downlink_bandwidth_bps <= MAX_BANDWIDTH_BPS
+            && self.uplink_latency_ns <= MAX_LATENCY_NS
+            && self.uplink_jitter_ns <= MAX_LATENCY_NS
+            && self.downlink_latency_ns <= MAX_LATENCY_NS
+            && self.downlink_jitter_ns <= MAX_LATENCY_NS
     }
 
     pub fn into_network_config(self) -> faultcore_network::Config {
@@ -69,6 +89,16 @@ impl FaultcoreConfig {
             bandwidth_bps: self.bandwidth_bps,
             connect_timeout_ms: self.connect_timeout_ms,
             recv_timeout_ms: self.recv_timeout_ms,
+            uplink_latency_ns: self.uplink_latency_ns,
+            uplink_jitter_ns: self.uplink_jitter_ns,
+            uplink_packet_loss_ppm: self.uplink_packet_loss_ppm,
+            uplink_burst_loss_len: self.uplink_burst_loss_len,
+            uplink_bandwidth_bps: self.uplink_bandwidth_bps,
+            downlink_latency_ns: self.downlink_latency_ns,
+            downlink_jitter_ns: self.downlink_jitter_ns,
+            downlink_packet_loss_ppm: self.downlink_packet_loss_ppm,
+            downlink_burst_loss_len: self.downlink_burst_loss_len,
+            downlink_bandwidth_bps: self.downlink_bandwidth_bps,
         }
     }
 }
@@ -239,6 +269,16 @@ mod tests {
             bandwidth_bps: 0,
             connect_timeout_ms: 5000,
             recv_timeout_ms: 3000,
+            uplink_latency_ns: 0,
+            uplink_jitter_ns: 0,
+            uplink_packet_loss_ppm: 0,
+            uplink_burst_loss_len: 0,
+            uplink_bandwidth_bps: 0,
+            downlink_latency_ns: 0,
+            downlink_jitter_ns: 0,
+            downlink_packet_loss_ppm: 0,
+            downlink_burst_loss_len: 0,
+            downlink_bandwidth_bps: 0,
             reserved: 0,
         };
         assert!(config.is_valid());
@@ -256,6 +296,16 @@ mod tests {
             bandwidth_bps: 0,
             connect_timeout_ms: 5000,
             recv_timeout_ms: 3000,
+            uplink_latency_ns: 0,
+            uplink_jitter_ns: 0,
+            uplink_packet_loss_ppm: 0,
+            uplink_burst_loss_len: 0,
+            uplink_bandwidth_bps: 0,
+            downlink_latency_ns: 0,
+            downlink_jitter_ns: 0,
+            downlink_packet_loss_ppm: 0,
+            downlink_burst_loss_len: 0,
+            downlink_bandwidth_bps: 0,
             reserved: 0,
         };
         assert!(!config.is_valid());
@@ -312,6 +362,16 @@ mod tests {
                 bandwidth_bps: 789,
                 connect_timeout_ms: 111,
                 recv_timeout_ms: 222,
+                uplink_latency_ns: 0,
+                uplink_jitter_ns: 0,
+                uplink_packet_loss_ppm: 0,
+                uplink_burst_loss_len: 0,
+                uplink_bandwidth_bps: 0,
+                downlink_latency_ns: 0,
+                downlink_jitter_ns: 0,
+                downlink_packet_loss_ppm: 0,
+                downlink_burst_loss_len: 0,
+                downlink_bandwidth_bps: 0,
                 reserved: 0,
             });
         }
@@ -330,6 +390,16 @@ mod tests {
             let bandwidth_bps = ptr::read_unaligned(base.add(44) as *const u64);
             let connect_timeout_ms = ptr::read_unaligned(base.add(52) as *const u64);
             let recv_timeout_ms = ptr::read_unaligned(base.add(60) as *const u64);
+            let uplink_latency_ns = ptr::read_unaligned(base.add(68) as *const u64);
+            let uplink_jitter_ns = ptr::read_unaligned(base.add(76) as *const u64);
+            let uplink_packet_loss_ppm = ptr::read_unaligned(base.add(84) as *const u64);
+            let uplink_burst_loss_len = ptr::read_unaligned(base.add(92) as *const u64);
+            let uplink_bandwidth_bps = ptr::read_unaligned(base.add(100) as *const u64);
+            let downlink_latency_ns = ptr::read_unaligned(base.add(108) as *const u64);
+            let downlink_jitter_ns = ptr::read_unaligned(base.add(116) as *const u64);
+            let downlink_packet_loss_ppm = ptr::read_unaligned(base.add(124) as *const u64);
+            let downlink_burst_loss_len = ptr::read_unaligned(base.add(132) as *const u64);
+            let downlink_bandwidth_bps = ptr::read_unaligned(base.add(140) as *const u64);
             assert_eq!(magic, 0);
             assert_eq!(version, 0);
             assert_eq!(latency_ns, 0);
@@ -339,6 +409,16 @@ mod tests {
             assert_eq!(bandwidth_bps, 0);
             assert_eq!(connect_timeout_ms, 0);
             assert_eq!(recv_timeout_ms, 0);
+            assert_eq!(uplink_latency_ns, 0);
+            assert_eq!(uplink_jitter_ns, 0);
+            assert_eq!(uplink_packet_loss_ppm, 0);
+            assert_eq!(uplink_burst_loss_len, 0);
+            assert_eq!(uplink_bandwidth_bps, 0);
+            assert_eq!(downlink_latency_ns, 0);
+            assert_eq!(downlink_jitter_ns, 0);
+            assert_eq!(downlink_packet_loss_ppm, 0);
+            assert_eq!(downlink_burst_loss_len, 0);
+            assert_eq!(downlink_bandwidth_bps, 0);
         }
 
         *SHM_POINTER.write() = prev_ptr;

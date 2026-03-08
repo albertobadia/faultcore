@@ -17,6 +17,35 @@ _THREAD_POLICY = threading.local()
 _POLICY_LOCK = threading.RLock()
 
 
+def _build_direction_profile(
+    *,
+    latency_ms: int | None = None,
+    jitter_ms: int | None = None,
+    packet_loss: str | int | float | None = None,
+    burst_loss_len: int | None = None,
+    rate: str | int | float | None = None,
+) -> dict[str, int]:
+    profile: dict[str, int] = {}
+    if latency_ms is not None:
+        if int(latency_ms) < 0:
+            raise ValueError("latency_ms must be >= 0")
+        profile["latency_ms"] = int(latency_ms)
+    if jitter_ms is not None:
+        if int(jitter_ms) < 0:
+            raise ValueError("jitter_ms must be >= 0")
+        profile["jitter_ms"] = int(jitter_ms)
+    if packet_loss is not None:
+        profile["packet_loss_ppm"] = _parse_packet_loss(packet_loss)
+    if burst_loss_len is not None:
+        b = int(burst_loss_len)
+        if b < 0:
+            raise ValueError("burst_loss_len must be >= 0")
+        profile["burst_loss_len"] = b
+    if rate is not None:
+        profile["bandwidth_bps"] = _parse_rate(rate)
+    return profile
+
+
 class FaultWrapper:
     def __init__(
         self,
@@ -27,6 +56,8 @@ class FaultWrapper:
         burst_loss_len: int | None = None,
         bandwidth_bps: int | None = None,
         timeouts: tuple[int, int] | None = None,
+        uplink_profile: dict[str, int] | None = None,
+        downlink_profile: dict[str, int] | None = None,
     ):
         functools.update_wrapper(self, func)
         self._func = func
@@ -36,6 +67,8 @@ class FaultWrapper:
         self._burst_loss_len = burst_loss_len
         self._bandwidth_bps = bandwidth_bps
         self._timeouts = timeouts
+        self._uplink_profile = uplink_profile or {}
+        self._downlink_profile = downlink_profile or {}
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._func, name)
@@ -67,6 +100,26 @@ class FaultWrapper:
         if self._timeouts:
             connect_ms, recv_ms = self._timeouts
             shm.write_timeouts(tid, connect_ms, recv_ms)
+
+        if self._uplink_profile:
+            shm.write_uplink(
+                tid,
+                latency_ms=self._uplink_profile.get("latency_ms"),
+                jitter_ms=self._uplink_profile.get("jitter_ms"),
+                packet_loss_ppm=self._uplink_profile.get("packet_loss_ppm"),
+                burst_loss_len=self._uplink_profile.get("burst_loss_len"),
+                bandwidth_bps=self._uplink_profile.get("bandwidth_bps"),
+            )
+
+        if self._downlink_profile:
+            shm.write_downlink(
+                tid,
+                latency_ms=self._downlink_profile.get("latency_ms"),
+                jitter_ms=self._downlink_profile.get("jitter_ms"),
+                packet_loss_ppm=self._downlink_profile.get("packet_loss_ppm"),
+                burst_loss_len=self._downlink_profile.get("burst_loss_len"),
+                bandwidth_bps=self._downlink_profile.get("bandwidth_bps"),
+            )
 
         timeout_ms = self._timeouts[0] if self._timeouts else None
 
@@ -105,7 +158,9 @@ class FaultWrapper:
             f"packet_loss_ppm={self._packet_loss_ppm}, "
             f"burst_loss_len={self._burst_loss_len}, "
             f"bandwidth={self._bandwidth_bps}, "
-            f"timeouts={self._timeouts}) for {self._func!r}>"
+            f"timeouts={self._timeouts}, "
+            f"uplink={self._uplink_profile}, "
+            f"downlink={self._downlink_profile}) for {self._func!r}>"
         )
 
 
@@ -184,6 +239,54 @@ def burst_loss(length: int):
     return decorator
 
 
+def uplink(
+    *,
+    latency_ms: int | None = None,
+    jitter_ms: int | None = None,
+    packet_loss: str | int | float | None = None,
+    burst_loss_len: int | None = None,
+    rate: str | int | float | None = None,
+):
+    profile = _build_direction_profile(
+        latency_ms=latency_ms,
+        jitter_ms=jitter_ms,
+        packet_loss=packet_loss,
+        burst_loss_len=burst_loss_len,
+        rate=rate,
+    )
+    if not profile:
+        raise ValueError("uplink requires at least one directional field")
+
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
+        return FaultWrapper(func, uplink_profile=profile)
+
+    return decorator
+
+
+def downlink(
+    *,
+    latency_ms: int | None = None,
+    jitter_ms: int | None = None,
+    packet_loss: str | int | float | None = None,
+    burst_loss_len: int | None = None,
+    rate: str | int | float | None = None,
+):
+    profile = _build_direction_profile(
+        latency_ms=latency_ms,
+        jitter_ms=jitter_ms,
+        packet_loss=packet_loss,
+        burst_loss_len=burst_loss_len,
+        rate=rate,
+    )
+    if not profile:
+        raise ValueError("downlink requires at least one directional field")
+
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
+        return FaultWrapper(func, downlink_profile=profile)
+
+    return decorator
+
+
 def _parse_rate(rate: str | int | float) -> int:
     if isinstance(rate, (int, float)):
         if rate < 0:
@@ -258,6 +361,8 @@ def apply_policy(_key: str):
             burst_loss_len=policy.get("burst_loss_len"),
             bandwidth_bps=policy.get("bandwidth_bps"),
             timeouts=policy.get("timeouts"),
+            uplink_profile=policy.get("uplink_profile"),
+            downlink_profile=policy.get("downlink_profile"),
         )
 
     return decorator
@@ -286,6 +391,8 @@ def register_policy(
     timeout_ms: int | None = None,
     connect_timeout_ms: int | None = None,
     recv_timeout_ms: int | None = None,
+    uplink: dict[str, Any] | None = None,
+    downlink: dict[str, Any] | None = None,
 ) -> None:
     if not name:
         raise ValueError("policy name must be non-empty")
@@ -319,6 +426,26 @@ def register_policy(
         if connect_ms < 0 or recv_ms < 0:
             raise ValueError("connect_timeout_ms and recv_timeout_ms must be >= 0")
         policy["timeouts"] = (connect_ms, recv_ms)
+    if uplink is not None:
+        if not isinstance(uplink, dict):
+            raise ValueError("uplink must be a mapping when provided")
+        policy["uplink_profile"] = _build_direction_profile(
+            latency_ms=uplink.get("latency_ms"),
+            jitter_ms=uplink.get("jitter_ms"),
+            packet_loss=uplink.get("packet_loss"),
+            burst_loss_len=uplink.get("burst_loss_len"),
+            rate=uplink.get("rate"),
+        )
+    if downlink is not None:
+        if not isinstance(downlink, dict):
+            raise ValueError("downlink must be a mapping when provided")
+        policy["downlink_profile"] = _build_direction_profile(
+            latency_ms=downlink.get("latency_ms"),
+            jitter_ms=downlink.get("jitter_ms"),
+            packet_loss=downlink.get("packet_loss"),
+            burst_loss_len=downlink.get("burst_loss_len"),
+            rate=downlink.get("rate"),
+        )
     with _POLICY_LOCK:
         _POLICY_REGISTRY[name] = policy
 
@@ -380,6 +507,8 @@ def load_policies(path: str | Path) -> int:
             timeout_ms=cfg.get("timeout_ms"),
             connect_timeout_ms=cfg.get("connect_timeout_ms"),
             recv_timeout_ms=cfg.get("recv_timeout_ms"),
+            uplink=cfg.get("uplink"),
+            downlink=cfg.get("downlink"),
         )
         loaded += 1
     return loaded

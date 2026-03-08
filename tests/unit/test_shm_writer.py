@@ -93,6 +93,16 @@ class TestExports:
 
         assert callable(burst_loss)
 
+    def test_uplink_is_exported(self):
+        from faultcore import uplink
+
+        assert callable(uplink)
+
+    def test_downlink_is_exported(self):
+        from faultcore import downlink
+
+        assert callable(downlink)
+
     def test_apply_policy_is_exported(self):
         from faultcore import apply_policy
 

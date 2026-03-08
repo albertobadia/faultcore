@@ -19,11 +19,12 @@ impl ChaosEngine {
     }
 
     pub fn process_send(&self, config: &Config, bytes: u64) -> LayerResult {
+        let effective = config.effective_for_send();
         let mut delay_ns: u64 = 0;
         for layer_result in [
-            self.l1.process(config),
-            self.l2.process_with_bytes(bytes, config),
-            self.l3.process(config),
+            self.l1.process(&effective),
+            self.l2.process_with_bytes(bytes, &effective),
+            self.l3.process(&effective),
         ] {
             match layer_result {
                 LayerResult::Continue => {}
@@ -41,11 +42,12 @@ impl ChaosEngine {
     }
 
     pub fn process_recv(&self, config: &Config, bytes: u64) -> LayerResult {
+        let effective = config.effective_for_recv();
         let mut delay_ns: u64 = 0;
         for layer_result in [
-            self.l1.process(config),
-            self.l2.process_with_bytes(bytes, config),
-            self.l3.process(config),
+            self.l1.process(&effective),
+            self.l2.process_with_bytes(bytes, &effective),
+            self.l3.process(&effective),
         ] {
             match layer_result {
                 LayerResult::Continue => {}

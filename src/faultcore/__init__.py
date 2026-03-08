@@ -5,6 +5,7 @@ from faultcore.decorator import (
     apply_policy,
     burst_loss,
     connect_timeout,
+    downlink,
     fault,
     get_policy,
     get_thread_policy,
@@ -19,6 +20,7 @@ from faultcore.decorator import (
     set_thread_policy as _set_thread_policy,
     timeout,
     unregister_policy,
+    uplink,
 )
 
 
@@ -76,6 +78,8 @@ __all__ = [
     "jitter",
     "packet_loss",
     "burst_loss",
+    "uplink",
+    "downlink",
     "rate_limit",
     "register_policy",
     "list_policies",

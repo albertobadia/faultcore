@@ -11,7 +11,7 @@ Este documento define el contrato binario compartido entre:
   - Tabla de FDs + tabla hash de TIDs: `(MAX_FDS + MAX_TIDS) * CONFIG_SIZE`
   - En el interceptor además se reserva una región para `PolicyState`.
 
-## FaultcoreConfig (72 bytes)
+## FaultcoreConfig (152 bytes)
 - Endianness: little-endian
 - Layout fijo (packed)
 
@@ -26,11 +26,21 @@ Este documento define el contrato binario compartido entre:
 | `bandwidth_bps` | 44 | 8 | `u64` |
 | `connect_timeout_ms` | 52 | 8 | `u64` |
 | `recv_timeout_ms` | 60 | 8 | `u64` |
-| `reserved` | 68 | 4 | `u32` |
+| `uplink_latency_ns` | 68 | 8 | `u64` |
+| `uplink_jitter_ns` | 76 | 8 | `u64` |
+| `uplink_packet_loss_ppm` | 84 | 8 | `u64` |
+| `uplink_burst_loss_len` | 92 | 8 | `u64` |
+| `uplink_bandwidth_bps` | 100 | 8 | `u64` |
+| `downlink_latency_ns` | 108 | 8 | `u64` |
+| `downlink_jitter_ns` | 116 | 8 | `u64` |
+| `downlink_packet_loss_ppm` | 124 | 8 | `u64` |
+| `downlink_burst_loss_len` | 132 | 8 | `u64` |
+| `downlink_bandwidth_bps` | 140 | 8 | `u64` |
+| `reserved` | 148 | 4 | `u32` |
 
 Constantes:
 - `FAULTCORE_MAGIC = 0xFACC0DE`
-- `CONFIG_SIZE = 72`
+- `CONFIG_SIZE = 152`
 - `MAX_FDS = 131072`
 - `MAX_TIDS = 65536`
 
