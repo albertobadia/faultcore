@@ -1,5 +1,6 @@
 import asyncio
 import json
+import threading
 import time
 
 import pytest
@@ -447,6 +448,25 @@ class TestPolicyRegistry:
         assert faultcore.unregister_policy("a_policy") is True
         assert faultcore.unregister_policy("a_policy") is False
         assert faultcore.list_policies() == ["b_policy"]
+
+    def test_registry_thread_safety_under_parallel_updates(self):
+        from faultcore.decorator import clear_policies
+
+        clear_policies()
+
+        def worker(idx: int) -> None:
+            name = f"p{idx}"
+            faultcore.register_policy(name, latency_ms=idx)
+            assert faultcore.get_policy(name) is not None
+            assert faultcore.unregister_policy(name) is True
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(50)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert faultcore.list_policies() == []
 
     def test_load_policies_from_json(self, tmp_path):
         file_path = tmp_path / "policies.json"

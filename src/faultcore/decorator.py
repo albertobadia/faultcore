@@ -13,6 +13,7 @@ from faultcore.shm_writer import get_shm_writer
 
 _POLICY_REGISTRY: dict[str, dict[str, Any]] = {}
 _THREAD_POLICY = threading.local()
+_POLICY_LOCK = threading.RLock()
 
 
 class FaultWrapper:
@@ -244,7 +245,8 @@ def _parse_packet_loss(loss: str | int | float) -> int:
 
 def apply_policy(_key: str):
     def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        policy = _POLICY_REGISTRY.get(_key)
+        with _POLICY_LOCK:
+            policy = _POLICY_REGISTRY.get(_key)
         if policy is None:
             return FaultWrapper(func)
         return FaultWrapper(
@@ -316,26 +318,31 @@ def register_policy(
         if connect_ms < 0 or recv_ms < 0:
             raise ValueError("connect_timeout_ms and recv_timeout_ms must be >= 0")
         policy["timeouts"] = (connect_ms, recv_ms)
-    _POLICY_REGISTRY[name] = policy
+    with _POLICY_LOCK:
+        _POLICY_REGISTRY[name] = policy
 
 
 def clear_policies() -> None:
-    _POLICY_REGISTRY.clear()
+    with _POLICY_LOCK:
+        _POLICY_REGISTRY.clear()
 
 
 def list_policies() -> list[str]:
-    return sorted(_POLICY_REGISTRY.keys())
+    with _POLICY_LOCK:
+        return sorted(_POLICY_REGISTRY.keys())
 
 
 def get_policy(name: str) -> dict[str, Any] | None:
-    policy = _POLICY_REGISTRY.get(name)
+    with _POLICY_LOCK:
+        policy = _POLICY_REGISTRY.get(name)
     if policy is None:
         return None
     return dict(policy)
 
 
 def unregister_policy(name: str) -> bool:
-    return _POLICY_REGISTRY.pop(name, None) is not None
+    with _POLICY_LOCK:
+        return _POLICY_REGISTRY.pop(name, None) is not None
 
 
 def load_policies(path: str | Path) -> int:
