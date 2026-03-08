@@ -1,7 +1,10 @@
 use faultcore_network::{ChaosEngine, LayerResult};
 use libc::{c_int, c_short, c_void, pollfd, size_t, sockaddr, socklen_t, ssize_t};
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 
 mod shm;
 
@@ -15,7 +18,7 @@ struct TimeoutState {
 
 thread_local! {
     static TIMEOUT_STATE: RefCell<Option<TimeoutState>> = const { RefCell::new(None) };
-    static LATENCY_START: RefCell<std::collections::HashMap<c_int, std::time::Instant>> = RefCell::new(std::collections::HashMap::new());
+    static LATENCY_START: RefCell<Mutex<HashMap<c_int, Instant>>> = RefCell::new(Mutex::new(HashMap::new()));
 }
 
 type SendFn = unsafe extern "C" fn(c_int, *const c_void, size_t, c_int) -> ssize_t;
@@ -151,24 +154,22 @@ fn apply_chaos_from_shm(fd: c_int, bytes: u64, is_send: bool, is_connect: bool) 
 
             if non_blocking && !is_connect {
                 let mut elapsed = false;
-                LATENCY_START.with(|map| {
-                    let mut m = map.borrow_mut();
+                LATENCY_START.with(|cell| {
+                    let guard = cell.borrow_mut();
+                    let mut m = guard.lock().unwrap();
                     if let Some(start) = m.get(&fd) {
                         if start.elapsed().as_nanos() >= latency_ns as u128 {
                             elapsed = true;
+                            m.remove(&fd);
                         }
                     } else {
-                        m.insert(fd, std::time::Instant::now());
+                        m.insert(fd, Instant::now());
                     }
                 });
 
                 if !elapsed {
                     set_errno(libc::EAGAIN);
                     return Some(-1);
-                } else {
-                    LATENCY_START.with(|map| {
-                        map.borrow_mut().remove(&fd);
-                    });
                 }
             } else {
                 std::thread::sleep(std::time::Duration::from_nanos(latency_ns));
