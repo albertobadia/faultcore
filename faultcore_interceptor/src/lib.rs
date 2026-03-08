@@ -13,14 +13,8 @@ const FAULTCORE_SETPRIORITY_LATENCY: c_int = 0xFA;
 const FAULTCORE_SETPRIORITY_BANDWIDTH: c_int = 0xFB;
 const FAULTCORE_SETPRIORITY_TIMEOUT: c_int = 0xFC;
 
-#[derive(Debug, Clone, Copy)]
-struct TimeoutState {
-    connect_timeout_ms: u64,
-    recv_timeout_ms: u64,
-}
 
 thread_local! {
-    static TIMEOUT_STATE: RefCell<Option<TimeoutState>> = const { RefCell::new(None) };
     static LATENCY_START: RefCell<HashMap<c_int, Instant>> = RefCell::new(HashMap::new());
 }
 
@@ -176,15 +170,6 @@ fn apply_chaos_from_shm(fd: c_int, bytes: u64, is_send: bool, is_connect: bool) 
         LayerResult::Continue => {}
     }
 
-    if config.connect_timeout_ms > 0 || config.recv_timeout_ms > 0 {
-        TIMEOUT_STATE.with(|t| {
-            *t.borrow_mut() = Some(TimeoutState {
-                connect_timeout_ms: config.connect_timeout_ms,
-                recv_timeout_ms: config.recv_timeout_ms,
-            });
-        });
-    }
-
     None
 }
 
@@ -202,9 +187,8 @@ fn apply_timeout_connect(sock: c_int, addr: *const sockaddr, len: socklen_t) -> 
         }
     }
 
-    let timeout_ms = TIMEOUT_STATE
-        .with(|t| t.borrow().map(|state| state.connect_timeout_ms))
-        .or_else(|| shm::get_config_for_fd(sock).map(|c| c.connect_timeout_ms))
+    let timeout_ms = shm::get_config_for_fd(sock)
+        .map(|c| c.connect_timeout_ms)
         .unwrap_or_else(|| {
             if !shm::is_shm_open() {
                 return 0;
@@ -272,9 +256,8 @@ fn apply_timeout_connect(sock: c_int, addr: *const sockaddr, len: socklen_t) -> 
 }
 
 fn apply_timeout_recv(sock: c_int) -> Option<isize> {
-    let timeout_ms = TIMEOUT_STATE
-        .with(|t| t.borrow().map(|state| state.recv_timeout_ms))
-        .or_else(|| shm::get_config_for_fd(sock).map(|c| c.recv_timeout_ms))
+    let timeout_ms = shm::get_config_for_fd(sock)
+        .map(|c| c.recv_timeout_ms)
         .unwrap_or_else(|| {
             if !shm::is_shm_open() {
                 return 0;
