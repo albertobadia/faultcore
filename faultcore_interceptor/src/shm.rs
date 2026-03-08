@@ -56,6 +56,9 @@ pub struct FaultcoreConfig {
     pub conn_err_prob_ppm: u64,
     pub half_open_after_bytes: u64,
     pub half_open_err_kind: u64,
+    pub dup_prob_ppm: u64,
+    pub dup_max_extra: u64,
+    pub reorder_prob_ppm: u64,
     pub reserved: u32,
 }
 
@@ -94,6 +97,8 @@ impl FaultcoreConfig {
             && self.conn_err_kind <= 3
             && self.conn_err_prob_ppm <= 1_000_000
             && self.half_open_err_kind <= 3
+            && self.dup_prob_ppm <= 1_000_000
+            && self.reorder_prob_ppm <= 1_000_000
     }
 
     pub fn into_network_config(self) -> faultcore_network::Config {
@@ -124,6 +129,9 @@ impl FaultcoreConfig {
             conn_err_prob_ppm: self.conn_err_prob_ppm,
             half_open_after_bytes: self.half_open_after_bytes,
             half_open_err_kind: self.half_open_err_kind,
+            dup_prob_ppm: self.dup_prob_ppm,
+            dup_max_extra: self.dup_max_extra,
+            reorder_prob_ppm: self.reorder_prob_ppm,
         }
     }
 }
@@ -313,6 +321,9 @@ mod tests {
             conn_err_prob_ppm: 0,
             half_open_after_bytes: 0,
             half_open_err_kind: 0,
+            dup_prob_ppm: 0,
+            dup_max_extra: 0,
+            reorder_prob_ppm: 0,
             reserved: 0,
         };
         assert!(config.is_valid());
@@ -349,6 +360,9 @@ mod tests {
             conn_err_prob_ppm: 0,
             half_open_after_bytes: 0,
             half_open_err_kind: 0,
+            dup_prob_ppm: 0,
+            dup_max_extra: 0,
+            reorder_prob_ppm: 0,
             reserved: 0,
         };
         assert!(!config.is_valid());
@@ -424,6 +438,9 @@ mod tests {
                 conn_err_prob_ppm: 0,
                 half_open_after_bytes: 0,
                 half_open_err_kind: 0,
+                dup_prob_ppm: 0,
+                dup_max_extra: 0,
+                reorder_prob_ppm: 0,
                 reserved: 0,
             });
         }
@@ -461,6 +478,9 @@ mod tests {
             let conn_err_prob_ppm = ptr::read_unaligned(base.add(196) as *const u64);
             let half_open_after_bytes = ptr::read_unaligned(base.add(204) as *const u64);
             let half_open_err_kind = ptr::read_unaligned(base.add(212) as *const u64);
+            let dup_prob_ppm = ptr::read_unaligned(base.add(220) as *const u64);
+            let dup_max_extra = ptr::read_unaligned(base.add(228) as *const u64);
+            let reorder_prob_ppm = ptr::read_unaligned(base.add(236) as *const u64);
             assert_eq!(magic, 0);
             assert_eq!(version, 0);
             assert_eq!(latency_ns, 0);
@@ -489,6 +509,9 @@ mod tests {
             assert_eq!(conn_err_prob_ppm, 0);
             assert_eq!(half_open_after_bytes, 0);
             assert_eq!(half_open_err_kind, 0);
+            assert_eq!(dup_prob_ppm, 0);
+            assert_eq!(dup_max_extra, 0);
+            assert_eq!(reorder_prob_ppm, 0);
         }
 
         *SHM_POINTER.write() = prev_ptr;

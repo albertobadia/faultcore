@@ -114,6 +114,21 @@ Required keyword fields:
 Optional:
 - `error`: one of `"reset"`, `"refused"`, `"unreachable"` (default `"reset"`)
 
+### `packet_duplicate(...)`
+
+Inject duplicated sends.
+
+Optional keyword fields:
+- `prob`: duplicate probability (same formats as `packet_loss(...)`, default `"100%"`)
+- `max_extra`: max extra copies per successful send, must be `> 0` (default `1`)
+
+### `packet_reorder(...)`
+
+Inject packet reordering (MVP on `sendto` path).
+
+Optional keyword fields:
+- `prob`: reorder probability (same formats as `packet_loss(...)`, default `"100%"`)
+
 ### `rate_limit(rate: str | int)`
 
 Set bandwidth in bits per second (bps) internally.
@@ -170,6 +185,8 @@ register_policy(
     correlated_loss: dict[str, Any] | None = None,
     connection_error: dict[str, Any] | None = None,
     half_open: dict[str, Any] | None = None,
+    packet_duplicate: dict[str, Any] | None = None,
+    packet_reorder: dict[str, Any] | None = None,
 ) -> None
 ```
 

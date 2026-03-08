@@ -467,6 +467,55 @@ class TestConnectionErrorDecorators:
             faultcore.half_open(after_bytes=0)
 
 
+class TestDuplicateAndReorderDecorators:
+    def test_packet_duplicate_writes_profile_to_shm(self):
+        from unittest.mock import MagicMock, patch
+
+        mock_shm = MagicMock()
+        mock_shm.write_packet_duplicate = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=978):
+
+                @faultcore.packet_duplicate(prob="2%", max_extra=3)
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_packet_duplicate.assert_called_once_with(
+                    978,
+                    prob_ppm=20_000,
+                    max_extra=3,
+                )
+                mock_shm.clear.assert_called_once_with(978)
+
+    def test_packet_reorder_writes_profile_to_shm(self):
+        from unittest.mock import MagicMock, patch
+
+        mock_shm = MagicMock()
+        mock_shm.write_packet_reorder = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=979):
+
+                @faultcore.packet_reorder(prob="1.5%")
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_packet_reorder.assert_called_once_with(
+                    979,
+                    prob_ppm=15_000,
+                )
+                mock_shm.clear.assert_called_once_with(979)
+
+    def test_packet_duplicate_rejects_invalid_max_extra(self):
+        with pytest.raises(ValueError):
+            faultcore.packet_duplicate(max_extra=0)
+
+
 class TestPolicyRegistry:
     def test_apply_policy_uses_registered_policy(self):
         from unittest.mock import MagicMock, patch
@@ -669,6 +718,39 @@ class TestPolicyRegistry:
                 )
                 mock_shm.clear.assert_called_once_with(892)
 
+    def test_register_policy_with_packet_duplicate_and_reorder(self):
+        from unittest.mock import MagicMock, patch
+
+        faultcore.register_policy(
+            "dup_reorder_policy",
+            packet_duplicate={"prob": "3%", "max_extra": 2},
+            packet_reorder={"prob": "1%"},
+        )
+
+        mock_shm = MagicMock()
+        mock_shm.write_packet_duplicate = MagicMock()
+        mock_shm.write_packet_reorder = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=893):
+
+                @faultcore.apply_policy("dup_reorder_policy")
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_packet_duplicate.assert_called_once_with(
+                    893,
+                    prob_ppm=30_000,
+                    max_extra=2,
+                )
+                mock_shm.write_packet_reorder.assert_called_once_with(
+                    893,
+                    prob_ppm=10_000,
+                )
+                mock_shm.clear.assert_called_once_with(893)
+
     def test_register_policy_rejects_invalid_values(self):
         with pytest.raises(ValueError):
             faultcore.register_policy("", latency_ms=1)
@@ -694,6 +776,10 @@ class TestPolicyRegistry:
             faultcore.register_policy("bad10", connection_error="invalid")
         with pytest.raises(ValueError):
             faultcore.register_policy("bad11", half_open="invalid")
+        with pytest.raises(ValueError):
+            faultcore.register_policy("bad12", packet_duplicate="invalid")
+        with pytest.raises(ValueError):
+            faultcore.register_policy("bad13", packet_reorder="invalid")
 
     def test_registry_introspection_and_unregister(self):
         from faultcore.decorator import clear_policies

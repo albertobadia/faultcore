@@ -20,6 +20,14 @@ thread_local! {
 
 lazy_static::lazy_static! {
     static ref HALF_OPEN_BYTES: parking_lot::Mutex<HashMap<c_int, u64>> = parking_lot::Mutex::new(HashMap::new());
+    static ref REORDER_PENDING_SENDTO: parking_lot::Mutex<HashMap<c_int, PendingDatagram>> = parking_lot::Mutex::new(HashMap::new());
+}
+
+struct PendingDatagram {
+    data: Vec<u8>,
+    flags: c_int,
+    addr: Vec<u8>,
+    addr_len: socklen_t,
 }
 
 type SendFn = unsafe extern "C" fn(c_int, *const c_void, size_t, c_int) -> ssize_t;
@@ -131,6 +139,94 @@ fn record_stream_bytes(fd: c_int, bytes: u64) {
     let mut map = HALF_OPEN_BYTES.lock();
     let current = map.get(&fd).copied().unwrap_or(0);
     map.insert(fd, current.saturating_add(bytes));
+}
+
+fn maybe_duplicate_send(fd: c_int, b: *const c_void, sent: ssize_t, f: c_int) {
+    if sent <= 0 {
+        return;
+    }
+    let Some(cfg) = shm::get_config_for_fd(fd) else {
+        return;
+    };
+    if cfg.dup_prob_ppm == 0 {
+        return;
+    }
+    let max_extra = if cfg.dup_max_extra == 0 {
+        1
+    } else {
+        cfg.dup_max_extra
+    };
+    for _ in 0..max_extra {
+        if random_ppm_hit(cfg.dup_prob_ppm) {
+            unsafe {
+                let _ = (ORIG_SEND)(fd, b, sent as size_t, f);
+            }
+        }
+    }
+}
+
+fn maybe_duplicate_sendto(
+    fd: c_int,
+    b: *const c_void,
+    sent: ssize_t,
+    f: c_int,
+    addr: *const sockaddr,
+    addr_len: socklen_t,
+) {
+    if sent <= 0 {
+        return;
+    }
+    let Some(cfg) = shm::get_config_for_fd(fd) else {
+        return;
+    };
+    if cfg.dup_prob_ppm == 0 {
+        return;
+    }
+    let max_extra = if cfg.dup_max_extra == 0 {
+        1
+    } else {
+        cfg.dup_max_extra
+    };
+    for _ in 0..max_extra {
+        if random_ppm_hit(cfg.dup_prob_ppm) {
+            unsafe {
+                let _ = (ORIG_SENDTO)(fd, b, sent as size_t, f, addr, addr_len);
+            }
+        }
+    }
+}
+
+fn maybe_stage_reorder_sendto(
+    fd: c_int,
+    b: *const c_void,
+    l: size_t,
+    f: c_int,
+    addr: *const sockaddr,
+    addr_len: socklen_t,
+) -> Option<ssize_t> {
+    if l == 0 || b.is_null() {
+        return None;
+    }
+    let cfg = shm::get_config_for_fd(fd)?;
+    if cfg.reorder_prob_ppm == 0 || !random_ppm_hit(cfg.reorder_prob_ppm) {
+        return None;
+    }
+    let data = unsafe { std::slice::from_raw_parts(b.cast::<u8>(), l).to_vec() };
+    let addr_bytes = if !addr.is_null() && addr_len > 0 {
+        unsafe { std::slice::from_raw_parts(addr.cast::<u8>(), addr_len as usize).to_vec() }
+    } else {
+        Vec::new()
+    };
+    REORDER_PENDING_SENDTO.lock().insert(
+        fd,
+        PendingDatagram {
+            data,
+            flags: f,
+            addr: addr_bytes,
+            addr_len,
+        },
+    );
+    Some(l as ssize_t)
 }
 
 lazy_static::lazy_static! {
@@ -384,6 +480,7 @@ pub extern "C" fn close(fd: c_int) -> c_int {
         cell.borrow_mut().remove(&fd);
     });
     HALF_OPEN_BYTES.lock().remove(&fd);
+    REORDER_PENDING_SENDTO.lock().remove(&fd);
     shm::clear_rule_for_fd(fd);
 
     let result = unsafe { (ORIG_CLOSE)(fd) };
@@ -409,6 +506,7 @@ pub extern "C" fn send(s: c_int, b: *const c_void, l: size_t, f: c_int) -> ssize
 
     if result > 0 {
         record_stream_bytes(s, result as u64);
+        maybe_duplicate_send(s, b, result, f);
     }
 
     exit_hook();
@@ -489,17 +587,48 @@ pub extern "C" fn sendto(
     }
 
     initialize();
+    let mut pending = REORDER_PENDING_SENDTO.lock().remove(&s);
     let result = if let Some(errno) = should_fail_stream(s) {
         set_errno(errno);
+        if let Some(pkt) = pending.take() {
+            REORDER_PENDING_SENDTO.lock().insert(s, pkt);
+        }
         -1
     } else if let Some((error, _)) = apply_chaos_from_shm(s, l as u64, true, false) {
+        if let Some(pkt) = pending.take() {
+            REORDER_PENDING_SENDTO.lock().insert(s, pkt);
+        }
         error
+    } else if pending.is_none() {
+        if let Some(staged) = maybe_stage_reorder_sendto(s, b, l, f, addr, addr_len) {
+            staged
+        } else {
+            unsafe { (ORIG_SENDTO)(s, b, l, f, addr, addr_len) }
+        }
     } else {
         unsafe { (ORIG_SENDTO)(s, b, l, f, addr, addr_len) }
     };
 
     if result > 0 {
         record_stream_bytes(s, result as u64);
+        maybe_duplicate_sendto(s, b, result, f, addr, addr_len);
+        if let Some(pkt) = pending.take() {
+            let addr_ptr = if pkt.addr.is_empty() {
+                std::ptr::null()
+            } else {
+                pkt.addr.as_ptr().cast::<sockaddr>()
+            };
+            unsafe {
+                let _ = (ORIG_SENDTO)(
+                    s,
+                    pkt.data.as_ptr().cast::<c_void>(),
+                    pkt.data.len(),
+                    pkt.flags,
+                    addr_ptr,
+                    pkt.addr_len,
+                );
+            }
+        }
     }
 
     exit_hook();

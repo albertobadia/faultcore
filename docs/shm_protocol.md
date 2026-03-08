@@ -11,7 +11,7 @@ Este documento define el contrato binario compartido entre:
   - Tabla de FDs + tabla hash de TIDs: `(MAX_FDS + MAX_TIDS) * CONFIG_SIZE`
   - En el interceptor además se reserva una región para `PolicyState`.
 
-## FaultcoreConfig (224 bytes)
+## FaultcoreConfig (248 bytes)
 - Endianness: little-endian
 - Layout fijo (packed)
 
@@ -45,11 +45,14 @@ Este documento define el contrato binario compartido entre:
 | `conn_err_prob_ppm` | 196 | 8 | `u64` |
 | `half_open_after_bytes` | 204 | 8 | `u64` |
 | `half_open_err_kind` | 212 | 8 | `u64` |
-| `reserved` | 220 | 4 | `u32` |
+| `dup_prob_ppm` | 220 | 8 | `u64` |
+| `dup_max_extra` | 228 | 8 | `u64` |
+| `reorder_prob_ppm` | 236 | 8 | `u64` |
+| `reserved` | 244 | 4 | `u32` |
 
 Constantes:
 - `FAULTCORE_MAGIC = 0xFACC0DE`
-- `CONFIG_SIZE = 224`
+- `CONFIG_SIZE = 248`
 - `MAX_FDS = 131072`
 - `MAX_TIDS = 65536`
 

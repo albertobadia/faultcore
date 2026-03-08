@@ -118,6 +118,16 @@ class TestExports:
 
         assert callable(half_open)
 
+    def test_packet_duplicate_is_exported(self):
+        from faultcore import packet_duplicate
+
+        assert callable(packet_duplicate)
+
+    def test_packet_reorder_is_exported(self):
+        from faultcore import packet_reorder
+
+        assert callable(packet_reorder)
+
     def test_apply_policy_is_exported(self):
         from faultcore import apply_policy
 

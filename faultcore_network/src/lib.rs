@@ -32,6 +32,9 @@ pub struct Config {
     pub conn_err_prob_ppm: u64,
     pub half_open_after_bytes: u64,
     pub half_open_err_kind: u64,
+    pub dup_prob_ppm: u64,
+    pub dup_max_extra: u64,
+    pub reorder_prob_ppm: u64,
 }
 
 impl Config {
@@ -56,6 +59,8 @@ impl Config {
             || self.ge_enabled > 0
             || self.conn_err_kind > 0
             || self.half_open_after_bytes > 0
+            || self.dup_prob_ppm > 0
+            || self.reorder_prob_ppm > 0
     }
 
     pub fn effective_for_send(&self) -> Self {
@@ -126,6 +131,9 @@ impl Config {
             conn_err_prob_ppm: self.conn_err_prob_ppm,
             half_open_after_bytes: self.half_open_after_bytes,
             half_open_err_kind: self.half_open_err_kind,
+            dup_prob_ppm: self.dup_prob_ppm,
+            dup_max_extra: self.dup_max_extra,
+            reorder_prob_ppm: self.reorder_prob_ppm,
         }
     }
 }

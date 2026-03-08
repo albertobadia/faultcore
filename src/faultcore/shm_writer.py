@@ -6,7 +6,7 @@ import threading
 FAULTCORE_MAGIC = 0xFACC0DE
 MAX_FDS = 131072
 MAX_TIDS = 65536
-CONFIG_SIZE = 224
+CONFIG_SIZE = 248
 
 _OFFSET_MAGIC = 0
 _OFFSET_VERSION = 4
@@ -36,6 +36,9 @@ _OFFSET_CONN_ERR_KIND = 188
 _OFFSET_CONN_ERR_PROB_PPM = 196
 _OFFSET_HALF_OPEN_AFTER_BYTES = 204
 _OFFSET_HALF_OPEN_ERR_KIND = 212
+_OFFSET_DUP_PROB_PPM = 220
+_OFFSET_DUP_MAX_EXTRA = 228
+_OFFSET_REORDER_PROB_PPM = 236
 
 
 class SHMWriter:
@@ -189,6 +192,19 @@ class SHMWriter:
         def writer(offset: int) -> None:
             struct.pack_into("<Q", self._mmap, offset + _OFFSET_HALF_OPEN_AFTER_BYTES, after_bytes)
             struct.pack_into("<Q", self._mmap, offset + _OFFSET_HALF_OPEN_ERR_KIND, err_kind)
+
+        self._write_versioned(tid, writer)
+
+    def write_packet_duplicate(self, tid: int, *, prob_ppm: int, max_extra: int) -> None:
+        def writer(offset: int) -> None:
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_DUP_PROB_PPM, prob_ppm)
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_DUP_MAX_EXTRA, max_extra)
+
+        self._write_versioned(tid, writer)
+
+    def write_packet_reorder(self, tid: int, *, prob_ppm: int) -> None:
+        def writer(offset: int) -> None:
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_REORDER_PROB_PPM, prob_ppm)
 
         self._write_versioned(tid, writer)
 

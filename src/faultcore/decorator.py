@@ -85,6 +85,17 @@ def _build_half_open_profile(*, after_bytes: int, error: str = "reset") -> dict[
     return {"after_bytes": threshold, "err_kind": _parse_error_kind(error)}
 
 
+def _build_packet_duplicate_profile(*, prob: str | int | float = "100%", max_extra: int = 1) -> dict[str, int]:
+    extra = int(max_extra)
+    if extra <= 0:
+        raise ValueError("max_extra must be > 0")
+    return {"prob_ppm": _parse_packet_loss(prob), "max_extra": extra}
+
+
+def _build_packet_reorder_profile(*, prob: str | int | float = "100%") -> dict[str, int]:
+    return {"prob_ppm": _parse_packet_loss(prob)}
+
+
 class FaultWrapper:
     def __init__(
         self,
@@ -100,6 +111,8 @@ class FaultWrapper:
         correlated_loss_profile: dict[str, int] | None = None,
         connection_error_profile: dict[str, int] | None = None,
         half_open_profile: dict[str, int] | None = None,
+        packet_duplicate_profile: dict[str, int] | None = None,
+        packet_reorder_profile: dict[str, int] | None = None,
     ):
         functools.update_wrapper(self, func)
         self._func = func
@@ -114,6 +127,8 @@ class FaultWrapper:
         self._correlated_loss_profile = correlated_loss_profile or {}
         self._connection_error_profile = connection_error_profile or {}
         self._half_open_profile = half_open_profile or {}
+        self._packet_duplicate_profile = packet_duplicate_profile or {}
+        self._packet_reorder_profile = packet_reorder_profile or {}
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._func, name)
@@ -190,6 +205,19 @@ class FaultWrapper:
                 err_kind=self._half_open_profile.get("err_kind", 0),
             )
 
+        if self._packet_duplicate_profile:
+            shm.write_packet_duplicate(
+                tid,
+                prob_ppm=self._packet_duplicate_profile.get("prob_ppm", 0),
+                max_extra=self._packet_duplicate_profile.get("max_extra", 1),
+            )
+
+        if self._packet_reorder_profile:
+            shm.write_packet_reorder(
+                tid,
+                prob_ppm=self._packet_reorder_profile.get("prob_ppm", 0),
+            )
+
         timeout_ms = self._timeouts[0] if self._timeouts else None
 
         if timeout_ms and timeout_ms > 0 and not iscoroutinefunction(self._func):
@@ -232,7 +260,9 @@ class FaultWrapper:
             f"downlink={self._downlink_profile}, "
             f"correlated_loss={self._correlated_loss_profile}, "
             f"connection_error={self._connection_error_profile}, "
-            f"half_open={self._half_open_profile}) for {self._func!r}>"
+            f"half_open={self._half_open_profile}, "
+            f"packet_duplicate={self._packet_duplicate_profile}, "
+            f"packet_reorder={self._packet_reorder_profile}) for {self._func!r}>"
         )
 
 
@@ -397,6 +427,24 @@ def half_open(*, after_bytes: int, error: str = "reset"):
     return decorator
 
 
+def packet_duplicate(*, prob: str | int | float = "100%", max_extra: int = 1):
+    profile = _build_packet_duplicate_profile(prob=prob, max_extra=max_extra)
+
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
+        return FaultWrapper(func, packet_duplicate_profile=profile)
+
+    return decorator
+
+
+def packet_reorder(*, prob: str | int | float = "100%"):
+    profile = _build_packet_reorder_profile(prob=prob)
+
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
+        return FaultWrapper(func, packet_reorder_profile=profile)
+
+    return decorator
+
+
 def _parse_rate(rate: str | int | float) -> int:
     if isinstance(rate, (int, float)):
         if rate < 0:
@@ -476,6 +524,8 @@ def apply_policy(_key: str):
             correlated_loss_profile=policy.get("correlated_loss_profile"),
             connection_error_profile=policy.get("connection_error_profile"),
             half_open_profile=policy.get("half_open_profile"),
+            packet_duplicate_profile=policy.get("packet_duplicate_profile"),
+            packet_reorder_profile=policy.get("packet_reorder_profile"),
         )
 
     return decorator
@@ -509,6 +559,8 @@ def register_policy(
     correlated_loss: dict[str, Any] | None = None,
     connection_error: dict[str, Any] | None = None,
     half_open: dict[str, Any] | None = None,
+    packet_duplicate: dict[str, Any] | None = None,
+    packet_reorder: dict[str, Any] | None = None,
 ) -> None:
     if not name:
         raise ValueError("policy name must be non-empty")
@@ -585,6 +637,19 @@ def register_policy(
             after_bytes=half_open.get("after_bytes", 0),
             error=half_open.get("error", "reset"),
         )
+    if packet_duplicate is not None:
+        if not isinstance(packet_duplicate, dict):
+            raise ValueError("packet_duplicate must be a mapping when provided")
+        policy["packet_duplicate_profile"] = _build_packet_duplicate_profile(
+            prob=packet_duplicate.get("prob", "100%"),
+            max_extra=packet_duplicate.get("max_extra", 1),
+        )
+    if packet_reorder is not None:
+        if not isinstance(packet_reorder, dict):
+            raise ValueError("packet_reorder must be a mapping when provided")
+        policy["packet_reorder_profile"] = _build_packet_reorder_profile(
+            prob=packet_reorder.get("prob", "100%"),
+        )
     with _POLICY_LOCK:
         _POLICY_REGISTRY[name] = policy
 
@@ -651,6 +716,8 @@ def load_policies(path: str | Path) -> int:
             correlated_loss=cfg.get("correlated_loss"),
             connection_error=cfg.get("connection_error"),
             half_open=cfg.get("half_open"),
+            packet_duplicate=cfg.get("packet_duplicate"),
+            packet_reorder=cfg.get("packet_reorder"),
         )
         loaded += 1
     return loaded
