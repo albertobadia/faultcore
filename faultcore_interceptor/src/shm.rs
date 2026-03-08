@@ -282,4 +282,54 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_clear_rule_for_fd_resets_fd_slot() {
+        let mut table = vec![FaultcoreConfig::default(); MAX_FDS + MAX_TIDS];
+
+        let prev_ptr = *SHM_POINTER.read();
+        let prev_open = SHM_OPEN.load(Ordering::SeqCst);
+
+        *SHM_POINTER.write() = table.as_mut_ptr() as usize;
+        SHM_OPEN.store(1, Ordering::SeqCst);
+
+        let fd = 7usize;
+        unsafe {
+            let ptr = get_config_ptr(fd, false).expect("fd pointer should exist");
+            ptr.write(FaultcoreConfig {
+                magic: FAULTCORE_MAGIC,
+                version: 2,
+                latency_ns: 123,
+                packet_loss_ppm: 456,
+                bandwidth_bps: 789,
+                connect_timeout_ms: 111,
+                recv_timeout_ms: 222,
+                reserved: 0,
+            });
+        }
+
+        clear_rule_for_fd(fd as c_int);
+
+        unsafe {
+            let ptr = get_config_ptr(fd, false).expect("fd pointer should exist");
+            let base = ptr as *const u8;
+            let magic = ptr::read_unaligned(base as *const u32);
+            let version = ptr::read_unaligned(base.add(4) as *const u64);
+            let latency_ns = ptr::read_unaligned(base.add(12) as *const u64);
+            let packet_loss_ppm = ptr::read_unaligned(base.add(20) as *const u64);
+            let bandwidth_bps = ptr::read_unaligned(base.add(28) as *const u64);
+            let connect_timeout_ms = ptr::read_unaligned(base.add(36) as *const u64);
+            let recv_timeout_ms = ptr::read_unaligned(base.add(44) as *const u64);
+            assert_eq!(magic, 0);
+            assert_eq!(version, 0);
+            assert_eq!(latency_ns, 0);
+            assert_eq!(packet_loss_ppm, 0);
+            assert_eq!(bandwidth_bps, 0);
+            assert_eq!(connect_timeout_ms, 0);
+            assert_eq!(recv_timeout_ms, 0);
+        }
+
+        *SHM_POINTER.write() = prev_ptr;
+        SHM_OPEN.store(prev_open, Ordering::SeqCst);
+    }
 }

@@ -4,6 +4,14 @@
 
 set -e
 
+cd faultcore_interceptor
+cargo test
+
+cd ../faultcore_network
+cargo test
+
+cd ..
+
 # Detect OS and set interceptor variables
 INTERCEPTOR=""
 case "$(uname)" in
