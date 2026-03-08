@@ -108,6 +108,9 @@ class FaultWrapper:
 
 
 def latency(latency_ms: int):
+    if latency_ms < 0:
+        raise ValueError("latency must be >= 0")
+
     def decorator(func: Callable[..., Any]) -> FaultWrapper:
         return FaultWrapper(func, latency_ms=latency_ms)
 
@@ -115,6 +118,9 @@ def latency(latency_ms: int):
 
 
 def jitter(jitter_ms: int):
+    if jitter_ms < 0:
+        raise ValueError("jitter must be >= 0")
+
     def decorator(func: Callable[..., Any]) -> FaultWrapper:
         return FaultWrapper(func, jitter_ms=jitter_ms)
 
@@ -122,6 +128,9 @@ def jitter(jitter_ms: int):
 
 
 def timeout(timeout_ms: int):
+    if timeout_ms < 0:
+        raise ValueError("timeout must be >= 0")
+
     def decorator(func: Callable[..., Any]) -> FaultWrapper:
         return FaultWrapper(func, timeouts=(timeout_ms, timeout_ms))
 
@@ -129,6 +138,9 @@ def timeout(timeout_ms: int):
 
 
 def connect_timeout(timeout_ms: int):
+    if timeout_ms < 0:
+        raise ValueError("connect_timeout must be >= 0")
+
     def decorator(func: Callable[..., Any]) -> FaultWrapper:
         return FaultWrapper(func, timeouts=(timeout_ms, 0))
 
@@ -136,6 +148,9 @@ def connect_timeout(timeout_ms: int):
 
 
 def recv_timeout(timeout_ms: int):
+    if timeout_ms < 0:
+        raise ValueError("recv_timeout must be >= 0")
+
     def decorator(func: Callable[..., Any]) -> FaultWrapper:
         return FaultWrapper(func, timeouts=(0, timeout_ms))
 
@@ -169,17 +184,34 @@ def burst_loss(length: int):
 
 def _parse_rate(rate: str | int | float) -> int:
     if isinstance(rate, (int, float)):
+        if rate < 0:
+            raise ValueError("rate must be >= 0")
         return int(rate * 1_000_000)
     r = rate.lower()
     if r.endswith("mbps"):
-        return int(float(r[:-4]) * 1_000_000)
+        value = float(r[:-4])
+        if value < 0:
+            raise ValueError("rate must be >= 0")
+        return int(value * 1_000_000)
     if r.endswith("gbps"):
-        return int(float(r[:-4]) * 1_000_000_000)
+        value = float(r[:-4])
+        if value < 0:
+            raise ValueError("rate must be >= 0")
+        return int(value * 1_000_000_000)
     if r.endswith("kbps"):
-        return int(float(r[:-4]) * 1_000)
+        value = float(r[:-4])
+        if value < 0:
+            raise ValueError("rate must be >= 0")
+        return int(value * 1_000)
     if r.endswith("bps"):
-        return int(float(r[:-3]))
-    return int(float(r))
+        value = float(r[:-3])
+        if value < 0:
+            raise ValueError("rate must be >= 0")
+        return int(value)
+    value = float(r)
+    if value < 0:
+        raise ValueError("rate must be >= 0")
+    return int(value)
 
 
 def _parse_packet_loss(loss: str | int | float) -> int:
@@ -252,10 +284,17 @@ def register_policy(
     connect_timeout_ms: int | None = None,
     recv_timeout_ms: int | None = None,
 ) -> None:
+    if not name:
+        raise ValueError("policy name must be non-empty")
+
     policy: dict[str, Any] = {}
     if latency_ms is not None:
+        if int(latency_ms) < 0:
+            raise ValueError("latency_ms must be >= 0")
         policy["latency_ms"] = int(latency_ms)
     if jitter_ms is not None:
+        if int(jitter_ms) < 0:
+            raise ValueError("jitter_ms must be >= 0")
         policy["jitter_ms"] = int(jitter_ms)
     if packet_loss is not None:
         policy["packet_loss_ppm"] = _parse_packet_loss(packet_loss)
@@ -268,10 +307,14 @@ def register_policy(
         policy["bandwidth_bps"] = _parse_rate(rate)
     if timeout_ms is not None:
         t = int(timeout_ms)
+        if t < 0:
+            raise ValueError("timeout_ms must be >= 0")
         policy["timeouts"] = (t, t)
     if connect_timeout_ms is not None or recv_timeout_ms is not None:
         connect_ms = int(connect_timeout_ms) if connect_timeout_ms is not None else 0
         recv_ms = int(recv_timeout_ms) if recv_timeout_ms is not None else 0
+        if connect_ms < 0 or recv_ms < 0:
+            raise ValueError("connect_timeout_ms and recv_timeout_ms must be >= 0")
         policy["timeouts"] = (connect_ms, recv_ms)
     _POLICY_REGISTRY[name] = policy
 

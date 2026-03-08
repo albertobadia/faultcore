@@ -121,6 +121,13 @@ class TestJitterDecorator:
                 mock_shm.write_jitter.assert_called_once_with(999, 25)
                 mock_shm.clear.assert_called_once_with(999)
 
+    def test_jitter_rejects_negative(self):
+        with pytest.raises(ValueError):
+
+            @faultcore.jitter(-1)
+            def _bad():
+                return "x"
+
 
 class TestTimeoutDecoratorWritesCorrectFields:
     def test_timeout_writes_network_timeout_fields(self, monkeypatch):
@@ -179,6 +186,20 @@ class TestTimeoutDecoratorWritesCorrectFields:
                 assert my_func() == "ok"
                 mock_shm.write_timeouts.assert_called_once_with(12347, 0, 800)
                 mock_shm.clear.assert_called_once_with(12347)
+
+    def test_connect_timeout_rejects_negative(self):
+        with pytest.raises(ValueError):
+
+            @faultcore.connect_timeout(-1)
+            def _bad():
+                return "x"
+
+    def test_recv_timeout_rejects_negative(self):
+        with pytest.raises(ValueError):
+
+            @faultcore.recv_timeout(-1)
+            def _bad():
+                return "x"
 
 
 class TestRateLimitDecorator:
@@ -395,6 +416,22 @@ class TestPolicyRegistry:
                 assert op() == "ok"
                 mock_shm.write_timeouts.assert_called_once_with(612, 321, 654)
                 mock_shm.clear.assert_called_once_with(612)
+
+    def test_register_policy_rejects_invalid_values(self):
+        with pytest.raises(ValueError):
+            faultcore.register_policy("", latency_ms=1)
+        with pytest.raises(ValueError):
+            faultcore.register_policy("bad1", latency_ms=-1)
+        with pytest.raises(ValueError):
+            faultcore.register_policy("bad2", jitter_ms=-1)
+        with pytest.raises(ValueError):
+            faultcore.register_policy("bad3", timeout_ms=-1)
+        with pytest.raises(ValueError):
+            faultcore.register_policy("bad4", connect_timeout_ms=-1)
+        with pytest.raises(ValueError):
+            faultcore.register_policy("bad5", recv_timeout_ms=-1)
+        with pytest.raises(ValueError):
+            faultcore.register_policy("bad6", rate=-1)
 
     def test_load_policies_from_json(self, tmp_path):
         file_path = tmp_path / "policies.json"
