@@ -78,6 +78,11 @@ class TestExports:
 
         assert callable(packet_loss)
 
+    def test_burst_loss_is_exported(self):
+        from faultcore import burst_loss
+
+        assert callable(burst_loss)
+
     def test_apply_policy_is_exported(self):
         from faultcore import apply_policy
 

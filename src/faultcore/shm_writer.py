@@ -6,16 +6,17 @@ import threading
 FAULTCORE_MAGIC = 0xFACC0DE
 MAX_FDS = 131072
 MAX_TIDS = 65536
-CONFIG_SIZE = 64
+CONFIG_SIZE = 72
 
 _OFFSET_MAGIC = 0
 _OFFSET_VERSION = 4
 _OFFSET_LATENCY_NS = 12
 _OFFSET_JITTER_NS = 20
 _OFFSET_PACKET_LOSS_PPM = 28
-_OFFSET_BANDWIDTH_BPS = 36
-_OFFSET_CONNECT_TIMEOUT_MS = 44
-_OFFSET_RECV_TIMEOUT_MS = 52
+_OFFSET_BURST_LOSS_LEN = 36
+_OFFSET_BANDWIDTH_BPS = 44
+_OFFSET_CONNECT_TIMEOUT_MS = 52
+_OFFSET_RECV_TIMEOUT_MS = 60
 
 
 class SHMWriter:
@@ -69,6 +70,12 @@ class SHMWriter:
     def write_jitter(self, tid: int, jitter_ms: int) -> None:
         def writer(offset: int) -> None:
             struct.pack_into("<Q", self._mmap, offset + _OFFSET_JITTER_NS, jitter_ms * 1_000_000)
+
+        self._write_versioned(tid, writer)
+
+    def write_burst_loss(self, tid: int, burst_loss_len: int) -> None:
+        def writer(offset: int) -> None:
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_BURST_LOSS_LEN, burst_loss_len)
 
         self._write_versioned(tid, writer)
 

@@ -238,18 +238,53 @@ class TestPacketLossDecorator:
             _parse_packet_loss("2000000ppm")
 
 
+class TestBurstLossDecorator:
+    def test_burst_loss_decorator_writes_burst_len_to_shm(self):
+        from unittest.mock import MagicMock, patch
+
+        mock_shm = MagicMock()
+        mock_shm.write_burst_loss = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=91012):
+
+                @faultcore.burst_loss(4)
+                def my_func():
+                    return "ok"
+
+                result = my_func()
+                assert result == "ok"
+                mock_shm.write_burst_loss.assert_called_once_with(91012, 4)
+                mock_shm.clear.assert_called_once_with(91012)
+
+    def test_burst_loss_rejects_negative(self):
+        with pytest.raises(ValueError):
+
+            @faultcore.burst_loss(-1)
+            def _bad():
+                return "x"
+
+
 class TestPolicyRegistry:
     def test_apply_policy_uses_registered_policy(self):
         from unittest.mock import MagicMock, patch
 
         faultcore.register_policy(
-            "slow_link", latency_ms=50, jitter_ms=10, packet_loss="1%", rate="2mbps", timeout_ms=20
+            "slow_link",
+            latency_ms=50,
+            jitter_ms=10,
+            packet_loss="1%",
+            burst_loss_len=3,
+            rate="2mbps",
+            timeout_ms=20,
         )
 
         mock_shm = MagicMock()
         mock_shm.write_latency = MagicMock()
         mock_shm.write_jitter = MagicMock()
         mock_shm.write_packet_loss = MagicMock()
+        mock_shm.write_burst_loss = MagicMock()
         mock_shm.write_bandwidth = MagicMock()
         mock_shm.write_timeouts = MagicMock()
         mock_shm.clear = MagicMock()
@@ -265,6 +300,7 @@ class TestPolicyRegistry:
                 mock_shm.write_latency.assert_called_once_with(5150, 50)
                 mock_shm.write_jitter.assert_called_once_with(5150, 10)
                 mock_shm.write_packet_loss.assert_called_once_with(5150, 10_000)
+                mock_shm.write_burst_loss.assert_called_once_with(5150, 3)
                 mock_shm.write_bandwidth.assert_called_once_with(5150, 2_000_000)
                 mock_shm.write_timeouts.assert_called_once_with(5150, 20, 20)
                 mock_shm.clear.assert_called_once_with(5150)

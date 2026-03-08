@@ -20,6 +20,7 @@ class FaultWrapper:
         latency_ms: int | None = None,
         jitter_ms: int | None = None,
         packet_loss_ppm: int | None = None,
+        burst_loss_len: int | None = None,
         bandwidth_bps: int | None = None,
         timeouts: tuple[int, int] | None = None,
     ):
@@ -28,6 +29,7 @@ class FaultWrapper:
         self._latency_ms = latency_ms
         self._jitter_ms = jitter_ms
         self._packet_loss_ppm = packet_loss_ppm
+        self._burst_loss_len = burst_loss_len
         self._bandwidth_bps = bandwidth_bps
         self._timeouts = timeouts
 
@@ -51,6 +53,9 @@ class FaultWrapper:
 
         if self._packet_loss_ppm is not None:
             shm.write_packet_loss(tid, self._packet_loss_ppm)
+
+        if self._burst_loss_len is not None:
+            shm.write_burst_loss(tid, self._burst_loss_len)
 
         if self._bandwidth_bps:
             shm.write_bandwidth(tid, self._bandwidth_bps)
@@ -94,6 +99,7 @@ class FaultWrapper:
             f"latency={self._latency_ms}, "
             f"jitter={self._jitter_ms}, "
             f"packet_loss_ppm={self._packet_loss_ppm}, "
+            f"burst_loss_len={self._burst_loss_len}, "
             f"bandwidth={self._bandwidth_bps}, "
             f"timeouts={self._timeouts}) for {self._func!r}>"
         )
@@ -132,6 +138,15 @@ def packet_loss(loss: str | int | float):
     def decorator(func: Callable[..., Any]) -> FaultWrapper:
         ppm = _parse_packet_loss(loss)
         return FaultWrapper(func, packet_loss_ppm=ppm)
+
+    return decorator
+
+
+def burst_loss(length: int):
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
+        if length < 0:
+            raise ValueError("burst_loss length must be >= 0")
+        return FaultWrapper(func, burst_loss_len=int(length))
 
     return decorator
 
@@ -189,6 +204,7 @@ def apply_policy(_key: str):
             latency_ms=policy.get("latency_ms"),
             jitter_ms=policy.get("jitter_ms"),
             packet_loss_ppm=policy.get("packet_loss_ppm"),
+            burst_loss_len=policy.get("burst_loss_len"),
             bandwidth_bps=policy.get("bandwidth_bps"),
             timeouts=policy.get("timeouts"),
         )
@@ -214,6 +230,7 @@ def register_policy(
     latency_ms: int | None = None,
     jitter_ms: int | None = None,
     packet_loss: str | int | float | None = None,
+    burst_loss_len: int | None = None,
     rate: str | int | float | None = None,
     timeout_ms: int | None = None,
 ) -> None:
@@ -224,6 +241,11 @@ def register_policy(
         policy["jitter_ms"] = int(jitter_ms)
     if packet_loss is not None:
         policy["packet_loss_ppm"] = _parse_packet_loss(packet_loss)
+    if burst_loss_len is not None:
+        b = int(burst_loss_len)
+        if b < 0:
+            raise ValueError("burst_loss_len must be >= 0")
+        policy["burst_loss_len"] = b
     if rate is not None:
         policy["bandwidth_bps"] = _parse_rate(rate)
     if timeout_ms is not None:

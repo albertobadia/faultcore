@@ -33,6 +33,7 @@ pub struct FaultcoreConfig {
     pub latency_ns: u64,
     pub jitter_ns: u64,
     pub packet_loss_ppm: u64,
+    pub burst_loss_len: u64,
     pub bandwidth_bps: u64,
     pub connect_timeout_ms: u64,
     pub recv_timeout_ms: u64,
@@ -55,6 +56,7 @@ impl FaultcoreConfig {
             && self.latency_ns <= MAX_LATENCY_NS
             && self.jitter_ns <= MAX_LATENCY_NS
             && self.packet_loss_ppm <= 1_000_000
+            && self.burst_loss_len <= 1_000_000
             && self.bandwidth_bps <= MAX_BANDWIDTH_BPS
     }
 
@@ -63,6 +65,7 @@ impl FaultcoreConfig {
             latency_ns: self.latency_ns,
             jitter_ns: self.jitter_ns,
             packet_loss_ppm: self.packet_loss_ppm,
+            burst_loss_len: self.burst_loss_len,
             bandwidth_bps: self.bandwidth_bps,
             connect_timeout_ms: self.connect_timeout_ms,
             recv_timeout_ms: self.recv_timeout_ms,
@@ -232,6 +235,7 @@ mod tests {
             latency_ns: 100_000_000,
             jitter_ns: 0,
             packet_loss_ppm: 0,
+            burst_loss_len: 0,
             bandwidth_bps: 0,
             connect_timeout_ms: 5000,
             recv_timeout_ms: 3000,
@@ -248,6 +252,7 @@ mod tests {
             latency_ns: 100_000_000,
             jitter_ns: 0,
             packet_loss_ppm: 0,
+            burst_loss_len: 0,
             bandwidth_bps: 0,
             connect_timeout_ms: 5000,
             recv_timeout_ms: 3000,
@@ -307,6 +312,7 @@ mod tests {
                 latency_ns: 123,
                 jitter_ns: 234,
                 packet_loss_ppm: 456,
+                burst_loss_len: 567,
                 bandwidth_bps: 789,
                 connect_timeout_ms: 111,
                 recv_timeout_ms: 222,
@@ -324,14 +330,16 @@ mod tests {
             let latency_ns = ptr::read_unaligned(base.add(12) as *const u64);
             let jitter_ns = ptr::read_unaligned(base.add(20) as *const u64);
             let packet_loss_ppm = ptr::read_unaligned(base.add(28) as *const u64);
-            let bandwidth_bps = ptr::read_unaligned(base.add(36) as *const u64);
-            let connect_timeout_ms = ptr::read_unaligned(base.add(44) as *const u64);
-            let recv_timeout_ms = ptr::read_unaligned(base.add(52) as *const u64);
+            let burst_loss_len = ptr::read_unaligned(base.add(36) as *const u64);
+            let bandwidth_bps = ptr::read_unaligned(base.add(44) as *const u64);
+            let connect_timeout_ms = ptr::read_unaligned(base.add(52) as *const u64);
+            let recv_timeout_ms = ptr::read_unaligned(base.add(60) as *const u64);
             assert_eq!(magic, 0);
             assert_eq!(version, 0);
             assert_eq!(latency_ns, 0);
             assert_eq!(jitter_ns, 0);
             assert_eq!(packet_loss_ppm, 0);
+            assert_eq!(burst_loss_len, 0);
             assert_eq!(bandwidth_bps, 0);
             assert_eq!(connect_timeout_ms, 0);
             assert_eq!(recv_timeout_ms, 0);

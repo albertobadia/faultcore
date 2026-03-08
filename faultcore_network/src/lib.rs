@@ -9,6 +9,7 @@ pub struct Config {
     pub latency_ns: u64,
     pub jitter_ns: u64,
     pub packet_loss_ppm: u64,
+    pub burst_loss_len: u64,
     pub bandwidth_bps: u64,
     pub connect_timeout_ms: u64,
     pub recv_timeout_ms: u64,
@@ -19,6 +20,7 @@ impl Config {
         self.latency_ns > 0
             || self.jitter_ns > 0
             || self.packet_loss_ppm > 0
+            || self.burst_loss_len > 0
             || self.bandwidth_bps > 0
             || self.connect_timeout_ms > 0
             || self.recv_timeout_ms > 0

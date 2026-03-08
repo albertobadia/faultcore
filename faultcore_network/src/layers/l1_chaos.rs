@@ -1,9 +1,11 @@
 use crate::{Config, Layer, LayerResult};
 use parking_lot::Mutex;
 use rand::{Rng, SeedableRng, random, rngs::StdRng};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub struct L1Chaos {
     seeded_rng: Option<Mutex<StdRng>>,
+    burst_remaining: AtomicU64,
 }
 
 impl L1Chaos {
@@ -12,12 +14,16 @@ impl L1Chaos {
             .ok()
             .and_then(|raw| raw.parse::<u64>().ok())
             .map(|seed| Mutex::new(StdRng::seed_from_u64(seed)));
-        Self { seeded_rng }
+        Self {
+            seeded_rng,
+            burst_remaining: AtomicU64::new(0),
+        }
     }
 
     pub fn with_seed(seed: u64) -> Self {
         Self {
             seeded_rng: Some(Mutex::new(StdRng::seed_from_u64(seed))),
+            burst_remaining: AtomicU64::new(0),
         }
     }
 
@@ -59,7 +65,25 @@ impl Default for L1Chaos {
 
 impl Layer for L1Chaos {
     fn process(&self, config: &Config) -> LayerResult {
+        if self
+            .burst_remaining
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                if current > 0 {
+                    Some(current - 1)
+                } else {
+                    None
+                }
+            })
+            .is_ok()
+        {
+            return LayerResult::Drop;
+        }
+
         if self.should_drop(config.packet_loss_ppm) {
+            if config.burst_loss_len > 0 {
+                self.burst_remaining
+                    .store(config.burst_loss_len.saturating_sub(1), Ordering::Release);
+            }
             return LayerResult::Drop;
         }
 
@@ -150,5 +174,29 @@ mod tests {
                 other => panic!("expected Delay, got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn burst_loss_drops_remaining_packets() {
+        let layer = L1Chaos::with_seed(1);
+        layer.burst_remaining.store(2, Ordering::Release);
+        let cfg = Config::default();
+
+        assert!(matches!(layer.process(&cfg), LayerResult::Drop));
+        assert!(matches!(layer.process(&cfg), LayerResult::Drop));
+        assert!(matches!(layer.process(&cfg), LayerResult::Continue));
+    }
+
+    #[test]
+    fn packet_loss_starts_burst_sequence() {
+        let layer = L1Chaos::with_seed(1);
+        let cfg = Config {
+            packet_loss_ppm: 1_000_000,
+            burst_loss_len: 4,
+            ..Default::default()
+        };
+
+        assert!(matches!(layer.process(&cfg), LayerResult::Drop));
+        assert_eq!(layer.burst_remaining.load(Ordering::Acquire), 3);
     }
 }

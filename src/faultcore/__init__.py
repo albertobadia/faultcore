@@ -3,6 +3,7 @@ from pathlib import Path
 
 from faultcore.decorator import (
     apply_policy,
+    burst_loss,
     fault,
     get_thread_policy,
     jitter,
@@ -60,6 +61,7 @@ __all__ = [
     "latency",
     "jitter",
     "packet_loss",
+    "burst_loss",
     "rate_limit",
     "register_policy",
     "apply_policy",
