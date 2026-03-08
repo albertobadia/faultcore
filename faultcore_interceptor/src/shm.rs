@@ -35,6 +35,7 @@ pub struct FaultcoreConfig {
     pub bandwidth_bps: u64,
     pub connect_timeout_ms: u64,
     pub recv_timeout_ms: u64,
+    pub reserved: u32,
 }
 
 #[repr(C)]
@@ -219,6 +220,7 @@ mod tests {
             bandwidth_bps: 0,
             connect_timeout_ms: 5000,
             recv_timeout_ms: 3000,
+            reserved: 0,
         };
         assert!(config.is_valid());
     }
@@ -233,6 +235,7 @@ mod tests {
             bandwidth_bps: 0,
             connect_timeout_ms: 5000,
             recv_timeout_ms: 3000,
+            reserved: 0,
         };
         assert!(!config.is_valid());
     }
