@@ -167,14 +167,15 @@ pub fn get_config_for_fd(fd: c_int) -> Option<FaultcoreConfig> {
     unsafe {
         if let Some(config_ptr) = get_config_ptr(fd as usize, false) {
             for _ in 0..10 {
-                let v1 = ptr::read_volatile(&(*config_ptr).version);
-                if v1 % 2 != 0 {
+                let version_ptr = config_ptr.cast::<u8>().add(4);
+                let v1 = ptr::read_unaligned(version_ptr as *const u64);
+                if !v1.is_multiple_of(2) {
                     continue;
                 }
                 fence(Ordering::SeqCst);
                 let config = config_ptr.read();
                 fence(Ordering::SeqCst);
-                let v2 = ptr::read_volatile(&(*config_ptr).version);
+                let v2 = ptr::read_unaligned(version_ptr as *const u64);
                 if v1 != v2 {
                     continue;
                 }

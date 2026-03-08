@@ -56,9 +56,16 @@ class FaultWrapper:
         )
 
 
+def latency(latency_ms: int):
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
+        return FaultWrapper(func, latency_ms=latency_ms)
+
+    return decorator
+
+
 def timeout(timeout_ms: int):
     def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        return FaultWrapper(func, latency_ms=timeout_ms)
+        return FaultWrapper(func, timeouts=(timeout_ms, timeout_ms))
 
     return decorator
 

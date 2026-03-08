@@ -134,7 +134,7 @@ fn is_non_blocking(fd: c_int) -> bool {
     (flags & libc::O_NONBLOCK) != 0
 }
 
-fn apply_chaos_from_shm(fd: c_int, bytes: u64, is_send: bool, is_connect: bool) -> Option<isize> {
+fn apply_chaos_from_shm(fd: c_int, bytes: u64, is_send: bool, is_connect: bool) -> Option<(isize, LayerResult)> {
     let config = shm::get_config_for_fd(fd)?;
     let network_config = config.into_network_config();
 
@@ -145,10 +145,10 @@ fn apply_chaos_from_shm(fd: c_int, bytes: u64, is_send: bool, is_connect: bool) 
     };
 
     match result {
-        LayerResult::Drop | LayerResult::Error(_) => return Some(0),
+        LayerResult::Drop | LayerResult::Error(_) => return Some((0, result)),
         LayerResult::Timeout(_) => {
             set_errno(libc::ETIMEDOUT);
-            return Some(-1);
+            return Some((-1, result));
         }
         LayerResult::Delay(latency_ns) => {
             if is_non_blocking(fd) && !is_connect {
@@ -167,7 +167,7 @@ fn apply_chaos_from_shm(fd: c_int, bytes: u64, is_send: bool, is_connect: bool) 
 
                 if !elapsed {
                     set_errno(libc::EAGAIN);
-                    return Some(-1);
+                    return Some((-1, result));
                 }
             } else {
                 std::thread::sleep(std::time::Duration::from_nanos(latency_ns));
@@ -332,7 +332,7 @@ pub extern "C" fn send(s: c_int, b: *const c_void, l: size_t, f: c_int) -> ssize
     }
 
     initialize();
-    let result = if let Some(error) = apply_chaos_from_shm(s, l as u64, true, false) {
+    let result = if let Some((error, _)) = apply_chaos_from_shm(s, l as u64, true, false) {
         error
     } else {
         unsafe { (ORIG_SEND)(s, b, l, f) }
@@ -349,7 +349,7 @@ pub extern "C" fn recv(s: c_int, b: *mut c_void, l: size_t, f: c_int) -> ssize_t
     }
 
     initialize();
-    let result = if let Some(error) = apply_chaos_from_shm(s, l as u64, false, false) {
+    let result = if let Some((error, _)) = apply_chaos_from_shm(s, l as u64, false, false) {
         error
     } else if let Some(error) = apply_timeout_recv(s) {
         error
@@ -371,9 +371,15 @@ pub extern "C" fn connect(s: c_int, a: *const sockaddr, l: socklen_t) -> c_int {
     let tid = shm::get_thread_id() as usize;
     shm::assign_rule_to_fd(s, tid);
 
-    let result = if let Some(error) = apply_chaos_from_shm(s, 0, true, true) {
-        if error == -1 && get_errno() != libc::EAGAIN {
-            set_errno(libc::ECONNREFUSED);
+    let result = if let Some((error, layer_result)) = apply_chaos_from_shm(s, 0, true, true) {
+        match layer_result {
+            LayerResult::Timeout(_) => {}
+            LayerResult::Drop | LayerResult::Error(_) => {
+                if error == -1 {
+                    set_errno(libc::ECONNREFUSED);
+                }
+            }
+            _ => {}
         }
         error as c_int
     } else if let Some(timeout_result) = apply_timeout_connect(s, a, l) {
@@ -400,7 +406,7 @@ pub extern "C" fn sendto(
     }
 
     initialize();
-    let result = if let Some(error) = apply_chaos_from_shm(s, l as u64, true, false) {
+    let result = if let Some((error, _)) = apply_chaos_from_shm(s, l as u64, true, false) {
         error
     } else {
         unsafe { (ORIG_SENDTO)(s, b, l, f, addr, addr_len) }
@@ -424,7 +430,7 @@ pub extern "C" fn recvfrom(
     }
 
     initialize();
-    let result = if let Some(error) = apply_chaos_from_shm(s, l as u64, false, false) {
+    let result = if let Some((error, _)) = apply_chaos_from_shm(s, l as u64, false, false) {
         error
     } else {
         unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) }

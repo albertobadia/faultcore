@@ -65,6 +65,59 @@ class TestTimeoutDecorator:
         assert result == 10
 
 
+class TestLatencyDecorator:
+    def test_latency_decorator_writes_latency_to_shm(self, monkeypatch):
+        from unittest.mock import MagicMock, patch
+
+        mock_shm = MagicMock()
+        mock_shm.write_latency = MagicMock()
+        mock_shm.write_timeouts = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=12345):
+
+                @faultcore.latency(500)
+                def my_func():
+                    return "ok"
+
+                result = my_func()
+                assert result == "ok"
+                mock_shm.write_latency.assert_called_once_with(12345, 500)
+                mock_shm.write_timeouts.assert_not_called()
+                mock_shm.clear.assert_called_once_with(12345)
+
+    def test_latency_decorator_preserves_function_name(self):
+        @faultcore.latency(100)
+        def my_function():
+            return "ok"
+
+        assert my_function.__name__ == "my_function"
+
+
+class TestTimeoutDecoratorWritesCorrectFields:
+    def test_timeout_writes_network_timeout_fields(self, monkeypatch):
+        from unittest.mock import MagicMock, patch
+
+        mock_shm = MagicMock()
+        mock_shm.write_latency = MagicMock()
+        mock_shm.write_timeouts = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=12345):
+
+                @faultcore.timeout(2000)
+                def my_func():
+                    return "ok"
+
+                result = my_func()
+                assert result == "ok"
+                mock_shm.write_timeouts.assert_called_once_with(12345, 2000, 2000)
+                mock_shm.write_latency.assert_not_called()
+                mock_shm.clear.assert_called_once_with(12345)
+
+
 class TestRateLimitDecorator:
     def test_rate_limit_decorator_basic(self):
         @faultcore.rate_limit(10.0)
