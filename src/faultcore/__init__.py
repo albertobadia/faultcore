@@ -48,7 +48,6 @@ def is_interceptor_loaded() -> bool:
 
 def get_interceptor_path() -> str | None:
     lib_name = "libfaultcore_interceptor.so"
-    # Search in current directory and package parent
     search_dirs = [Path.cwd(), Path(__file__).parent.parent]
     sub_dirs = ["", "target/release", "target/debug"]
 

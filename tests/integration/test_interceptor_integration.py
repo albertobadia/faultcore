@@ -7,8 +7,6 @@ import time
 
 import pytest
 
-# Use None to search the global symbol namespace, ensuring our preloaded
-# symbols (like the setpriority hook) are visible.
 libc = ctypes.CDLL(None, use_errno=True)
 
 ECHO_SERVER_HOST = os.environ.get("ECHO_SERVER_HOST", "faultcore-echo-server")
@@ -133,7 +131,6 @@ class TestInterceptorTimeout:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(10.0)
 
-        # Use an unreachable IP to ensure connect actually times out
         UNREACHABLE_IP = "10.255.255.1"
         try:
             sock.connect((UNREACHABLE_IP, 80))
@@ -143,7 +140,6 @@ class TestInterceptorTimeout:
             elapsed = time.perf_counter() - start
             sock.close()
         except Exception:
-            # Other errors (like network unreachable) are also okay as long as we waited
             elapsed = time.perf_counter() - start
             sock.close()
 
@@ -163,7 +159,6 @@ class TestInterceptorTimeout:
         sock.settimeout(10.0)
         sock.connect((ECHO_SERVER_HOST, ECHO_SERVER_PORT))
 
-        # Don't send anything! Just wait for recv to timeout.
         start = time.perf_counter()
 
         try:

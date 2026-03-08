@@ -1,7 +1,7 @@
 use libc::{MAP_SHARED, O_RDWR, PROT_READ, PROT_WRITE, c_int, ftruncate, mmap, shm_open};
 use parking_lot::RwLock;
 use std::ptr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering, fence};
 
 #[macro_export]
 macro_rules! shm_error {
@@ -19,7 +19,7 @@ pub fn get_thread_id() -> u64 {
 
 pub const FAULTCORE_MAGIC: u32 = 0xFACC0DE;
 pub const MAX_FDS: usize = 131072;
-pub const MAX_TIDS: usize = 8192;
+pub const MAX_TIDS: usize = 65536; // Increased to match core
 pub const MAX_POLICIES: usize = 1024;
 pub const FAULTCORE_SHM_SIZE: usize = ((MAX_FDS + MAX_TIDS)
     * std::mem::size_of::<FaultcoreConfig>())
@@ -143,7 +143,9 @@ pub(crate) unsafe fn get_config_ptr(
     unsafe {
         let array = ptr_val as *mut FaultcoreConfig;
         let idx = if is_tid {
-            MAX_FDS + (tid_or_fd % MAX_TIDS)
+            // Match the hash in faultcore_core
+            let hash = (tid_or_fd ^ (tid_or_fd >> 16)).wrapping_mul(0x45d9f3b) ^ (tid_or_fd >> 16);
+            MAX_FDS + (hash % MAX_TIDS)
         } else {
             if tid_or_fd >= MAX_FDS {
                 return None;
@@ -165,9 +167,23 @@ pub fn get_config_for_fd(fd: c_int) -> Option<FaultcoreConfig> {
 
     unsafe {
         if let Some(config_ptr) = get_config_ptr(fd as usize, false) {
-            let config = config_ptr.read();
-            if config.is_valid() {
-                return Some(config);
+            // Sequence lock: retry read if version changes or is odd
+            for _ in 0..10 {
+                let v1 = ptr::read_volatile(&(*config_ptr).version);
+                if v1 % 2 != 0 {
+                    continue;
+                }
+                fence(Ordering::SeqCst);
+                let config = config_ptr.read();
+                fence(Ordering::SeqCst);
+                let v2 = ptr::read_volatile(&(*config_ptr).version);
+                if v1 != v2 {
+                    continue;
+                }
+                if config.is_valid() {
+                    return Some(config);
+                }
+                break;
             }
         }
     }

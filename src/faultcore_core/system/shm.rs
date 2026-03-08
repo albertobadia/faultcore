@@ -1,5 +1,5 @@
 use libc::{MAP_SHARED, O_CREAT, O_RDWR, PROT_READ, PROT_WRITE, ftruncate, mmap, shm_open};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{Ordering, fence};
 use std::sync::{Mutex, OnceLock};
 
 pub fn get_thread_id() -> u64 {
@@ -8,7 +8,7 @@ pub fn get_thread_id() -> u64 {
 
 pub const FAULTCORE_MAGIC: u32 = 0xFACC0DE;
 pub const MAX_FDS: usize = 131072;
-pub const MAX_TIDS: usize = 8192;
+pub const MAX_TIDS: usize = 65536; // Increased to reduce collisions
 pub const MAX_POLICIES: usize = 1024;
 pub const FAULTCORE_SHM_SIZE: usize = ((MAX_FDS + MAX_TIDS)
     * std::mem::size_of::<FaultcoreConfig>())
@@ -38,7 +38,6 @@ pub struct PolicyState {
 
 struct ShmState {
     pointer: usize,
-    version: AtomicU64,
 }
 
 static SHM_STATE: OnceLock<ShmState> = OnceLock::new();
@@ -111,7 +110,6 @@ pub fn create_shm() -> Result<(), String> {
 
         let state = ShmState {
             pointer: addr as usize,
-            version: AtomicU64::new(1),
         };
         SHM_STATE
             .set(state)
@@ -133,7 +131,9 @@ unsafe fn get_config_ptr(tid_or_fd: usize, is_tid: bool) -> Option<*mut Faultcor
     }
     let array = base_ptr as *mut FaultcoreConfig;
     let idx = if is_tid {
-        MAX_FDS + (tid_or_fd % MAX_TIDS)
+        // Use a simple hash to better distribute TIDs
+        let hash = (tid_or_fd ^ (tid_or_fd >> 16)).wrapping_mul(0x45d9f3b) ^ (tid_or_fd >> 16);
+        MAX_FDS + (hash % MAX_TIDS)
     } else {
         if tid_or_fd >= MAX_FDS {
             return None;
@@ -146,12 +146,20 @@ unsafe fn get_config_ptr(tid_or_fd: usize, is_tid: bool) -> Option<*mut Faultcor
 pub fn write_latency(tid: u64, latency_ms: u64) -> Result<(), String> {
     unsafe {
         if let Some(config_ptr) = get_config_ptr(tid as usize, true) {
-            let state = SHM_STATE.get().ok_or("SHM not initialized")?;
             let mut cfg = config_ptr.read();
+            // Sequence lock: increment version to odd before writing
+            cfg.version = cfg.version.wrapping_add(1) | 1;
+            config_ptr.write(cfg);
+            fence(Ordering::SeqCst);
+
             cfg.magic = FAULTCORE_MAGIC;
             cfg.latency_ns = latency_ms * 1_000_000;
-            cfg.version = state.version.fetch_add(1, Ordering::SeqCst) + 1;
+
+            // Increment version to even after writing
+            fence(Ordering::SeqCst);
+            cfg.version = cfg.version.wrapping_add(1) & !1;
             config_ptr.write(cfg);
+            fence(Ordering::SeqCst);
             Ok(())
         } else {
             Err("SHM not initialized".to_string())
@@ -162,12 +170,18 @@ pub fn write_latency(tid: u64, latency_ms: u64) -> Result<(), String> {
 pub fn write_packet_loss(tid: u64, ppm: u64) -> Result<(), String> {
     unsafe {
         if let Some(config_ptr) = get_config_ptr(tid as usize, true) {
-            let state = SHM_STATE.get().ok_or("SHM not initialized")?;
             let mut cfg = config_ptr.read();
+            cfg.version = cfg.version.wrapping_add(1) | 1;
+            config_ptr.write(cfg);
+            fence(Ordering::SeqCst);
+
             cfg.magic = FAULTCORE_MAGIC;
             cfg.packet_loss_ppm = ppm;
-            cfg.version = state.version.fetch_add(1, Ordering::SeqCst) + 1;
+
+            fence(Ordering::SeqCst);
+            cfg.version = cfg.version.wrapping_add(1) & !1;
             config_ptr.write(cfg);
+            fence(Ordering::SeqCst);
             Ok(())
         } else {
             Err("SHM not initialized".to_string())
@@ -178,12 +192,18 @@ pub fn write_packet_loss(tid: u64, ppm: u64) -> Result<(), String> {
 pub fn write_bandwidth(tid: u64, bps: u64) -> Result<(), String> {
     unsafe {
         if let Some(config_ptr) = get_config_ptr(tid as usize, true) {
-            let state = SHM_STATE.get().ok_or("SHM not initialized")?;
             let mut cfg = config_ptr.read();
+            cfg.version = cfg.version.wrapping_add(1) | 1;
+            config_ptr.write(cfg);
+            fence(Ordering::SeqCst);
+
             cfg.magic = FAULTCORE_MAGIC;
             cfg.bandwidth_bps = bps;
-            cfg.version = state.version.fetch_add(1, Ordering::SeqCst) + 1;
+
+            fence(Ordering::SeqCst);
+            cfg.version = cfg.version.wrapping_add(1) & !1;
             config_ptr.write(cfg);
+            fence(Ordering::SeqCst);
             Ok(())
         } else {
             Err("SHM not initialized".to_string())
@@ -194,13 +214,19 @@ pub fn write_bandwidth(tid: u64, bps: u64) -> Result<(), String> {
 pub fn write_timeouts(tid: u64, connect_ms: u64, recv_ms: u64) -> Result<(), String> {
     unsafe {
         if let Some(config_ptr) = get_config_ptr(tid as usize, true) {
-            let state = SHM_STATE.get().ok_or("SHM not initialized")?;
             let mut cfg = config_ptr.read();
+            cfg.version = cfg.version.wrapping_add(1) | 1;
+            config_ptr.write(cfg);
+            fence(Ordering::SeqCst);
+
             cfg.magic = FAULTCORE_MAGIC;
             cfg.connect_timeout_ms = connect_ms;
             cfg.recv_timeout_ms = recv_ms;
-            cfg.version = state.version.fetch_add(1, Ordering::SeqCst) + 1;
+
+            fence(Ordering::SeqCst);
+            cfg.version = cfg.version.wrapping_add(1) & !1;
             config_ptr.write(cfg);
+            fence(Ordering::SeqCst);
             Ok(())
         } else {
             Err("SHM not initialized".to_string())
@@ -211,16 +237,22 @@ pub fn write_timeouts(tid: u64, connect_ms: u64, recv_ms: u64) -> Result<(), Str
 pub fn clear_config(tid: u64) -> Result<(), String> {
     unsafe {
         if let Some(config_ptr) = get_config_ptr(tid as usize, true) {
-            let state = SHM_STATE.get().ok_or("SHM not initialized")?;
             let mut cfg = config_ptr.read();
+            cfg.version = cfg.version.wrapping_add(1) | 1;
+            config_ptr.write(cfg);
+            fence(Ordering::SeqCst);
+
             cfg.magic = 0;
             cfg.latency_ns = 0;
             cfg.packet_loss_ppm = 0;
             cfg.bandwidth_bps = 0;
             cfg.connect_timeout_ms = 0;
             cfg.recv_timeout_ms = 0;
-            cfg.version = state.version.fetch_add(1, Ordering::SeqCst) + 1;
+
+            fence(Ordering::SeqCst);
+            cfg.version = cfg.version.wrapping_add(1) & !1;
             config_ptr.write(cfg);
+            fence(Ordering::SeqCst);
             Ok(())
         } else {
             Ok(())
@@ -292,7 +324,8 @@ pub fn update_policy_metrics(idx: usize, success: bool) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::thread;
+    use std::sync::atomic::{Ordering, fence};
+    use std::{ptr, thread};
 
     #[test]
     fn test_shm_atomic_consistency() {
@@ -304,11 +337,21 @@ mod tests {
                 unsafe {
                     if let Some(config_ptr) = get_config_ptr(tid as usize, true) {
                         let mut cfg = config_ptr.read();
+                        // Sequence lock: increment version to odd before writing
+                        cfg.version = cfg.version.wrapping_add(1) | 1;
+                        config_ptr.write(cfg);
+                        fence(Ordering::SeqCst);
+
                         cfg.magic = FAULTCORE_MAGIC;
                         cfg.latency_ns = i * 1_000_000;
                         cfg.packet_loss_ppm = i;
                         cfg.bandwidth_bps = i;
+
+                        // Increment version to even after writing
+                        fence(Ordering::SeqCst);
+                        cfg.version = cfg.version.wrapping_add(1) & !1;
                         config_ptr.write(cfg);
+                        fence(Ordering::SeqCst);
                     }
                 }
             }
@@ -318,16 +361,28 @@ mod tests {
             for _ in 0..10000000 {
                 unsafe {
                     if let Some(ptr) = get_config_ptr(tid as usize, true) {
-                        let cfg = ptr.read();
-                        if cfg.magic == FAULTCORE_MAGIC {
-                            // In a torn read, packet_loss_ppm might not match latency_ns / 1_000_000
-                            // because they are written non-atomically.
-                            if cfg.latency_ns / 1_000_000 != cfg.packet_loss_ppm {
+                        loop {
+                            let v1 = ptr::read_volatile(&(*ptr).version);
+                            if v1 % 2 != 0 {
+                                continue;
+                            }
+                            fence(Ordering::SeqCst);
+                            let cfg = ptr.read();
+                            fence(Ordering::SeqCst);
+                            let v2 = ptr::read_volatile(&(*ptr).version);
+                            if v1 != v2 {
+                                continue;
+                            }
+
+                            if cfg.magic == FAULTCORE_MAGIC
+                                && cfg.latency_ns / 1_000_000 != cfg.packet_loss_ppm
+                            {
                                 panic!(
-                                    "Torn read detected! latency_ns={} packet_loss_ppm={}",
-                                    cfg.latency_ns, cfg.packet_loss_ppm
+                                    "Torn read detected! latency_ns={} packet_loss_ppm={} v1={} v2={}",
+                                    cfg.latency_ns, cfg.packet_loss_ppm, v1, v2
                                 );
                             }
+                            break;
                         }
                     }
                 }

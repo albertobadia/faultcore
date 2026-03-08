@@ -25,12 +25,10 @@ def test_register_policy_bundle_full_params():
         rate_limit_capacity=100,
     )
     config = manager.get("full_bundle")
-    # Verify we only get the fields we expect
     assert config is not None
     assert config.get("timeout_ms") == 500
     assert config.get("rate_limit_rate") == 10.0
     assert config.get("rate_limit_capacity") == 100
-    # Resilience fields should NOT be present
     assert "retry_max_retries" not in config
     assert "circuit_breaker_failure_threshold" not in config
 

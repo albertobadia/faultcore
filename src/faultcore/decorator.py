@@ -52,7 +52,6 @@ class FaultWrapper:
         if not (t or rl):
             return self._key
 
-        # Generate a unique policy name based on parameters
         parts = [self._key]
         if t:
             parts.append(f"t{t}")
