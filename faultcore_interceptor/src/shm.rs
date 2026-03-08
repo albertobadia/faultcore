@@ -5,12 +5,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 #[macro_export]
 macro_rules! shm_error {
-    ($($arg:tt)*) => { eprintln!("faultcore: {}", format!($($arg)*)) };
+    ($($arg:tt)*) => {};
 }
 
 #[macro_export]
 macro_rules! shm_info {
-    ($($arg:tt)*) => { eprintln!("faultcore: {}", format!($($arg)*)) };
+    ($($arg:tt)*) => {};
 }
 
 pub fn get_thread_id() -> u64 {
@@ -86,8 +86,8 @@ fn get_shm_name() -> Option<String> {
 }
 
 pub fn try_open_shm() -> bool {
-    if !check_enabled() {
-        return false;
+    if !check_enabled() || is_shm_open() {
+        return is_shm_open();
     }
 
     let shm_name = get_shm_name()
@@ -96,14 +96,12 @@ pub fn try_open_shm() -> bool {
     let name_cstr = std::ffi::CString::new(shm_name.as_bytes()).unwrap();
 
     unsafe {
-        let fd = shm_open(name_cstr.as_ptr(), O_RDWR, 0o600);
+        let fd = shm_open(name_cstr.as_ptr(), O_RDWR, 0);
         if fd < 0 {
-            shm_error!("shm_open failed for {}", shm_name);
             return false;
         }
 
         if ftruncate(fd, FAULTCORE_SHM_SIZE as i64) < 0 {
-            shm_error!("ftruncate failed for {}", shm_name);
             libc::close(fd);
             return false;
         }
@@ -120,13 +118,11 @@ pub fn try_open_shm() -> bool {
         libc::close(fd);
 
         if addr as isize == -1isize {
-            shm_error!("mmap failed for {}", shm_name);
             return false;
         }
 
         *SHM_POINTER.write() = addr as usize;
         SHM_OPEN.store(1, Ordering::SeqCst);
-        shm_info!("SHM opened successfully");
 
         true
     }
@@ -136,21 +132,27 @@ pub fn is_shm_open() -> bool {
     SHM_OPEN.load(Ordering::SeqCst) == 1
 }
 
-unsafe fn get_config_ptr(tid_or_fd: usize, is_tid: bool) -> Option<*mut FaultcoreConfig> {
+pub(crate) unsafe fn get_config_ptr(
+    tid_or_fd: usize,
+    is_tid: bool,
+) -> Option<*mut FaultcoreConfig> {
     let ptr_val = *SHM_POINTER.read();
     if ptr_val == 0 {
         return None;
     }
-    let array = ptr_val as *mut FaultcoreConfig;
-    let idx = if is_tid {
-        MAX_FDS + (tid_or_fd % MAX_TIDS)
-    } else {
-        if tid_or_fd >= MAX_FDS {
-            return None;
-        }
-        tid_or_fd
-    };
-    unsafe { Some(array.add(idx)) }
+    unsafe {
+        let array = ptr_val as *mut FaultcoreConfig;
+        let idx = if is_tid {
+            MAX_FDS + (tid_or_fd % MAX_TIDS)
+        } else {
+            if tid_or_fd >= MAX_FDS {
+                return None;
+            }
+            tid_or_fd
+        };
+        let ptr = array.add(idx);
+        Some(ptr)
+    }
 }
 
 pub fn get_config_for_fd(fd: c_int) -> Option<FaultcoreConfig> {

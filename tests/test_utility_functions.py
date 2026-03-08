@@ -13,8 +13,18 @@ def test_is_interceptor_loaded_without_preload():
     if "LD_PRELOAD" in os.environ:
         del os.environ["LD_PRELOAD"]
     try:
+        # If the interceptor is already loaded (via symbols), we can't "unload" it
+        # by just deleting the env var. So we only assert False if it wasn't
+        # already loaded.
+        import ctypes
+
+        is_active = hasattr(ctypes.CDLL(None), "faultcore_interceptor_is_active")
+
         result = faultcore.is_interceptor_loaded()
-        assert result is False
+        if not is_active:
+            assert result is False
+        else:
+            assert result is True
     finally:
         if original:
             os.environ["LD_PRELOAD"] = original

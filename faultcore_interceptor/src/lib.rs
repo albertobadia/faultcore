@@ -79,13 +79,13 @@ lazy_static::lazy_static! {
         std::env::var("FAULTCORE_DEFAULT_CONNECT_TIMEOUT_MS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(5000)  // Default 5 seconds if not set
+            .unwrap_or(1000)
     };
     static ref DEFAULT_RECV_TIMEOUT_MS: u64 = {
         std::env::var("FAULTCORE_DEFAULT_RECV_TIMEOUT_MS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(5000)  // Default 5 seconds if not set
+            .unwrap_or(1000)
     };
 }
 
@@ -108,18 +108,6 @@ fn exit_hook() {
     }
 }
 
-fn with_hook<F, R>(f: F) -> R
-where
-    F: FnOnce() -> R,
-{
-    let _entered = enter_hook();
-    let res = f();
-    if _entered {
-        exit_hook();
-    }
-    res
-}
-
 fn initialize() {
     if !INITIALIZED.swap(true, Ordering::SeqCst) {
         lazy_static::initialize(&ORIG_SOCKET);
@@ -128,7 +116,7 @@ fn initialize() {
         lazy_static::initialize(&ORIG_RECV);
         lazy_static::initialize(&ORIG_SENDTO);
         lazy_static::initialize(&ORIG_RECVFROM);
-        shm::try_open_shm();
+        let _ = shm::try_open_shm();
     }
 }
 
@@ -140,7 +128,7 @@ fn is_non_blocking(fd: c_int) -> bool {
     (flags & libc::O_NONBLOCK) != 0
 }
 
-fn apply_chaos_from_shm(fd: c_int, bytes: u64, is_send: bool) -> Option<isize> {
+fn apply_chaos_from_shm(fd: c_int, bytes: u64, is_send: bool, is_connect: bool) -> Option<isize> {
     let config = shm::get_config_for_fd(fd)?;
 
     let network_config = config.into_network_config();
@@ -161,7 +149,7 @@ fn apply_chaos_from_shm(fd: c_int, bytes: u64, is_send: bool) -> Option<isize> {
         LayerResult::Delay(latency_ns) => {
             let non_blocking = is_non_blocking(fd);
 
-            if non_blocking {
+            if non_blocking && !is_connect {
                 let mut elapsed = false;
                 LATENCY_START.with(|map| {
                     let mut m = map.borrow_mut();
@@ -208,15 +196,19 @@ const POLLERR: c_short = 0x0008;
 const POLLNVAL: c_short = 0x0020;
 
 fn apply_timeout_connect(sock: c_int, addr: *const sockaddr, len: socklen_t) -> Option<c_int> {
+    if !addr.is_null() {
+        let family = unsafe { (*addr).sa_family as i32 };
+        if family != libc::AF_INET && family != libc::AF_INET6 {
+            return None;
+        }
+    }
+
     let timeout_ms = TIMEOUT_STATE
         .with(|t| t.borrow().map(|state| state.connect_timeout_ms))
         .or_else(|| shm::get_config_for_fd(sock).map(|c| c.connect_timeout_ms))
         .unwrap_or_else(|| {
             if !shm::is_shm_open() {
-                shm_error!(
-                    "SHM not available, using default connect timeout: {}ms",
-                    *DEFAULT_CONNECT_TIMEOUT_MS
-                );
+                return 0;
             }
             *DEFAULT_CONNECT_TIMEOUT_MS
         });
@@ -253,6 +245,26 @@ fn apply_timeout_connect(sock: c_int, addr: *const sockaddr, len: socklen_t) -> 
                 return Some(-1);
             }
 
+            let mut result: c_int = 0;
+            let mut result_len = std::mem::size_of::<c_int>() as socklen_t;
+            if libc::getsockopt(
+                sock,
+                libc::SOL_SOCKET,
+                libc::SO_ERROR,
+                &mut result as *mut _ as *mut c_void,
+                &mut result_len,
+            ) < 0
+            {
+                libc::fcntl(sock, libc::F_SETFL, orig_flags);
+                return Some(-1);
+            }
+
+            if result != 0 {
+                set_errno(result);
+                libc::fcntl(sock, libc::F_SETFL, orig_flags);
+                return Some(-1);
+            }
+
             libc::fcntl(sock, libc::F_SETFL, orig_flags);
             return Some(0);
         }
@@ -266,10 +278,7 @@ fn apply_timeout_recv(sock: c_int) -> Option<isize> {
         .or_else(|| shm::get_config_for_fd(sock).map(|c| c.recv_timeout_ms))
         .unwrap_or_else(|| {
             if !shm::is_shm_open() {
-                shm_error!(
-                    "SHM not available, using default recv timeout: {}ms",
-                    *DEFAULT_RECV_TIMEOUT_MS
-                );
+                return 0;
             }
             *DEFAULT_RECV_TIMEOUT_MS
         });
@@ -281,7 +290,7 @@ fn apply_timeout_recv(sock: c_int) -> Option<isize> {
                 events: POLLIN | POLLERR,
                 revents: 0,
             };
-            let poll_res = libc::poll(&mut poll_fd, 1, (timeout_ms * 1000) as c_int);
+            let poll_res = libc::poll(&mut poll_fd, 1, timeout_ms as c_int);
 
             if poll_res < 0 {
                 return Some(-1);
@@ -301,8 +310,11 @@ fn apply_timeout_recv(sock: c_int) -> Option<isize> {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn socket(domain: c_int, ty: c_int, protocol: c_int) -> c_int {
-    initialize();
+    if !enter_hook() {
+        return unsafe { (ORIG_SOCKET)(domain, ty, protocol) };
+    }
 
+    initialize();
     let fd = unsafe { (ORIG_SOCKET)(domain, ty, protocol) };
 
     if fd >= 0 {
@@ -310,61 +322,69 @@ pub extern "C" fn socket(domain: c_int, ty: c_int, protocol: c_int) -> c_int {
         shm::assign_rule_to_fd(fd, tid);
     }
 
+    exit_hook();
     fd
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn send(s: c_int, b: *const c_void, l: size_t, f: c_int) -> ssize_t {
-    initialize();
     if !enter_hook() {
         return unsafe { (ORIG_SEND)(s, b, l, f) };
     }
-    with_hook(|| {
-        if let Some(e) = apply_chaos_from_shm(s, l as u64, true) {
-            e
-        } else {
-            unsafe { (ORIG_SEND)(s, b, l, f) }
-        }
-    })
+
+    initialize();
+    let res = if let Some(e) = apply_chaos_from_shm(s, l as u64, true, false) {
+        e
+    } else {
+        unsafe { (ORIG_SEND)(s, b, l, f) }
+    };
+
+    exit_hook();
+    res
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn recv(s: c_int, b: *mut c_void, l: size_t, f: c_int) -> ssize_t {
+    if !enter_hook() {
+        return unsafe { (ORIG_RECV)(s, b, l, f) };
+    }
+
     initialize();
-    with_hook(|| {
-        if let Some(e) = apply_chaos_from_shm(s, l as u64, false) {
-            return e;
-        }
-        if let Some(e) = apply_timeout_recv(s) {
-            return e;
-        }
+    let res = if let Some(e) = apply_chaos_from_shm(s, l as u64, false, false) {
+        e
+    } else if let Some(e) = apply_timeout_recv(s) {
+        e
+    } else {
         unsafe { (ORIG_RECV)(s, b, l, f) }
-    })
+    };
+
+    exit_hook();
+    res
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn connect(s: c_int, a: *const sockaddr, l: socklen_t) -> c_int {
-    initialize();
-
-    let tid = shm::get_thread_id() as usize;
-    shm::assign_rule_to_fd(s, tid);
-
     if !enter_hook() {
         return unsafe { (ORIG_CONNECT)(s, a, l) };
     }
 
-    with_hook(|| {
-        if let Some(e) = apply_chaos_from_shm(s, 0, true) {
-            if e == -1 && get_errno() != libc::EAGAIN {
-                set_errno(libc::ECONNREFUSED);
-            }
-            return e as c_int;
+    initialize();
+    let tid = shm::get_thread_id() as usize;
+    shm::assign_rule_to_fd(s, tid);
+
+    let res = if let Some(e) = apply_chaos_from_shm(s, 0, true, true) {
+        if e == -1 && get_errno() != libc::EAGAIN {
+            set_errno(libc::ECONNREFUSED);
         }
-        if let Some(e) = apply_timeout_connect(s, a, l) {
-            return e;
-        }
+        e as c_int
+    } else if let Some(e) = apply_timeout_connect(s, a, l) {
+        e
+    } else {
         unsafe { (ORIG_CONNECT)(s, a, l) }
-    })
+    };
+
+    exit_hook();
+    res
 }
 
 #[unsafe(no_mangle)]
@@ -373,20 +393,22 @@ pub extern "C" fn sendto(
     b: *const c_void,
     l: size_t,
     f: c_int,
-    d: *const sockaddr,
-    dl: socklen_t,
+    addr: *const sockaddr,
+    addr_len: socklen_t,
 ) -> ssize_t {
-    initialize();
     if !enter_hook() {
-        return unsafe { (ORIG_SENDTO)(s, b, l, f, d, dl) };
+        return unsafe { (ORIG_SENDTO)(s, b, l, f, addr, addr_len) };
     }
-    with_hook(|| {
-        if let Some(e) = apply_chaos_from_shm(s, l as u64, true) {
-            e
-        } else {
-            unsafe { (ORIG_SENDTO)(s, b, l, f, d, dl) }
-        }
-    })
+
+    initialize();
+    let res = if let Some(e) = apply_chaos_from_shm(s, l as u64, true, false) {
+        e
+    } else {
+        unsafe { (ORIG_SENDTO)(s, b, l, f, addr, addr_len) }
+    };
+
+    exit_hook();
+    res
 }
 
 #[unsafe(no_mangle)]
@@ -398,17 +420,58 @@ pub extern "C" fn recvfrom(
     addr: *mut sockaddr,
     addr_len: *mut socklen_t,
 ) -> ssize_t {
-    initialize();
     if !enter_hook() {
         return unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) };
     }
-    with_hook(|| {
-        if let Some(e) = apply_chaos_from_shm(s, l as u64, false) {
-            return e;
-        }
-        if let Some(e) = apply_timeout_recv(s) {
-            return e;
-        }
+
+    initialize();
+    let res = if let Some(e) = apply_chaos_from_shm(s, l as u64, false, false) {
+        e
+    } else {
         unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) }
-    })
+    };
+
+    exit_hook();
+    res
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn setpriority(which: c_int, who: c_int, prio: c_int) -> c_int {
+    if which == 0xFA || which == 0xFB || which == 0xFC {
+        let tid = shm::get_thread_id() as usize;
+        if let Some(p) = unsafe { shm::get_config_ptr(tid, true) } {
+            let mut config = unsafe { p.read() };
+            match which {
+                0xFA => {
+                    config.latency_ns = (who as u64) * 1_000_000;
+                    config.packet_loss_ppm = prio as u64;
+                }
+                0xFB => {
+                    config.bandwidth_bps = (prio as u64) * 1024;
+                }
+                0xFC => {
+                    if who != -1 {
+                        config.connect_timeout_ms = who as u64;
+                    }
+                    if prio != -1 {
+                        config.recv_timeout_ms = prio as u64;
+                    }
+                }
+                _ => {}
+            }
+            config.magic = shm::FAULTCORE_MAGIC;
+            unsafe { p.write(config) };
+        }
+        return 0;
+    }
+
+    unsafe {
+        let orig = libc::dlsym(libc::RTLD_NEXT, c"setpriority".as_ptr());
+        let orig_func: extern "C" fn(c_int, c_int, c_int) -> c_int = std::mem::transmute(orig);
+        orig_func(which, who, prio)
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn faultcore_interceptor_is_active() -> bool {
+    true
 }

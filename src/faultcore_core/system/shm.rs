@@ -52,16 +52,7 @@ fn get_shm_name(pid: u32) -> String {
     format!("{}/faultcore_{}_config", get_shm_prefix(), pid)
 }
 
-pub fn get_shm_name_env() -> String {
-    if let Ok(name) = std::env::var("FAULTCORE_CONFIG_SHM")
-        && !name.is_empty()
-    {
-        return name;
-    }
-    get_shm_name(unsafe { libc::getpid() } as u32)
-}
-
-pub fn create_shm(_pid: u32) -> Result<(), String> {
+pub fn create_shm() -> Result<(), String> {
     if SHM_STATE.get().is_some() {
         return Ok(());
     }
@@ -69,7 +60,15 @@ pub fn create_shm(_pid: u32) -> Result<(), String> {
     if SHM_STATE.get().is_some() {
         return Ok(());
     }
-    let shm_name = get_shm_name_env();
+    let shm_name = {
+        if let Ok(name) = std::env::var("FAULTCORE_CONFIG_SHM")
+            && !name.is_empty()
+        {
+            name
+        } else {
+            get_shm_name(unsafe { libc::getpid() } as u32)
+        }
+    };
     unsafe {
         std::env::set_var("FAULTCORE_CONFIG_SHM", &shm_name);
     }

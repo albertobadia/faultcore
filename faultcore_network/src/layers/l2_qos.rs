@@ -70,13 +70,10 @@ impl L2QoS {
             return LayerResult::Continue;
         }
 
-        // We use bits for calculation if we want precision, or just bytes.
-        // Interceptor used bytes * 8.0.
         let bytes_needed = bytes;
         if self.try_acquire(bytes_needed) {
             LayerResult::Continue
         } else {
-            // Calculate delay based on deficit
             let current = self.tokens.load(Ordering::Acquire);
             let deficit = bytes_needed.saturating_sub(current);
             let delay_secs = deficit as f64 / rate as f64;

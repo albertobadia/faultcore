@@ -2,7 +2,7 @@ import functools
 import logging
 import uuid
 
-from faultcore._faultcore import get_policy_registry
+from faultcore._faultcore import get_feature_flag_manager, get_policy_registry
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +32,6 @@ class FaultWrapper:
         policy_name = self._policy_name
 
         if self._key:
-            from faultcore._faultcore import get_feature_flag_manager
-
             manager = get_feature_flag_manager()
 
             if not manager.is_enabled(self._key):

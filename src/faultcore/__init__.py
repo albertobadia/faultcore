@@ -38,7 +38,13 @@ def get_feature_flag_manager() -> FeatureFlagManager:
 
 
 def is_interceptor_loaded() -> bool:
-    return "LD_PRELOAD" in os.environ
+    try:
+        import ctypes
+
+        handle = ctypes.CDLL(None)
+        return hasattr(handle, "faultcore_interceptor_is_active")
+    except Exception:
+        return "LD_PRELOAD" in os.environ
 
 
 def get_interceptor_path() -> str | None:

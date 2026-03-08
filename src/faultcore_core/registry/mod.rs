@@ -147,6 +147,7 @@ impl PolicyRegistry {
                 }
             }
 
+            let _ = crate::system::shm::create_shm();
             policies.insert(name.clone(), Arc::new(RwLock::new(policy)));
             get_shm_registry().register_policy(&name, true);
             Ok(())
@@ -321,6 +322,7 @@ impl PolicyRegistry {
     }
 
     fn register_timeout_layer(&self, policy_name: &str, timeout_ms: u64) -> PyResult<()> {
+        let _ = crate::system::shm::create_shm();
         let policy = self.create_fresh(policy_name);
         let mut p = policy.write().map_err(|e| {
             pyo3::exceptions::PyRuntimeError::new_err(format!("Policy lock error: {e}"))
@@ -330,6 +332,7 @@ impl PolicyRegistry {
     }
 
     fn register_rate_limit_layer(&self, policy_name: &str, rate: Bound<'_, PyAny>) -> PyResult<()> {
+        let _ = crate::system::shm::create_shm();
         let rate_bps = self._extract_rate(rate)?;
         let policy = self.create_fresh(policy_name);
         let mut p = policy.write().map_err(|e| {

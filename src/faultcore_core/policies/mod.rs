@@ -92,10 +92,8 @@ impl FallbackPolicy {
                     fallback_kwargs.update(kwargs.as_mapping())?;
                 }
 
-                // Try calling without exception first
                 let fallback_result = self.fallback.call(py, args, Some(&fallback_kwargs));
                 if fallback_result.is_err() {
-                    // Fallback failed, try passing the exception
                     fallback_kwargs.set_item("exception", e.value(py))?;
                     self.fallback.call(py, args, Some(&fallback_kwargs))
                 } else {
