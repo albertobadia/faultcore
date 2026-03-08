@@ -96,6 +96,28 @@ def _build_packet_reorder_profile(*, prob: str | int | float = "100%") -> dict[s
     return {"prob_ppm": _parse_packet_loss(prob)}
 
 
+def _build_dns_profile(
+    *,
+    delay_ms: int | None = None,
+    timeout_ms: int | None = None,
+    nxdomain: str | int | float | None = None,
+) -> dict[str, int]:
+    profile: dict[str, int] = {}
+    if delay_ms is not None:
+        d = int(delay_ms)
+        if d < 0:
+            raise ValueError("dns delay must be >= 0")
+        profile["delay_ms"] = d
+    if timeout_ms is not None:
+        t = int(timeout_ms)
+        if t < 0:
+            raise ValueError("dns timeout must be >= 0")
+        profile["timeout_ms"] = t
+    if nxdomain is not None:
+        profile["nxdomain_ppm"] = _parse_packet_loss(nxdomain)
+    return profile
+
+
 class FaultWrapper:
     def __init__(
         self,
@@ -113,6 +135,7 @@ class FaultWrapper:
         half_open_profile: dict[str, int] | None = None,
         packet_duplicate_profile: dict[str, int] | None = None,
         packet_reorder_profile: dict[str, int] | None = None,
+        dns_profile: dict[str, int] | None = None,
     ):
         functools.update_wrapper(self, func)
         self._func = func
@@ -129,6 +152,7 @@ class FaultWrapper:
         self._half_open_profile = half_open_profile or {}
         self._packet_duplicate_profile = packet_duplicate_profile or {}
         self._packet_reorder_profile = packet_reorder_profile or {}
+        self._dns_profile = dns_profile or {}
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._func, name)
@@ -218,6 +242,14 @@ class FaultWrapper:
                 prob_ppm=self._packet_reorder_profile.get("prob_ppm", 0),
             )
 
+        if self._dns_profile:
+            shm.write_dns(
+                tid,
+                delay_ms=self._dns_profile.get("delay_ms"),
+                timeout_ms=self._dns_profile.get("timeout_ms"),
+                nxdomain_ppm=self._dns_profile.get("nxdomain_ppm"),
+            )
+
         timeout_ms = self._timeouts[0] if self._timeouts else None
 
         if timeout_ms and timeout_ms > 0 and not iscoroutinefunction(self._func):
@@ -262,7 +294,8 @@ class FaultWrapper:
             f"connection_error={self._connection_error_profile}, "
             f"half_open={self._half_open_profile}, "
             f"packet_duplicate={self._packet_duplicate_profile}, "
-            f"packet_reorder={self._packet_reorder_profile}) for {self._func!r}>"
+            f"packet_reorder={self._packet_reorder_profile}, "
+            f"dns={self._dns_profile}) for {self._func!r}>"
         )
 
 
@@ -445,6 +478,33 @@ def packet_reorder(*, prob: str | int | float = "100%"):
     return decorator
 
 
+def dns_delay(delay_ms: int):
+    profile = _build_dns_profile(delay_ms=delay_ms)
+
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
+        return FaultWrapper(func, dns_profile=profile)
+
+    return decorator
+
+
+def dns_timeout(timeout_ms: int):
+    profile = _build_dns_profile(timeout_ms=timeout_ms)
+
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
+        return FaultWrapper(func, dns_profile=profile)
+
+    return decorator
+
+
+def dns_nxdomain(prob: str | int | float = "100%"):
+    profile = _build_dns_profile(nxdomain=prob)
+
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
+        return FaultWrapper(func, dns_profile=profile)
+
+    return decorator
+
+
 def _parse_rate(rate: str | int | float) -> int:
     if isinstance(rate, (int, float)):
         if rate < 0:
@@ -526,6 +586,7 @@ def apply_policy(_key: str):
             half_open_profile=policy.get("half_open_profile"),
             packet_duplicate_profile=policy.get("packet_duplicate_profile"),
             packet_reorder_profile=policy.get("packet_reorder_profile"),
+            dns_profile=policy.get("dns_profile"),
         )
 
     return decorator
@@ -561,6 +622,9 @@ def register_policy(
     half_open: dict[str, Any] | None = None,
     packet_duplicate: dict[str, Any] | None = None,
     packet_reorder: dict[str, Any] | None = None,
+    dns_delay_ms: int | None = None,
+    dns_timeout_ms: int | None = None,
+    dns_nxdomain: str | int | float | None = None,
 ) -> None:
     if not name:
         raise ValueError("policy name must be non-empty")
@@ -650,6 +714,13 @@ def register_policy(
         policy["packet_reorder_profile"] = _build_packet_reorder_profile(
             prob=packet_reorder.get("prob", "100%"),
         )
+    dns_profile = _build_dns_profile(
+        delay_ms=dns_delay_ms,
+        timeout_ms=dns_timeout_ms,
+        nxdomain=dns_nxdomain,
+    )
+    if dns_profile:
+        policy["dns_profile"] = dns_profile
     with _POLICY_LOCK:
         _POLICY_REGISTRY[name] = policy
 
@@ -718,6 +789,9 @@ def load_policies(path: str | Path) -> int:
             half_open=cfg.get("half_open"),
             packet_duplicate=cfg.get("packet_duplicate"),
             packet_reorder=cfg.get("packet_reorder"),
+            dns_delay_ms=cfg.get("dns_delay_ms"),
+            dns_timeout_ms=cfg.get("dns_timeout_ms"),
+            dns_nxdomain=cfg.get("dns_nxdomain"),
         )
         loaded += 1
     return loaded

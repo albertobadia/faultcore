@@ -129,6 +129,20 @@ Inject packet reordering (MVP on `sendto` path).
 Optional keyword fields:
 - `prob`: reorder probability (same formats as `packet_loss(...)`, default `"100%"`)
 
+### `dns_delay(delay_ms: int)`
+
+Inject DNS lookup delay (for `getaddrinfo`).
+- `delay_ms` must be `>= 0`.
+
+### `dns_timeout(timeout_ms: int)`
+
+Inject DNS lookup timeout behavior (`EAI_AGAIN`) after waiting.
+- `timeout_ms` must be `>= 0`.
+
+### `dns_nxdomain(prob: str | int | float = "100%")`
+
+Inject NXDOMAIN-style DNS failures (`EAI_NONAME`) with probability.
+
 ### `rate_limit(rate: str | int)`
 
 Set bandwidth in bits per second (bps) internally.
@@ -187,6 +201,9 @@ register_policy(
     half_open: dict[str, Any] | None = None,
     packet_duplicate: dict[str, Any] | None = None,
     packet_reorder: dict[str, Any] | None = None,
+    dns_delay_ms: int | None = None,
+    dns_timeout_ms: int | None = None,
+    dns_nxdomain: str | int | float | None = None,
 ) -> None
 ```
 

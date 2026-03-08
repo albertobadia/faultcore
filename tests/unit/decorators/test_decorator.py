@@ -516,6 +516,77 @@ class TestDuplicateAndReorderDecorators:
             faultcore.packet_duplicate(max_extra=0)
 
 
+class TestDnsDecorators:
+    def test_dns_delay_writes_profile_to_shm(self):
+        from unittest.mock import MagicMock, patch
+
+        mock_shm = MagicMock()
+        mock_shm.write_dns = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=980):
+
+                @faultcore.dns_delay(250)
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_dns.assert_called_once_with(
+                    980,
+                    delay_ms=250,
+                    timeout_ms=None,
+                    nxdomain_ppm=None,
+                )
+                mock_shm.clear.assert_called_once_with(980)
+
+    def test_dns_timeout_writes_profile_to_shm(self):
+        from unittest.mock import MagicMock, patch
+
+        mock_shm = MagicMock()
+        mock_shm.write_dns = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=981):
+
+                @faultcore.dns_timeout(1000)
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_dns.assert_called_once_with(
+                    981,
+                    delay_ms=None,
+                    timeout_ms=1000,
+                    nxdomain_ppm=None,
+                )
+                mock_shm.clear.assert_called_once_with(981)
+
+    def test_dns_nxdomain_writes_profile_to_shm(self):
+        from unittest.mock import MagicMock, patch
+
+        mock_shm = MagicMock()
+        mock_shm.write_dns = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=982):
+
+                @faultcore.dns_nxdomain("12.5%")
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_dns.assert_called_once_with(
+                    982,
+                    delay_ms=None,
+                    timeout_ms=None,
+                    nxdomain_ppm=125_000,
+                )
+                mock_shm.clear.assert_called_once_with(982)
+
+
 class TestPolicyRegistry:
     def test_apply_policy_uses_registered_policy(self):
         from unittest.mock import MagicMock, patch
@@ -751,6 +822,36 @@ class TestPolicyRegistry:
                 )
                 mock_shm.clear.assert_called_once_with(893)
 
+    def test_register_policy_with_dns_fields(self):
+        from unittest.mock import MagicMock, patch
+
+        faultcore.register_policy(
+            "dns_policy",
+            dns_delay_ms=150,
+            dns_timeout_ms=900,
+            dns_nxdomain="7%",
+        )
+
+        mock_shm = MagicMock()
+        mock_shm.write_dns = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=894):
+
+                @faultcore.apply_policy("dns_policy")
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_dns.assert_called_once_with(
+                    894,
+                    delay_ms=150,
+                    timeout_ms=900,
+                    nxdomain_ppm=70_000,
+                )
+                mock_shm.clear.assert_called_once_with(894)
+
     def test_register_policy_rejects_invalid_values(self):
         with pytest.raises(ValueError):
             faultcore.register_policy("", latency_ms=1)
@@ -780,6 +881,10 @@ class TestPolicyRegistry:
             faultcore.register_policy("bad12", packet_duplicate="invalid")
         with pytest.raises(ValueError):
             faultcore.register_policy("bad13", packet_reorder="invalid")
+        with pytest.raises(ValueError):
+            faultcore.register_policy("bad14", dns_delay_ms=-1)
+        with pytest.raises(ValueError):
+            faultcore.register_policy("bad15", dns_timeout_ms=-1)
 
     def test_registry_introspection_and_unregister(self):
         from faultcore.decorator import clear_policies

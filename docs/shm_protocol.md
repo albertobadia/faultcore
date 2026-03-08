@@ -11,7 +11,7 @@ Este documento define el contrato binario compartido entre:
   - Tabla de FDs + tabla hash de TIDs: `(MAX_FDS + MAX_TIDS) * CONFIG_SIZE`
   - En el interceptor además se reserva una región para `PolicyState`.
 
-## FaultcoreConfig (248 bytes)
+## FaultcoreConfig (272 bytes)
 - Endianness: little-endian
 - Layout fijo (packed)
 
@@ -48,11 +48,14 @@ Este documento define el contrato binario compartido entre:
 | `dup_prob_ppm` | 220 | 8 | `u64` |
 | `dup_max_extra` | 228 | 8 | `u64` |
 | `reorder_prob_ppm` | 236 | 8 | `u64` |
-| `reserved` | 244 | 4 | `u32` |
+| `dns_delay_ns` | 244 | 8 | `u64` |
+| `dns_timeout_ms` | 252 | 8 | `u64` |
+| `dns_nxdomain_ppm` | 260 | 8 | `u64` |
+| `reserved` | 268 | 4 | `u32` |
 
 Constantes:
 - `FAULTCORE_MAGIC = 0xFACC0DE`
-- `CONFIG_SIZE = 248`
+- `CONFIG_SIZE = 272`
 - `MAX_FDS = 131072`
 - `MAX_TIDS = 65536`
 

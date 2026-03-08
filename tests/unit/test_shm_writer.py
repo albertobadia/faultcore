@@ -128,6 +128,21 @@ class TestExports:
 
         assert callable(packet_reorder)
 
+    def test_dns_delay_is_exported(self):
+        from faultcore import dns_delay
+
+        assert callable(dns_delay)
+
+    def test_dns_timeout_is_exported(self):
+        from faultcore import dns_timeout
+
+        assert callable(dns_timeout)
+
+    def test_dns_nxdomain_is_exported(self):
+        from faultcore import dns_nxdomain
+
+        assert callable(dns_nxdomain)
+
     def test_apply_policy_is_exported(self):
         from faultcore import apply_policy
 

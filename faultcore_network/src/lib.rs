@@ -1,8 +1,11 @@
 pub mod chaos_engine;
 pub mod layers;
 
-pub use chaos_engine::ChaosEngine;
-pub use layers::{L1Chaos, L2QoS, L3Routing, L4Transport, Layer, LayerResult};
+pub use chaos_engine::{ChaosEngine, ConnectAction, StreamAction, StreamDirection};
+pub use layers::{
+    DnsAction, L1Chaos, L2QoS, L3Routing, L4Transport, L5Session, L6Presentation, L7Resolver, Layer,
+    LayerResult,
+};
 
 #[derive(Default)]
 pub struct Config {
@@ -35,6 +38,9 @@ pub struct Config {
     pub dup_prob_ppm: u64,
     pub dup_max_extra: u64,
     pub reorder_prob_ppm: u64,
+    pub dns_delay_ns: u64,
+    pub dns_timeout_ms: u64,
+    pub dns_nxdomain_ppm: u64,
 }
 
 impl Config {
@@ -61,6 +67,9 @@ impl Config {
             || self.half_open_after_bytes > 0
             || self.dup_prob_ppm > 0
             || self.reorder_prob_ppm > 0
+            || self.dns_delay_ns > 0
+            || self.dns_timeout_ms > 0
+            || self.dns_nxdomain_ppm > 0
     }
 
     pub fn effective_for_send(&self) -> Self {
@@ -134,6 +143,9 @@ impl Config {
             dup_prob_ppm: self.dup_prob_ppm,
             dup_max_extra: self.dup_max_extra,
             reorder_prob_ppm: self.reorder_prob_ppm,
+            dns_delay_ns: self.dns_delay_ns,
+            dns_timeout_ms: self.dns_timeout_ms,
+            dns_nxdomain_ppm: self.dns_nxdomain_ppm,
         }
     }
 }

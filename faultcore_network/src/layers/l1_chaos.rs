@@ -74,6 +74,28 @@ impl L1Chaos {
             Some(config.ge_loss_good_ppm)
         }
     }
+
+    pub fn duplicate_extra(&self, config: &Config) -> u64 {
+        if config.dup_prob_ppm == 0 {
+            return 0;
+        }
+        let max_extra = if config.dup_max_extra == 0 {
+            1
+        } else {
+            config.dup_max_extra
+        };
+        let mut count = 0;
+        for _ in 0..max_extra {
+            if self.event_happens(config.dup_prob_ppm) {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    pub fn should_reorder(&self, config: &Config) -> bool {
+        self.event_happens(config.reorder_prob_ppm)
+    }
 }
 
 impl Default for L1Chaos {

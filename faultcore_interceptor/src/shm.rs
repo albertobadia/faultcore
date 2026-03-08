@@ -59,6 +59,9 @@ pub struct FaultcoreConfig {
     pub dup_prob_ppm: u64,
     pub dup_max_extra: u64,
     pub reorder_prob_ppm: u64,
+    pub dns_delay_ns: u64,
+    pub dns_timeout_ms: u64,
+    pub dns_nxdomain_ppm: u64,
     pub reserved: u32,
 }
 
@@ -99,6 +102,8 @@ impl FaultcoreConfig {
             && self.half_open_err_kind <= 3
             && self.dup_prob_ppm <= 1_000_000
             && self.reorder_prob_ppm <= 1_000_000
+            && self.dns_delay_ns <= MAX_LATENCY_NS
+            && self.dns_nxdomain_ppm <= 1_000_000
     }
 
     pub fn into_network_config(self) -> faultcore_network::Config {
@@ -132,6 +137,9 @@ impl FaultcoreConfig {
             dup_prob_ppm: self.dup_prob_ppm,
             dup_max_extra: self.dup_max_extra,
             reorder_prob_ppm: self.reorder_prob_ppm,
+            dns_delay_ns: self.dns_delay_ns,
+            dns_timeout_ms: self.dns_timeout_ms,
+            dns_nxdomain_ppm: self.dns_nxdomain_ppm,
         }
     }
 }
@@ -259,6 +267,36 @@ pub fn get_config_for_fd(fd: c_int) -> Option<FaultcoreConfig> {
     None
 }
 
+pub fn get_config_for_tid(tid: u64) -> Option<FaultcoreConfig> {
+    if !is_shm_open() {
+        try_open_shm();
+    }
+
+    unsafe {
+        if let Some(config_ptr) = get_config_ptr(tid as usize, true) {
+            for _ in 0..10 {
+                let version_ptr = config_ptr.cast::<u8>().add(4);
+                let v1 = ptr::read_unaligned(version_ptr as *const u64);
+                if !v1.is_multiple_of(2) {
+                    continue;
+                }
+                fence(Ordering::SeqCst);
+                let config = config_ptr.read();
+                fence(Ordering::SeqCst);
+                let v2 = ptr::read_unaligned(version_ptr as *const u64);
+                if v1 != v2 {
+                    continue;
+                }
+                if config.is_valid() {
+                    return Some(config);
+                }
+                break;
+            }
+        }
+    }
+    None
+}
+
 pub fn assign_rule_to_fd(fd: c_int, tid: usize) {
     if fd < 0 {
         return;
@@ -324,6 +362,9 @@ mod tests {
             dup_prob_ppm: 0,
             dup_max_extra: 0,
             reorder_prob_ppm: 0,
+            dns_delay_ns: 0,
+            dns_timeout_ms: 0,
+            dns_nxdomain_ppm: 0,
             reserved: 0,
         };
         assert!(config.is_valid());
@@ -363,6 +404,9 @@ mod tests {
             dup_prob_ppm: 0,
             dup_max_extra: 0,
             reorder_prob_ppm: 0,
+            dns_delay_ns: 0,
+            dns_timeout_ms: 0,
+            dns_nxdomain_ppm: 0,
             reserved: 0,
         };
         assert!(!config.is_valid());
@@ -441,6 +485,9 @@ mod tests {
                 dup_prob_ppm: 0,
                 dup_max_extra: 0,
                 reorder_prob_ppm: 0,
+                dns_delay_ns: 0,
+                dns_timeout_ms: 0,
+                dns_nxdomain_ppm: 0,
                 reserved: 0,
             });
         }
@@ -481,6 +528,9 @@ mod tests {
             let dup_prob_ppm = ptr::read_unaligned(base.add(220) as *const u64);
             let dup_max_extra = ptr::read_unaligned(base.add(228) as *const u64);
             let reorder_prob_ppm = ptr::read_unaligned(base.add(236) as *const u64);
+            let dns_delay_ns = ptr::read_unaligned(base.add(244) as *const u64);
+            let dns_timeout_ms = ptr::read_unaligned(base.add(252) as *const u64);
+            let dns_nxdomain_ppm = ptr::read_unaligned(base.add(260) as *const u64);
             assert_eq!(magic, 0);
             assert_eq!(version, 0);
             assert_eq!(latency_ns, 0);
@@ -512,6 +562,9 @@ mod tests {
             assert_eq!(dup_prob_ppm, 0);
             assert_eq!(dup_max_extra, 0);
             assert_eq!(reorder_prob_ppm, 0);
+            assert_eq!(dns_delay_ns, 0);
+            assert_eq!(dns_timeout_ms, 0);
+            assert_eq!(dns_nxdomain_ppm, 0);
         }
 
         *SHM_POINTER.write() = prev_ptr;
