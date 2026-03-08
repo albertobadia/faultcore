@@ -49,14 +49,14 @@ impl PolicyRegistry {
     }
 
     pub fn get_or_create(&self, name: &str) -> Arc<RwLock<Policy>> {
-        if let Some(policy) = self._get_policy(name) {
-            return policy;
+        let mut policies = self.policies.lock().unwrap();
+
+        if let Some(policy) = policies.get(name) {
+            return policy.clone();
         }
 
         let policy = Arc::new(RwLock::new(Policy::new(name.to_string())));
-        if let Ok(mut policies) = self.policies.lock() {
-            policies.insert(name.to_string(), policy.clone());
-        }
+        policies.insert(name.to_string(), policy.clone());
         policy
     }
 
