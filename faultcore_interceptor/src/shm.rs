@@ -25,7 +25,7 @@ pub const FAULTCORE_SHM_SIZE: usize = ((MAX_FDS + MAX_TIDS)
     * std::mem::size_of::<FaultcoreConfig>())
     + (MAX_POLICIES * std::mem::size_of::<PolicyState>());
 
-#[repr(C)]
+#[repr(C, packed)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FaultcoreConfig {
     pub magic: u32,
