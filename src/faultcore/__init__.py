@@ -57,6 +57,12 @@ class fault_context:
     def __exit__(self, *_args):
         _set_thread_policy(self._previous)
 
+    async def __aenter__(self):
+        return self.__enter__()
+
+    async def __aexit__(self, *args):
+        self.__exit__(*args)
+
 
 def set_thread_policy(policy_name: str | None):
     _set_thread_policy(policy_name)

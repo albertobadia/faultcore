@@ -89,3 +89,15 @@ class TestAsyncErrorPropagation:
             failing_func()
         except RuntimeError as e:
             assert str(e) == "sync error"
+
+
+class TestAsyncFaultContext:
+    async def test_async_fault_context_sets_and_restores_policy(self):
+        from faultcore.decorator import get_thread_policy
+
+        faultcore.set_thread_policy("outer")
+        async with faultcore.fault_context("inner"):
+            assert get_thread_policy() == "inner"
+
+        assert get_thread_policy() == "outer"
+        faultcore.set_thread_policy(None)
