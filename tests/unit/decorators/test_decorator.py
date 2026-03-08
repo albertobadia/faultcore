@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 
 import pytest
@@ -338,6 +339,52 @@ class TestPolicyRegistry:
 
         assert get_thread_policy() == "outer"
         faultcore.set_thread_policy(None)
+
+    def test_load_policies_from_json(self, tmp_path):
+        file_path = tmp_path / "policies.json"
+        file_path.write_text(
+            json.dumps(
+                {
+                    "from_file": {
+                        "latency_ms": 7,
+                        "jitter_ms": 3,
+                        "packet_loss": "0.2%",
+                        "burst_loss_len": 2,
+                        "rate": "1mbps",
+                        "timeout_ms": 9,
+                    }
+                }
+            )
+        )
+
+        loaded = faultcore.load_policies(file_path)
+        assert loaded == 1
+
+        from unittest.mock import MagicMock, patch
+
+        mock_shm = MagicMock()
+        mock_shm.write_latency = MagicMock()
+        mock_shm.write_jitter = MagicMock()
+        mock_shm.write_packet_loss = MagicMock()
+        mock_shm.write_burst_loss = MagicMock()
+        mock_shm.write_bandwidth = MagicMock()
+        mock_shm.write_timeouts = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=611):
+
+                @faultcore.apply_policy("from_file")
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_latency.assert_called_once_with(611, 7)
+                mock_shm.write_jitter.assert_called_once_with(611, 3)
+                mock_shm.write_packet_loss.assert_called_once_with(611, 2_000)
+                mock_shm.write_burst_loss.assert_called_once_with(611, 2)
+                mock_shm.write_bandwidth.assert_called_once_with(611, 1_000_000)
+                mock_shm.write_timeouts.assert_called_once_with(611, 9, 9)
 
 
 class TestDecoratorMetadata:

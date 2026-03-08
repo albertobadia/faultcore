@@ -1,10 +1,12 @@
 import functools
+import json
 import signal
 import threading
 import time
 from asyncio import iscoroutine, wait_for
 from collections.abc import Callable
 from inspect import iscoroutinefunction
+from pathlib import Path
 from typing import Any
 
 from faultcore.shm_writer import get_shm_writer
@@ -252,6 +254,47 @@ def register_policy(
         t = int(timeout_ms)
         policy["timeouts"] = (t, t)
     _POLICY_REGISTRY[name] = policy
+
+
+def clear_policies() -> None:
+    _POLICY_REGISTRY.clear()
+
+
+def load_policies(path: str | Path) -> int:
+    p = Path(path)
+    ext = p.suffix.lower()
+
+    if ext == ".json":
+        with p.open("r", encoding="utf-8") as f:
+            raw = json.load(f)
+    elif ext in {".yaml", ".yml"}:
+        try:
+            import yaml  # type: ignore[import-untyped]
+        except Exception as exc:
+            raise ValueError("YAML support requires PyYAML installed") from exc
+        with p.open("r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f)
+    else:
+        raise ValueError("Unsupported policy format; use .json, .yaml or .yml")
+
+    if not isinstance(raw, dict):
+        raise ValueError("Policy file must contain an object keyed by policy name")
+
+    loaded = 0
+    for name, cfg in raw.items():
+        if not isinstance(name, str) or not isinstance(cfg, dict):
+            raise ValueError("Each policy entry must be a mapping")
+        register_policy(
+            name,
+            latency_ms=cfg.get("latency_ms"),
+            jitter_ms=cfg.get("jitter_ms"),
+            packet_loss=cfg.get("packet_loss"),
+            burst_loss_len=cfg.get("burst_loss_len"),
+            rate=cfg.get("rate"),
+            timeout_ms=cfg.get("timeout_ms"),
+        )
+        loaded += 1
+    return loaded
 
 
 def set_thread_policy(policy_name: str | None) -> None:

@@ -93,6 +93,11 @@ class TestExports:
 
         assert callable(register_policy)
 
+    def test_load_policies_is_exported(self):
+        from faultcore import load_policies
+
+        assert callable(load_policies)
+
     def test_fault_is_exported(self):
         from faultcore import fault
 
