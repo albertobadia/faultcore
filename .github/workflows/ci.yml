@@ -11,8 +11,8 @@ permissions:
   contents: read
 
 jobs:
-  rust:
-    name: Rust
+  validate:
+    name: Lint Build Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,7 +20,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.10"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -28,55 +28,22 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 
-      - name: Install dependencies
-        run: uv sync --all-extras --dev
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy,rustfmt
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Run Clippy
-        run: uv run cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Run Rust Tests
-        run: uv run cargo test --all-features
-
-  python:
-    name: Python
-    runs-on: ubuntu-latest
-    needs: rust
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-          cache-dependency-glob: "uv.lock"
-
       - name: Install dependencies
-        run: uv sync --all-extras --dev
+        run: uv sync --locked --all-extras --dev
 
-      - name: Build extension (maturin develop)
-        run: uv run maturin develop
+      - name: Lint
+        run: sh lint.sh
 
-      - name: Lint with Ruff
-        run: uv run ruff check .
+      - name: Build
+        run: sh build.sh
 
-      - name: Run tests
-        run: uv run pytest
+      - name: Tests
+        run: sh tests.sh

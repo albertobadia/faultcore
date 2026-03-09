@@ -143,6 +143,11 @@ class TestExports:
 
         assert callable(dns_nxdomain)
 
+    def test_for_target_is_exported(self):
+        from faultcore import for_target
+
+        assert callable(for_target)
+
     def test_apply_policy_is_exported(self):
         from faultcore import apply_policy
 

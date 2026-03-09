@@ -99,6 +99,107 @@ fn network_config_for_fd(fd: c_int) -> Option<faultcore_network::Config> {
     Some(shm::get_config_for_fd(fd)?.into_network_config())
 }
 
+fn socket_protocol_for_fd(fd: c_int) -> u64 {
+    let mut sock_type: c_int = 0;
+    let mut len = std::mem::size_of::<c_int>() as socklen_t;
+    let rc = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_TYPE,
+            (&mut sock_type as *mut c_int).cast::<c_void>(),
+            &mut len,
+        )
+    };
+    if rc < 0 {
+        return 0;
+    }
+    match sock_type {
+        libc::SOCK_STREAM => 1,
+        libc::SOCK_DGRAM => 2,
+        _ => 0,
+    }
+}
+
+fn sockaddr_ipv4(addr: *const sockaddr, addr_len: socklen_t) -> Option<(u32, u16)> {
+    if addr.is_null() || addr_len < std::mem::size_of::<libc::sockaddr_in>() as socklen_t {
+        return None;
+    }
+    let family = unsafe { (*addr).sa_family as c_int };
+    if family != libc::AF_INET {
+        return None;
+    }
+    let in_addr = unsafe { &*(addr.cast::<libc::sockaddr_in>()) };
+    Some((u32::from_be(in_addr.sin_addr.s_addr), u16::from_be(in_addr.sin_port)))
+}
+
+fn peer_ipv4_for_fd(fd: c_int) -> Option<(u32, u16)> {
+    let mut storage: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+    let mut len = std::mem::size_of::<libc::sockaddr_storage>() as socklen_t;
+    let rc = unsafe {
+        libc::getpeername(
+            fd,
+            (&mut storage as *mut libc::sockaddr_storage).cast::<sockaddr>(),
+            &mut len,
+        )
+    };
+    if rc < 0 {
+        return None;
+    }
+    sockaddr_ipv4((&storage as *const libc::sockaddr_storage).cast::<sockaddr>(), len)
+}
+
+fn matches_prefix(ip: u32, network: u32, prefix_len: u64) -> bool {
+    if prefix_len == 0 {
+        return true;
+    }
+    if prefix_len >= 32 {
+        return ip == network;
+    }
+    let mask = u32::MAX << (32 - prefix_len as u32);
+    (ip & mask) == (network & mask)
+}
+
+fn target_matches_endpoint(
+    cfg: &faultcore_network::Config,
+    endpoint: Option<(u32, u16)>,
+    protocol: u64,
+) -> bool {
+    if cfg.target_enabled == 0 || cfg.target_kind == 0 {
+        return true;
+    }
+    if cfg.target_protocol > 0 && cfg.target_protocol != protocol {
+        return false;
+    }
+    let Some((ip, port)) = endpoint else {
+        return false;
+    };
+    if cfg.target_port > 0 && cfg.target_port != u64::from(port) {
+        return false;
+    }
+    match cfg.target_kind {
+        1 => ip == cfg.target_ipv4 as u32,
+        2 => matches_prefix(ip, cfg.target_ipv4 as u32, cfg.target_prefix_len),
+        _ => false,
+    }
+}
+
+fn target_matches_fd(cfg: &faultcore_network::Config, fd: c_int) -> bool {
+    let protocol = socket_protocol_for_fd(fd);
+    target_matches_endpoint(cfg, peer_ipv4_for_fd(fd), protocol)
+}
+
+fn target_matches_addr_or_fd(
+    cfg: &faultcore_network::Config,
+    fd: c_int,
+    addr: *const sockaddr,
+    addr_len: socklen_t,
+) -> bool {
+    let protocol = socket_protocol_for_fd(fd);
+    let endpoint = sockaddr_ipv4(addr, addr_len).or_else(|| peer_ipv4_for_fd(fd));
+    target_matches_endpoint(cfg, endpoint, protocol)
+}
+
 fn map_connect_decision_to_result(decision: LayerDecision) -> Option<c_int> {
     match decision {
         LayerDecision::Continue => None,
@@ -394,12 +495,18 @@ pub extern "C" fn send(s: c_int, b: *const c_void, l: size_t, f: c_int) -> ssize
     }
 
     initialize();
+    let mut faults_applied = false;
     let result = if let Some(network_cfg) = network_config_for_fd(s) {
-        let decision = CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Uplink);
-        if let Some(error) = map_stream_decision_to_result(s, decision) {
-            error
-        } else {
+        if !target_matches_fd(&network_cfg, s) {
             unsafe { (ORIG_SEND)(s, b, l, f) }
+        } else {
+            faults_applied = true;
+            let decision = CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Uplink);
+            if let Some(error) = map_stream_decision_to_result(s, decision) {
+                error
+            } else {
+                unsafe { (ORIG_SEND)(s, b, l, f) }
+            }
         }
     } else {
         unsafe { (ORIG_SEND)(s, b, l, f) }
@@ -407,7 +514,9 @@ pub extern "C" fn send(s: c_int, b: *const c_void, l: size_t, f: c_int) -> ssize
 
     if result > 0 {
         record_stream_bytes(s, result as u64);
-        maybe_duplicate_send(s, b, result, f);
+        if faults_applied {
+            maybe_duplicate_send(s, b, result, f);
+        }
     }
 
     exit_hook();
@@ -422,12 +531,16 @@ pub extern "C" fn recv(s: c_int, b: *mut c_void, l: size_t, f: c_int) -> ssize_t
 
     initialize();
     let result = if let Some(network_cfg) = network_config_for_fd(s) {
-        let decision =
-            CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Downlink);
-        if let Some(error) = map_stream_decision_to_result(s, decision) {
-            error
-        } else {
+        if !target_matches_fd(&network_cfg, s) {
             unsafe { (ORIG_RECV)(s, b, l, f) }
+        } else {
+            let decision =
+                CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Downlink);
+            if let Some(error) = map_stream_decision_to_result(s, decision) {
+                error
+            } else {
+                unsafe { (ORIG_RECV)(s, b, l, f) }
+            }
         }
     } else {
         unsafe { (ORIG_RECV)(s, b, l, f) }
@@ -452,11 +565,15 @@ pub extern "C" fn connect(s: c_int, a: *const sockaddr, l: socklen_t) -> c_int {
     shm::assign_rule_to_fd(s, tid);
 
     let result = if let Some(network_cfg) = network_config_for_fd(s) {
-        let decision = CHAOS_ENGINE.evaluate_connect(s, &network_cfg);
-        if let Some(error) = map_connect_decision_to_result(decision) {
-            error
-        } else {
+        if !target_matches_addr_or_fd(&network_cfg, s, a, l) {
             unsafe { (ORIG_CONNECT)(s, a, l) }
+        } else {
+            let decision = CHAOS_ENGINE.evaluate_connect(s, &network_cfg);
+            if let Some(error) = map_connect_decision_to_result(decision) {
+                error
+            } else {
+                unsafe { (ORIG_CONNECT)(s, a, l) }
+            }
         }
     } else {
         unsafe { (ORIG_CONNECT)(s, a, l) }
@@ -485,24 +602,31 @@ pub extern "C" fn sendto(
         .remove(&s)
         .unwrap_or_default();
     let mut staged_reorder = false;
+    let mut faults_applied = false;
     let result = if let Some(network_cfg) = network_config_for_fd(s) {
-        flush_expired_reorder(s, &mut pending, network_cfg.reorder_max_delay_ns);
-        let decision = CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Uplink);
-        if let Some(error) = map_stream_decision_to_result(s, decision.clone()) {
-            error
-        } else if matches!(decision, LayerDecision::StageReorder) {
-            staged_reorder = true;
-            let staged = maybe_stage_reorder_sendto(b, l, f, addr, addr_len, &mut pending)
-                .unwrap_or(l as ssize_t);
-            let window = network_cfg.reorder_window.max(1) as usize;
-            while pending.len() > window {
-                if let Some(pkt) = pending.pop_front() {
-                    send_pending_datagram(s, &pkt);
-                }
-            }
-            staged
-        } else {
+        if !target_matches_addr_or_fd(&network_cfg, s, addr, addr_len) {
             unsafe { (ORIG_SENDTO)(s, b, l, f, addr, addr_len) }
+        } else {
+            faults_applied = true;
+            flush_expired_reorder(s, &mut pending, network_cfg.reorder_max_delay_ns);
+            let decision =
+                CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Uplink);
+            if let Some(error) = map_stream_decision_to_result(s, decision.clone()) {
+                error
+            } else if matches!(decision, LayerDecision::StageReorder) {
+                staged_reorder = true;
+                let staged = maybe_stage_reorder_sendto(b, l, f, addr, addr_len, &mut pending)
+                    .unwrap_or(l as ssize_t);
+                let window = network_cfg.reorder_window.max(1) as usize;
+                while pending.len() > window {
+                    if let Some(pkt) = pending.pop_front() {
+                        send_pending_datagram(s, &pkt);
+                    }
+                }
+                staged
+            } else {
+                unsafe { (ORIG_SENDTO)(s, b, l, f, addr, addr_len) }
+            }
         }
     } else {
         unsafe { (ORIG_SENDTO)(s, b, l, f, addr, addr_len) }
@@ -510,10 +634,11 @@ pub extern "C" fn sendto(
 
     if result > 0 {
         record_stream_bytes(s, result as u64);
-        if !staged_reorder {
+        if faults_applied && !staged_reorder {
             maybe_duplicate_sendto(s, b, result, f, addr, addr_len);
         }
-        if !staged_reorder
+        if faults_applied
+            && !staged_reorder
             && let Some(pkt) = pending.pop_front()
         {
             send_pending_datagram(s, &pkt);
@@ -542,12 +667,16 @@ pub extern "C" fn recvfrom(
 
     initialize();
     let result = if let Some(network_cfg) = network_config_for_fd(s) {
-        let decision =
-            CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Downlink);
-        if let Some(error) = map_stream_decision_to_result(s, decision) {
-            error
-        } else {
+        if !target_matches_fd(&network_cfg, s) {
             unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) }
+        } else {
+            let decision =
+                CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Downlink);
+            if let Some(error) = map_stream_decision_to_result(s, decision) {
+                error
+            } else {
+                unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) }
+            }
         }
     } else {
         unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) }

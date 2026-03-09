@@ -1,5 +1,6 @@
 import asyncio
 import functools
+import ipaddress
 import json
 import signal
 import threading
@@ -133,6 +134,81 @@ def _build_dns_profile(
     return profile
 
 
+def _parse_target_protocol(protocol: str | None) -> int:
+    if protocol is None:
+        return 0
+    normalized = protocol.strip().lower()
+    if normalized == "tcp":
+        return 1
+    if normalized == "udp":
+        return 2
+    raise ValueError("target protocol must be one of: tcp, udp")
+
+
+def _build_target_profile(
+    *,
+    target: str | None = None,
+    host: str | None = None,
+    cidr: str | None = None,
+    port: int | None = None,
+    protocol: str | None = None,
+) -> dict[str, int]:
+    parsed_protocol = _parse_target_protocol(protocol)
+    parsed_host = host
+    parsed_port = int(port) if port is not None else 0
+    parsed_cidr = cidr
+
+    if target is not None:
+        raw = target.strip()
+        if not raw:
+            raise ValueError("target must be non-empty")
+        if "://" in raw:
+            proto_raw, raw = raw.split("://", 1)
+            proto_from_target = _parse_target_protocol(proto_raw)
+            if parsed_protocol and parsed_protocol != proto_from_target:
+                raise ValueError("target protocol conflicts with protocol parameter")
+            parsed_protocol = proto_from_target
+        if "/" in raw:
+            parsed_cidr = raw
+        else:
+            if ":" in raw:
+                host_part, port_part = raw.rsplit(":", 1)
+                raw = host_part
+                if parsed_port != 0 and parsed_port != int(port_part):
+                    raise ValueError("target port conflicts with port parameter")
+                parsed_port = int(port_part)
+            parsed_host = raw
+
+    if parsed_port < 0 or parsed_port > 65535:
+        raise ValueError("target port must be between 0 and 65535")
+
+    if parsed_host and parsed_cidr:
+        raise ValueError("target cannot define both host and cidr")
+    if not parsed_host and not parsed_cidr:
+        raise ValueError("target requires either host or cidr")
+
+    if parsed_host:
+        ipv4 = int(ipaddress.IPv4Address(parsed_host))
+        return {
+            "enabled": 1,
+            "kind": 1,
+            "ipv4": ipv4,
+            "prefix_len": 32,
+            "port": parsed_port,
+            "protocol": parsed_protocol,
+        }
+
+    network = ipaddress.IPv4Network(parsed_cidr, strict=False)
+    return {
+        "enabled": 1,
+        "kind": 2,
+        "ipv4": int(network.network_address),
+        "prefix_len": int(network.prefixlen),
+        "port": parsed_port,
+        "protocol": parsed_protocol,
+    }
+
+
 class FaultWrapper:
     def __init__(
         self,
@@ -151,6 +227,7 @@ class FaultWrapper:
         packet_duplicate_profile: dict[str, int] | None = None,
         packet_reorder_profile: dict[str, int] | None = None,
         dns_profile: dict[str, int] | None = None,
+        target_profile: dict[str, int] | None = None,
     ):
         functools.update_wrapper(self, func)
         self._func = func
@@ -168,6 +245,7 @@ class FaultWrapper:
         self._packet_duplicate_profile = packet_duplicate_profile or {}
         self._packet_reorder_profile = packet_reorder_profile or {}
         self._dns_profile = dns_profile or {}
+        self._target_profile = target_profile or {}
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._func, name)
@@ -267,6 +345,17 @@ class FaultWrapper:
                 nxdomain_ppm=self._dns_profile.get("nxdomain_ppm"),
             )
 
+        if self._target_profile:
+            shm.write_target(
+                tid,
+                enabled=bool(self._target_profile.get("enabled", 0)),
+                kind=self._target_profile.get("kind", 0),
+                ipv4=self._target_profile.get("ipv4", 0),
+                prefix_len=self._target_profile.get("prefix_len", 0),
+                port=self._target_profile.get("port", 0),
+                protocol=self._target_profile.get("protocol", 0),
+            )
+
         timeout_ms = self._timeouts[0] if self._timeouts else None
 
         if timeout_ms and timeout_ms > 0 and not iscoroutinefunction(self._func):
@@ -312,7 +401,8 @@ class FaultWrapper:
             f"half_open={self._half_open_profile}, "
             f"packet_duplicate={self._packet_duplicate_profile}, "
             f"packet_reorder={self._packet_reorder_profile}, "
-            f"dns={self._dns_profile}) for {self._func!r}>"
+            f"dns={self._dns_profile}, "
+            f"target={self._target_profile}) for {self._func!r}>"
         )
 
 
@@ -527,6 +617,28 @@ def dns_nxdomain(prob: str | int | float = "100%"):
     return decorator
 
 
+def for_target(
+    target: str | None = None,
+    *,
+    host: str | None = None,
+    cidr: str | None = None,
+    port: int | None = None,
+    protocol: str | None = None,
+):
+    profile = _build_target_profile(
+        target=target,
+        host=host,
+        cidr=cidr,
+        port=port,
+        protocol=protocol,
+    )
+
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
+        return FaultWrapper(func, target_profile=profile)
+
+    return decorator
+
+
 def _parse_rate(rate: str | int | float) -> int:
     if isinstance(rate, (int, float)):
         if rate < 0:
@@ -609,6 +721,7 @@ def apply_policy(_key: str):
             packet_duplicate_profile=policy.get("packet_duplicate_profile"),
             packet_reorder_profile=policy.get("packet_reorder_profile"),
             dns_profile=policy.get("dns_profile"),
+            target_profile=policy.get("target_profile"),
         )
 
     return decorator
@@ -647,6 +760,7 @@ def register_policy(
     dns_delay_ms: int | None = None,
     dns_timeout_ms: int | None = None,
     dns_nxdomain: str | int | float | None = None,
+    target: str | dict[str, Any] | None = None,
 ) -> None:
     if not name:
         raise ValueError("policy name must be non-empty")
@@ -745,6 +859,19 @@ def register_policy(
     )
     if dns_profile:
         policy["dns_profile"] = dns_profile
+    if target is not None:
+        if isinstance(target, str):
+            policy["target_profile"] = _build_target_profile(target=target)
+        elif isinstance(target, dict):
+            policy["target_profile"] = _build_target_profile(
+                target=target.get("target"),
+                host=target.get("host"),
+                cidr=target.get("cidr"),
+                port=target.get("port"),
+                protocol=target.get("protocol"),
+            )
+        else:
+            raise ValueError("target must be a string or mapping when provided")
     with _POLICY_LOCK:
         _POLICY_REGISTRY[name] = policy
 
@@ -816,6 +943,7 @@ def load_policies(path: str | Path) -> int:
             dns_delay_ms=cfg.get("dns_delay_ms"),
             dns_timeout_ms=cfg.get("dns_timeout_ms"),
             dns_nxdomain=cfg.get("dns_nxdomain"),
+            target=cfg.get("target"),
         )
         loaded += 1
     return loaded

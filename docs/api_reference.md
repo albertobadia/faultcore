@@ -131,6 +131,21 @@ Optional keyword fields:
 - `max_delay_ms`: max staging delay before forced flush, must be `>= 0` (default `0`)
 - `window`: max queued staged datagrams per socket, must be `> 0` (default `1`)
 
+### `for_target(...)`
+
+Apply faults only when destination matches a target filter.
+
+Accepted forms:
+- `for_target("tcp://10.1.2.3:443")`
+- `for_target("10.1.2.3:443")`
+- `for_target("10.0.0.0/8", protocol="udp", port=53)`
+- `for_target(host="10.1.2.3", port=443, protocol="tcp")`
+- `for_target(cidr="10.0.0.0/8", port=53)`
+
+Current scope:
+- IPv4 targets only.
+- Protocol can be `tcp` or `udp`.
+
 ### `dns_delay(delay_ms: int)`
 
 Inject DNS lookup delay (for `getaddrinfo`).
@@ -206,6 +221,7 @@ register_policy(
     dns_delay_ms: int | None = None,
     dns_timeout_ms: int | None = None,
     dns_nxdomain: str | int | float | None = None,
+    target: str | dict[str, Any] | None = None,
 ) -> None
 ```
 
@@ -214,6 +230,9 @@ Notes:
 - `timeout_ms` sets both connect/recv.
 - `connect_timeout_ms`/`recv_timeout_ms` override split timeouts when provided.
 - `packet_reorder` accepts `prob`, `max_delay_ms`, and `window`.
+- `target` accepts:
+  - string format: `"tcp://10.1.2.3:443"`, `"10.1.2.3:443"`, `"10.0.0.0/8"`;
+  - mapping format with keys: `target`, `host`, `cidr`, `port`, `protocol`.
 
 ### `list_policies() -> list[str]`
 

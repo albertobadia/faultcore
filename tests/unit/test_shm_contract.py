@@ -4,9 +4,9 @@ from faultcore.shm_writer import CONFIG_SIZE
 
 
 def test_faultcore_config_binary_layout_is_stable():
-    # magic (u32) + 35x u64 + reserved (u32) = 288 bytes
-    fmt = "<I" + ("Q" * 35) + "I"
-    assert struct.calcsize(fmt) == CONFIG_SIZE == 288
+    # magic (u32) + 41x u64 + reserved (u32) = 336 bytes
+    fmt = "<I" + ("Q" * 41) + "I"
+    assert struct.calcsize(fmt) == CONFIG_SIZE == 336
 
 
 def test_faultcore_config_offsets_are_stable():
@@ -47,9 +47,15 @@ def test_faultcore_config_offsets_are_stable():
         94,  # dns_delay_ns
         95,  # dns_timeout_ms
         96,  # dns_nxdomain_ppm
+        97,  # target_enabled
+        98,  # target_kind
+        99,  # target_ipv4
+        100,  # target_prefix_len
+        101,  # target_port
+        102,  # target_protocol
         0,  # reserved
     )
-    blob = struct.pack("<I" + ("Q" * 35) + "I", *values)
+    blob = struct.pack("<I" + ("Q" * 41) + "I", *values)
 
     assert struct.unpack_from("<I", blob, 0)[0] == 0xFACC0DE
     assert struct.unpack_from("<Q", blob, 4)[0] == 2
@@ -87,4 +93,10 @@ def test_faultcore_config_offsets_are_stable():
     assert struct.unpack_from("<Q", blob, 260)[0] == 94
     assert struct.unpack_from("<Q", blob, 268)[0] == 95
     assert struct.unpack_from("<Q", blob, 276)[0] == 96
-    assert struct.unpack_from("<I", blob, 284)[0] == 0
+    assert struct.unpack_from("<Q", blob, 284)[0] == 97
+    assert struct.unpack_from("<Q", blob, 292)[0] == 98
+    assert struct.unpack_from("<Q", blob, 300)[0] == 99
+    assert struct.unpack_from("<Q", blob, 308)[0] == 100
+    assert struct.unpack_from("<Q", blob, 316)[0] == 101
+    assert struct.unpack_from("<Q", blob, 324)[0] == 102
+    assert struct.unpack_from("<I", blob, 332)[0] == 0

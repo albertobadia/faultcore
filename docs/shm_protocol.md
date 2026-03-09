@@ -11,7 +11,7 @@ This document defines the shared binary contract between:
   - FD table + TID hash table: `(MAX_FDS + MAX_TIDS) * CONFIG_SIZE`
   - The interceptor also reserves a region for `PolicyState`.
 
-## FaultcoreConfig (288 bytes)
+## FaultcoreConfig (336 bytes)
 - Endianness: little-endian
 - Fixed packed layout
 
@@ -53,11 +53,17 @@ This document defines the shared binary contract between:
 | `dns_delay_ns` | 260 | 8 | `u64` |
 | `dns_timeout_ms` | 268 | 8 | `u64` |
 | `dns_nxdomain_ppm` | 276 | 8 | `u64` |
-| `reserved` | 284 | 4 | `u32` |
+| `target_enabled` | 284 | 8 | `u64` |
+| `target_kind` | 292 | 8 | `u64` |
+| `target_ipv4` | 300 | 8 | `u64` |
+| `target_prefix_len` | 308 | 8 | `u64` |
+| `target_port` | 316 | 8 | `u64` |
+| `target_protocol` | 324 | 8 | `u64` |
+| `reserved` | 332 | 4 | `u32` |
 
 Constants:
 - `FAULTCORE_MAGIC = 0xFACC0DE`
-- `CONFIG_SIZE = 288`
+- `CONFIG_SIZE = 336`
 - `MAX_FDS = 131072`
 - `MAX_TIDS = 65536`
 

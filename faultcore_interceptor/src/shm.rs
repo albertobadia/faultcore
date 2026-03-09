@@ -64,6 +64,12 @@ pub struct FaultcoreConfig {
     pub dns_delay_ns: u64,
     pub dns_timeout_ms: u64,
     pub dns_nxdomain_ppm: u64,
+    pub target_enabled: u64,
+    pub target_kind: u64,
+    pub target_ipv4: u64,
+    pub target_prefix_len: u64,
+    pub target_port: u64,
+    pub target_protocol: u64,
     pub reserved: u32,
 }
 
@@ -107,6 +113,11 @@ impl FaultcoreConfig {
             && self.reorder_window <= 1_000_000
             && self.dns_delay_ns <= MAX_LATENCY_NS
             && self.dns_nxdomain_ppm <= 1_000_000
+            && self.target_enabled <= 1
+            && self.target_kind <= 2
+            && self.target_prefix_len <= 32
+            && self.target_port <= 65_535
+            && self.target_protocol <= 2
     }
 
     pub fn into_network_config(self) -> faultcore_network::Config {
@@ -145,6 +156,12 @@ impl FaultcoreConfig {
             dns_delay_ns: self.dns_delay_ns,
             dns_timeout_ms: self.dns_timeout_ms,
             dns_nxdomain_ppm: self.dns_nxdomain_ppm,
+            target_enabled: self.target_enabled,
+            target_kind: self.target_kind,
+            target_ipv4: self.target_ipv4,
+            target_prefix_len: self.target_prefix_len,
+            target_port: self.target_port,
+            target_protocol: self.target_protocol,
         }
     }
 }
@@ -372,6 +389,12 @@ mod tests {
             dns_delay_ns: 0,
             dns_timeout_ms: 0,
             dns_nxdomain_ppm: 0,
+            target_enabled: 0,
+            target_kind: 0,
+            target_ipv4: 0,
+            target_prefix_len: 0,
+            target_port: 0,
+            target_protocol: 0,
             reserved: 0,
         };
         assert!(config.is_valid());
@@ -416,6 +439,12 @@ mod tests {
             dns_delay_ns: 0,
             dns_timeout_ms: 0,
             dns_nxdomain_ppm: 0,
+            target_enabled: 0,
+            target_kind: 0,
+            target_ipv4: 0,
+            target_prefix_len: 0,
+            target_port: 0,
+            target_protocol: 0,
             reserved: 0,
         };
         assert!(!config.is_valid());
@@ -499,6 +528,12 @@ mod tests {
                 dns_delay_ns: 0,
                 dns_timeout_ms: 0,
                 dns_nxdomain_ppm: 0,
+                target_enabled: 0,
+                target_kind: 0,
+                target_ipv4: 0,
+                target_prefix_len: 0,
+                target_port: 0,
+                target_protocol: 0,
                 reserved: 0,
             });
         }
@@ -544,6 +579,13 @@ mod tests {
             let dns_delay_ns = ptr::read_unaligned(base.add(260) as *const u64);
             let dns_timeout_ms = ptr::read_unaligned(base.add(268) as *const u64);
             let dns_nxdomain_ppm = ptr::read_unaligned(base.add(276) as *const u64);
+            let target_enabled = ptr::read_unaligned(base.add(284) as *const u64);
+            let target_kind = ptr::read_unaligned(base.add(292) as *const u64);
+            let target_ipv4 = ptr::read_unaligned(base.add(300) as *const u64);
+            let target_prefix_len = ptr::read_unaligned(base.add(308) as *const u64);
+            let target_port = ptr::read_unaligned(base.add(316) as *const u64);
+            let target_protocol = ptr::read_unaligned(base.add(324) as *const u64);
+            let reserved = ptr::read_unaligned(base.add(332) as *const u32);
             assert_eq!(magic, 0);
             assert_eq!(version, 0);
             assert_eq!(latency_ns, 0);
@@ -580,6 +622,13 @@ mod tests {
             assert_eq!(dns_delay_ns, 0);
             assert_eq!(dns_timeout_ms, 0);
             assert_eq!(dns_nxdomain_ppm, 0);
+            assert_eq!(target_enabled, 0);
+            assert_eq!(target_kind, 0);
+            assert_eq!(target_ipv4, 0);
+            assert_eq!(target_prefix_len, 0);
+            assert_eq!(target_port, 0);
+            assert_eq!(target_protocol, 0);
+            assert_eq!(reserved, 0);
         }
 
         *SHM_POINTER.write() = prev_ptr;

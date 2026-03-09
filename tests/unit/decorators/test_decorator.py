@@ -580,6 +580,32 @@ class TestDnsDecorators:
                 mock_shm.clear.assert_called_once_with(982)
 
 
+class TestTargetDecorators:
+    def test_for_target_writes_profile_to_shm(self):
+        mock_shm = MagicMock()
+        mock_shm.write_target = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=977):
+
+                @faultcore.for_target("tcp://10.1.2.3:443")
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_target.assert_called_once_with(
+                    977,
+                    enabled=True,
+                    kind=1,
+                    ipv4=167838211,
+                    prefix_len=32,
+                    port=443,
+                    protocol=1,
+                )
+                mock_shm.clear.assert_called_once_with(977)
+
+
 class TestPolicyRegistry:
     def test_apply_policy_uses_registered_policy(self):
         faultcore.register_policy(
@@ -827,6 +853,38 @@ class TestPolicyRegistry:
                 )
                 mock_shm.clear.assert_called_once_with(894)
 
+    def test_register_policy_with_target_filter(self):
+        faultcore.register_policy(
+            "target_policy",
+            latency_ms=10,
+            target={"target": "udp://10.0.0.0/8", "port": 53},
+        )
+
+        mock_shm = MagicMock()
+        mock_shm.write_latency = MagicMock()
+        mock_shm.write_target = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=895):
+
+                @faultcore.apply_policy("target_policy")
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_latency.assert_called_once_with(895, 10)
+                mock_shm.write_target.assert_called_once_with(
+                    895,
+                    enabled=True,
+                    kind=2,
+                    ipv4=167772160,
+                    prefix_len=8,
+                    port=53,
+                    protocol=2,
+                )
+                mock_shm.clear.assert_called_once_with(895)
+
     def test_register_policy_rejects_invalid_values(self):
         with pytest.raises(ValueError):
             faultcore.register_policy("", latency_ms=1)
@@ -860,6 +918,10 @@ class TestPolicyRegistry:
             faultcore.register_policy("bad14", dns_delay_ms=-1)
         with pytest.raises(ValueError):
             faultcore.register_policy("bad15", dns_timeout_ms=-1)
+        with pytest.raises(ValueError):
+            faultcore.register_policy("bad16", target=123)
+        with pytest.raises(ValueError):
+            faultcore.register_policy("bad17", target="tcp://bad_host:80")
 
     def test_registry_introspection_and_unregister(self):
         clear_policies()

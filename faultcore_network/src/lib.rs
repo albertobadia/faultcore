@@ -45,6 +45,12 @@ pub struct Config {
     pub dns_delay_ns: u64,
     pub dns_timeout_ms: u64,
     pub dns_nxdomain_ppm: u64,
+    pub target_enabled: u64,
+    pub target_kind: u64,
+    pub target_ipv4: u64,
+    pub target_prefix_len: u64,
+    pub target_port: u64,
+    pub target_protocol: u64,
 }
 
 impl Config {
@@ -75,6 +81,7 @@ impl Config {
             || self.dns_delay_ns > 0
             || self.dns_timeout_ms > 0
             || self.dns_nxdomain_ppm > 0
+            || self.target_enabled > 0
     }
 
     pub fn effective_for_send(&self) -> Self {
@@ -153,6 +160,12 @@ impl Config {
             dns_delay_ns: self.dns_delay_ns,
             dns_timeout_ms: self.dns_timeout_ms,
             dns_nxdomain_ppm: self.dns_nxdomain_ppm,
+            target_enabled: self.target_enabled,
+            target_kind: self.target_kind,
+            target_ipv4: self.target_ipv4,
+            target_prefix_len: self.target_prefix_len,
+            target_port: self.target_port,
+            target_protocol: self.target_protocol,
         }
     }
 }

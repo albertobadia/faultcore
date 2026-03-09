@@ -6,7 +6,7 @@ import threading
 FAULTCORE_MAGIC = 0xFACC0DE
 MAX_FDS = 131072
 MAX_TIDS = 65536
-CONFIG_SIZE = 288
+CONFIG_SIZE = 336
 
 _OFFSET_MAGIC = 0
 _OFFSET_VERSION = 4
@@ -44,6 +44,12 @@ _OFFSET_REORDER_WINDOW = 252
 _OFFSET_DNS_DELAY_NS = 260
 _OFFSET_DNS_TIMEOUT_MS = 268
 _OFFSET_DNS_NXDOMAIN_PPM = 276
+_OFFSET_TARGET_ENABLED = 284
+_OFFSET_TARGET_KIND = 292
+_OFFSET_TARGET_IPV4 = 300
+_OFFSET_TARGET_PREFIX_LEN = 308
+_OFFSET_TARGET_PORT = 316
+_OFFSET_TARGET_PROTOCOL = 324
 
 
 class SHMWriter:
@@ -237,6 +243,27 @@ class SHMWriter:
                 struct.pack_into("<Q", self._mmap, offset + _OFFSET_DNS_TIMEOUT_MS, timeout_ms)
             if nxdomain_ppm is not None:
                 struct.pack_into("<Q", self._mmap, offset + _OFFSET_DNS_NXDOMAIN_PPM, nxdomain_ppm)
+
+        self._write_versioned(tid, writer)
+
+    def write_target(
+        self,
+        tid: int,
+        *,
+        enabled: bool,
+        kind: int,
+        ipv4: int,
+        prefix_len: int,
+        port: int,
+        protocol: int,
+    ) -> None:
+        def writer(offset: int) -> None:
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_ENABLED, 1 if enabled else 0)
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_KIND, kind)
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_IPV4, ipv4)
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_PREFIX_LEN, prefix_len)
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_PORT, port)
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_PROTOCOL, protocol)
 
         self._write_versioned(tid, writer)
 
