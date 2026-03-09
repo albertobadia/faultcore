@@ -35,6 +35,10 @@ jobs:
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            faultcore_network -> target
+            faultcore_interceptor -> target
 
       - name: Install dependencies
         run: uv sync --locked --all-extras --dev

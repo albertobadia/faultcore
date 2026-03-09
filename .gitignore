@@ -19,6 +19,3 @@ htmlcov/
 target/
 *.so
 Cargo.lock
-
-# uv environments
-uv.lock
