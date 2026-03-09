@@ -1,6 +1,7 @@
 # Testing and Examples
 
 This document describes build/test commands and example execution.
+For tuning guidance in longer operational runs, see `docs/operations_tuning.md`.
 
 ## Build
 
@@ -24,6 +25,26 @@ sh tests.sh
 - Python unit tests with interceptor preloaded;
 - integration CLI scripts in `tests/integration/`.
 
+## Long Stress Entry Point
+
+Run:
+
+```bash
+sh tests_long.sh
+```
+
+`tests_long.sh` is a separate long-run stress path (not part of the regular fast gate in `tests.sh`).
+It starts local servers and runs:
+
+```bash
+tests/integration/test_stress.py --mode long
+```
+
+Tune with environment variables:
+- `STRESS_DURATION` (default `20`)
+- `STRESS_WORKERS` (default `24`)
+- `STRESS_MAX_ERROR_RATE` (default `0.10`)
+
 ## Integration CLI Scripts
 
 Current files in `tests/integration/` are CLI-oriented network probes (not pytest fixture-based tests).
@@ -45,6 +66,7 @@ examples/run_with_preload.sh 01_http_requests.py
 
 Some examples expect local servers:
 - TCP echo server: `tests/integration/servers/tcp_echo_server.py --host 127.0.0.1 --port 9000`
+- UDP echo server: `tests/integration/servers/udp_echo_server.py --host 127.0.0.1 --port 9001`
 - HTTP test server: `python -m uvicorn tests.integration.servers.http_server:app --host 127.0.0.1 --port 8000`
 
 ## Example Set
@@ -60,6 +82,7 @@ Some examples expect local servers:
 - `examples/10_target_priority.py`
 - `examples/11_fault_metrics.py`
 - `examples/12_perf_baseline.py`
+- `examples/13_end_to_end_scenarios.py`
 
 ## Notes on Rate Semantics
 

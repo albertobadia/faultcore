@@ -51,6 +51,7 @@ def network_operation():
 | [`docs/interceptor_and_shm.md`](docs/interceptor_and_shm.md) | Linux `LD_PRELOAD` flow, interceptor behavior, and SHM integration |
 | [`docs/testing_and_examples.md`](docs/testing_and_examples.md) | Build/test workflow (`sh tests.sh`) and example execution guidance |
 | [`docs/shm_protocol.md`](docs/shm_protocol.md) | Binary SHM contract between Python writer and Rust interceptor |
+| [`docs/operations_tuning.md`](docs/operations_tuning.md) | Practical tuning guide for long-running scenarios, metrics, and stress profiles |
 
 ## Project Status
 

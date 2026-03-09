@@ -1,0 +1,63 @@
+name: Stress Long
+
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "Stress duration (seconds)"
+        required: false
+        default: "20"
+      workers:
+        description: "Stress workers"
+        required: false
+        default: "24"
+      max_error_rate:
+        description: "Maximum allowed error rate"
+        required: false
+        default: "0.10"
+
+permissions:
+  contents: read
+
+jobs:
+  stress-long:
+    name: Long Stress Suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            faultcore_network -> target
+            faultcore_interceptor -> target
+
+      - name: Install dependencies
+        run: uv sync --locked --all-extras --dev
+
+      - name: Build
+        run: sh build.sh
+
+      - name: Long stress run
+        env:
+          STRESS_DURATION: ${{ github.event.inputs.duration || '20' }}
+          STRESS_WORKERS: ${{ github.event.inputs.workers || '24' }}
+          STRESS_MAX_ERROR_RATE: ${{ github.event.inputs.max_error_rate || '0.10' }}
+        run: sh tests_long.sh
