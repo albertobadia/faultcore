@@ -176,6 +176,19 @@ fn map_stream_decision_to_result(fd: c_int, decision: LayerDecision) -> Option<s
     }
 }
 
+fn map_dns_decision_to_eai(decision: &LayerDecision) -> Option<c_int> {
+    match decision {
+        LayerDecision::Continue | LayerDecision::DelayNs(_) => None,
+        LayerDecision::TimeoutMs(_) => Some(libc::EAI_AGAIN),
+        LayerDecision::NxDomain => Some(libc::EAI_NONAME),
+        LayerDecision::Drop
+        | LayerDecision::Error(_)
+        | LayerDecision::ConnectionErrorKind(_)
+        | LayerDecision::StageReorder
+        | LayerDecision::Duplicate(_) => Some(libc::EAI_FAIL),
+    }
+}
+
 fn record_stream_bytes(fd: c_int, bytes: u64) {
     CHAOS_ENGINE.record_stream_bytes(fd, bytes);
 }
@@ -526,28 +539,15 @@ pub extern "C" fn getaddrinfo(
     let tid = shm::get_thread_id();
     if let Some(cfg) = shm::get_config_for_tid(tid) {
         let network_cfg = cfg.into_network_config();
-        match CHAOS_ENGINE.evaluate_dns_lookup(&network_cfg) {
-            LayerDecision::Continue => {}
-            LayerDecision::DelayNs(ns) => {
-                std::thread::sleep(std::time::Duration::from_nanos(ns));
-            }
-            LayerDecision::TimeoutMs(ms) => {
-                std::thread::sleep(std::time::Duration::from_millis(ms));
-                exit_hook();
-                return libc::EAI_AGAIN;
-            }
-            LayerDecision::NxDomain => {
-                exit_hook();
-                return libc::EAI_NONAME;
-            }
-            LayerDecision::Drop
-            | LayerDecision::Error(_)
-            | LayerDecision::ConnectionErrorKind(_)
-            | LayerDecision::StageReorder
-            | LayerDecision::Duplicate(_) => {
-                exit_hook();
-                return libc::EAI_FAIL;
-            }
+        let decision = CHAOS_ENGINE.evaluate_dns_lookup(&network_cfg);
+        if let LayerDecision::DelayNs(ns) = &decision {
+            std::thread::sleep(std::time::Duration::from_nanos(*ns));
+        } else if let LayerDecision::TimeoutMs(ms) = &decision {
+            std::thread::sleep(std::time::Duration::from_millis(*ms));
+        }
+        if let Some(eai) = map_dns_decision_to_eai(&decision) {
+            exit_hook();
+            return eai;
         }
     }
 
@@ -602,4 +602,66 @@ pub extern "C" fn setpriority(which: c_int, who: c_int, prio: c_int) -> c_int {
 #[unsafe(no_mangle)]
 pub extern "C" fn faultcore_interceptor_is_active() -> bool {
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn current_errno() -> i32 {
+        unsafe { *libc::__errno_location() }
+    }
+
+    #[test]
+    fn connect_timeout_maps_to_etimedout() {
+        set_errno(0);
+        let result = map_connect_decision_to_result(LayerDecision::TimeoutMs(10));
+        assert_eq!(result, Some(-1));
+        assert_eq!(current_errno(), libc::ETIMEDOUT);
+    }
+
+    #[test]
+    fn connect_error_kind_maps_to_errno() {
+        set_errno(0);
+        let result = map_connect_decision_to_result(LayerDecision::ConnectionErrorKind(1));
+        assert_eq!(result, Some(-1));
+        assert_eq!(current_errno(), libc::ECONNRESET);
+    }
+
+    #[test]
+    fn stream_drop_maps_to_zero() {
+        let result = map_stream_decision_to_result(1, LayerDecision::Drop);
+        assert_eq!(result, Some(0));
+    }
+
+    #[test]
+    fn stream_timeout_maps_to_etimedout() {
+        set_errno(0);
+        let result = map_stream_decision_to_result(1, LayerDecision::TimeoutMs(50));
+        assert_eq!(result, Some(-1));
+        assert_eq!(current_errno(), libc::ETIMEDOUT);
+    }
+
+    #[test]
+    fn stream_stage_reorder_is_non_terminal() {
+        let result = map_stream_decision_to_result(1, LayerDecision::StageReorder);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn dns_mapping_contract_is_stable() {
+        assert_eq!(
+            map_dns_decision_to_eai(&LayerDecision::TimeoutMs(1)),
+            Some(libc::EAI_AGAIN)
+        );
+        assert_eq!(
+            map_dns_decision_to_eai(&LayerDecision::NxDomain),
+            Some(libc::EAI_NONAME)
+        );
+        assert_eq!(
+            map_dns_decision_to_eai(&LayerDecision::ConnectionErrorKind(1)),
+            Some(libc::EAI_FAIL)
+        );
+        assert_eq!(map_dns_decision_to_eai(&LayerDecision::DelayNs(1)), None);
+    }
 }

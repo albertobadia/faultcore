@@ -1,7 +1,7 @@
 pub mod chaos_engine;
 pub mod layers;
 
-pub use chaos_engine::ChaosEngine;
+pub use chaos_engine::{ChaosEngine, DecisionCounters};
 pub use layers::{
     Direction, L1Chaos, L2QoS, L3Routing, L4Transport, L5Session, L6Presentation, L7Resolver, Layer,
     LayerDecision, LayerStage, Operation, PacketContext,

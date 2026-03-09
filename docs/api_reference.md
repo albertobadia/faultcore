@@ -258,6 +258,34 @@ Search common build paths for `libfaultcore_interceptor.so`.
 ## Sync/Async SHM Lifecycle
 
 - Decorators write fields keyed by native thread id.
+
+## Runtime Network Engine (Rust)
+
+El runtime de red ahora usa una arquitectura única por contexto:
+
+- `PacketContext`: `fd`, `bytes`, `operation`, `direction`, `config`.
+- `Operation`: `Connect`, `Send`, `Recv`, `DnsLookup`.
+- `Direction`: `Uplink`, `Downlink`.
+- `LayerDecision` (contrato único):
+  - `Continue`
+  - `DelayNs(u64)`
+  - `Drop`
+  - `TimeoutMs(u64)`
+  - `Error(String)`
+  - `ConnectionErrorKind(u64)`
+  - `StageReorder`
+  - `Duplicate(u64)`
+  - `NxDomain`
+
+Pipeline:
+
+- Orden fijo `L1 -> L2 -> L3 -> L4 -> L5 -> L6 -> L7`.
+- Cada capa decide con `applies_to(context)` y `process(context)`.
+- El interceptor solo traduce `LayerDecision` a comportamiento syscall/errno.
+
+Sin compatibilidad retroactiva:
+
+- APIs internas anteriores de engine por tipo (`ConnectAction`, `StreamAction`, `DnsAction`) ya no son el contrato vigente.
 - SHM state is cleared in `finally` blocks for:
   - successful execution;
   - raised exceptions;

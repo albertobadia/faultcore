@@ -71,3 +71,14 @@ Todo cambio en offsets/tamaño debe:
 1. actualizar este documento,
 2. actualizar Python y Rust juntos,
 3. mantener tests de contrato en verde.
+
+## Modelo runtime sobre SHM
+
+El SHM no cambió de layout, pero su consumo runtime sí está consolidado:
+
+- El engine construye `PacketContext` por operación (`Connect`, `Send`, `Recv`, `DnsLookup`).
+- El pipeline aplica capas en orden OSI fijo `L1..L7`.
+- Todas las decisiones de fault viajan como `LayerDecision` único.
+- El interceptor solo mapea `LayerDecision` a retorno/errno (`syscalls` y `getaddrinfo`).
+
+Esto reduce lógica duplicada entre engine/interceptor y hace verificable el contrato con tests de mapeo.
