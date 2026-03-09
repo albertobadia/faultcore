@@ -606,6 +606,47 @@ class TestTargetDecorators:
                 mock_shm.clear.assert_called_once_with(977)
 
 
+class TestTemporalProfiles:
+    def test_profile_spike_writes_schedule_to_shm(self):
+        mock_shm = MagicMock()
+        mock_shm.write_schedule = MagicMock()
+        mock_shm.write_latency = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=976):
+                with patch("faultcore.decorator.time.monotonic_ns", return_value=555):
+
+                    @faultcore.profile(
+                        "spike",
+                        every_s=30,
+                        duration_s=5,
+                        latency_ms=100,
+                    )
+                    def op():
+                        return "ok"
+
+                    assert op() == "ok"
+                    mock_shm.write_latency.assert_called_once_with(976, 100)
+                    mock_shm.write_schedule.assert_called_once_with(
+                        976,
+                        schedule_type=2,
+                        param_a_ns=30_000_000_000,
+                        param_b_ns=5_000_000_000,
+                        param_c_ns=0,
+                        started_monotonic_ns=555,
+                    )
+                    mock_shm.clear.assert_called_once_with(976)
+
+    def test_profile_rejects_invalid_schedule(self):
+        with pytest.raises(ValueError):
+            faultcore.profile("spike", every_s=10)
+        with pytest.raises(ValueError):
+            faultcore.profile("flapping", on_s=0, off_s=1)
+        with pytest.raises(ValueError):
+            faultcore.profile("ramp", ramp_s=0)
+
+
 class TestPolicyRegistry:
     def test_apply_policy_uses_registered_policy(self):
         faultcore.register_policy(
@@ -885,6 +926,38 @@ class TestPolicyRegistry:
                 )
                 mock_shm.clear.assert_called_once_with(895)
 
+    def test_register_policy_with_schedule(self):
+        faultcore.register_policy(
+            "scheduled",
+            packet_loss="2%",
+            schedule={"kind": "flapping", "on_s": 2, "off_s": 3},
+        )
+
+        mock_shm = MagicMock()
+        mock_shm.write_packet_loss = MagicMock()
+        mock_shm.write_schedule = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=896):
+                with patch("faultcore.decorator.time.monotonic_ns", return_value=777):
+
+                    @faultcore.apply_policy("scheduled")
+                    def op():
+                        return "ok"
+
+                    assert op() == "ok"
+                    mock_shm.write_packet_loss.assert_called_once_with(896, 20_000)
+                    mock_shm.write_schedule.assert_called_once_with(
+                        896,
+                        schedule_type=3,
+                        param_a_ns=2_000_000_000,
+                        param_b_ns=3_000_000_000,
+                        param_c_ns=0,
+                        started_monotonic_ns=777,
+                    )
+                    mock_shm.clear.assert_called_once_with(896)
+
     def test_register_policy_rejects_invalid_values(self):
         with pytest.raises(ValueError):
             faultcore.register_policy("", latency_ms=1)
@@ -922,6 +995,8 @@ class TestPolicyRegistry:
             faultcore.register_policy("bad16", target=123)
         with pytest.raises(ValueError):
             faultcore.register_policy("bad17", target="tcp://bad_host:80")
+        with pytest.raises(ValueError):
+            faultcore.register_policy("bad18", schedule="invalid")
 
     def test_registry_introspection_and_unregister(self):
         clear_policies()

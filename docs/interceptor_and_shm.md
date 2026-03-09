@@ -52,7 +52,7 @@ Binary layout and compatibility rules are documented in:
 
 Any SHM layout change must update:
 - Python writer (`src/faultcore/shm_writer.py`)
-- Rust reader (`faultcore_interceptor/src/shm.rs`)
+- Rust contract/runtime (`faultcore_network/src/shm_contract.rs`, `faultcore_network/src/shm_runtime.rs`)
 - contract tests (`tests/unit/test_shm_contract.py`)
 - `docs/shm_protocol.md`
 
@@ -61,3 +61,4 @@ Any SHM layout change must update:
 - Python writer: `src/faultcore/shm_writer.py`
 - Interceptor: `faultcore_interceptor/`
 - Network engine (FaultOSI): `faultcore_network/`
+- Architecture reference: `docs/architecture.md`

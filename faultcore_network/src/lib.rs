@@ -1,13 +1,47 @@
 pub mod chaos_engine;
+pub mod interceptor_bridge;
 pub mod layers;
+pub mod runtime;
+pub mod setpriority_compat;
+pub mod shm_runtime;
+pub mod shm_contract;
+pub mod socket_runtime;
 
 pub use chaos_engine::{ChaosEngine, DecisionCounters};
 pub type FaultOsiEngine = ChaosEngine;
 pub type FaultOsiDecisionCounters = DecisionCounters;
+pub use interceptor_bridge::{
+    bind_fd_to_current_thread, clear_fd_binding, init_runtime_shm, runtime_config_for_addr_or_fd,
+    runtime_config_for_fd, runtime_dns_config_for_current_thread,
+};
+pub use runtime::{
+    ConnectDirective, InterceptorRuntime, PendingDatagram, StreamDirective, apply_connect_directive,
+    apply_stream_directive,
+};
+pub use setpriority_compat::{
+    FAULTCORE_SETPRIORITY_BANDWIDTH, FAULTCORE_SETPRIORITY_LATENCY, FAULTCORE_SETPRIORITY_TIMEOUT,
+    try_handle_setpriority,
+};
+pub use shm_runtime::{
+    assign_rule_to_fd, clear_rule_for_fd, get_config_for_fd, get_config_for_tid, get_thread_id, is_shm_open,
+    try_open_shm, update_config_for_tid,
+};
+pub use shm_contract::{
+    FAULTCORE_MAGIC, FAULTCORE_SHM_SIZE, FaultcoreConfig, MAX_BANDWIDTH_BPS, MAX_FDS, MAX_LATENCY_NS,
+    MAX_POLICIES, MAX_TIDS, PolicyState,
+};
+pub use socket_runtime::{endpoint_for_addr_or_fd, endpoint_for_fd, monotonic_now_ns};
 pub use layers::{
     Direction, L1Chaos, L2QoS, L3Routing, L4Transport, L5Session, L6Presentation, L7Resolver, Layer,
     LayerDecision, LayerStage, Operation, PacketContext,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Endpoint {
+    pub ipv4: u32,
+    pub port: u16,
+    pub protocol: u64,
+}
 
 #[derive(Default)]
 pub struct Config {
@@ -51,6 +85,11 @@ pub struct Config {
     pub target_prefix_len: u64,
     pub target_port: u64,
     pub target_protocol: u64,
+    pub schedule_type: u64,
+    pub schedule_param_a_ns: u64,
+    pub schedule_param_b_ns: u64,
+    pub schedule_param_c_ns: u64,
+    pub schedule_started_monotonic_ns: u64,
 }
 
 impl Config {
@@ -82,6 +121,7 @@ impl Config {
             || self.dns_timeout_ms > 0
             || self.dns_nxdomain_ppm > 0
             || self.target_enabled > 0
+            || self.schedule_type > 0
     }
 
     pub fn effective_for_send(&self) -> Self {
@@ -122,6 +162,154 @@ impl Config {
             out.bandwidth_bps = self.downlink_bandwidth_bps;
         }
         out
+    }
+
+    pub fn runtime_filtered(
+        &self,
+        endpoint: Option<Endpoint>,
+        now_monotonic_ns: u64,
+    ) -> Option<Self> {
+        let mut out = self.clone_for_effective();
+        if !out.matches_target(endpoint) {
+            return None;
+        }
+        out.apply_schedule(now_monotonic_ns);
+        Some(out)
+    }
+
+    fn matches_target(&self, endpoint: Option<Endpoint>) -> bool {
+        if self.target_enabled == 0 || self.target_kind == 0 {
+            return true;
+        }
+        let Some(endpoint) = endpoint else {
+            return false;
+        };
+        if self.target_protocol > 0 && self.target_protocol != endpoint.protocol {
+            return false;
+        }
+        if self.target_port > 0 && self.target_port != u64::from(endpoint.port) {
+            return false;
+        }
+        match self.target_kind {
+            1 => endpoint.ipv4 == self.target_ipv4 as u32,
+            2 => {
+                let prefix_len = self.target_prefix_len;
+                if prefix_len == 0 {
+                    true
+                } else if prefix_len >= 32 {
+                    endpoint.ipv4 == self.target_ipv4 as u32
+                } else {
+                    let mask = u32::MAX << (32 - prefix_len as u32);
+                    (endpoint.ipv4 & mask) == ((self.target_ipv4 as u32) & mask)
+                }
+            }
+            _ => false,
+        }
+    }
+
+    fn apply_schedule(&mut self, now_monotonic_ns: u64) {
+        if self.schedule_type == 0 {
+            return;
+        }
+        let started = self.schedule_started_monotonic_ns;
+        if started == 0 || now_monotonic_ns <= started {
+            return;
+        }
+        let elapsed = now_monotonic_ns - started;
+        match self.schedule_type {
+            1 => {
+                let ramp_ns = self.schedule_param_a_ns;
+                if ramp_ns == 0 || elapsed >= ramp_ns {
+                    return;
+                }
+                let factor = elapsed as f64 / ramp_ns as f64;
+                self.scale_faults(factor);
+            }
+            2 => {
+                let cycle_ns = self.schedule_param_a_ns;
+                let active_ns = self.schedule_param_b_ns;
+                if cycle_ns == 0 || active_ns == 0 || active_ns > cycle_ns {
+                    self.zero_faults();
+                    return;
+                }
+                if (elapsed % cycle_ns) >= active_ns {
+                    self.zero_faults();
+                }
+            }
+            3 => {
+                let on_ns = self.schedule_param_a_ns;
+                let off_ns = self.schedule_param_b_ns;
+                let cycle_ns = on_ns.saturating_add(off_ns);
+                if on_ns == 0 || off_ns == 0 || cycle_ns == 0 {
+                    self.zero_faults();
+                    return;
+                }
+                if (elapsed % cycle_ns) >= on_ns {
+                    self.zero_faults();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn scale_faults(&mut self, factor: f64) {
+        self.latency_ns = scale_u64(self.latency_ns, factor);
+        self.jitter_ns = scale_u64(self.jitter_ns, factor);
+        self.packet_loss_ppm = scale_u64(self.packet_loss_ppm, factor);
+        self.burst_loss_len = scale_u64(self.burst_loss_len, factor);
+        self.connect_timeout_ms = scale_u64(self.connect_timeout_ms, factor);
+        self.recv_timeout_ms = scale_u64(self.recv_timeout_ms, factor);
+        self.uplink_latency_ns = scale_u64(self.uplink_latency_ns, factor);
+        self.uplink_jitter_ns = scale_u64(self.uplink_jitter_ns, factor);
+        self.uplink_packet_loss_ppm = scale_u64(self.uplink_packet_loss_ppm, factor);
+        self.uplink_burst_loss_len = scale_u64(self.uplink_burst_loss_len, factor);
+        self.downlink_latency_ns = scale_u64(self.downlink_latency_ns, factor);
+        self.downlink_jitter_ns = scale_u64(self.downlink_jitter_ns, factor);
+        self.downlink_packet_loss_ppm = scale_u64(self.downlink_packet_loss_ppm, factor);
+        self.downlink_burst_loss_len = scale_u64(self.downlink_burst_loss_len, factor);
+        self.conn_err_prob_ppm = scale_u64(self.conn_err_prob_ppm, factor);
+        self.dup_prob_ppm = scale_u64(self.dup_prob_ppm, factor);
+        self.reorder_prob_ppm = scale_u64(self.reorder_prob_ppm, factor);
+        self.dns_delay_ns = scale_u64(self.dns_delay_ns, factor);
+        self.dns_timeout_ms = scale_u64(self.dns_timeout_ms, factor);
+        self.dns_nxdomain_ppm = scale_u64(self.dns_nxdomain_ppm, factor);
+    }
+
+    fn zero_faults(&mut self) {
+        self.latency_ns = 0;
+        self.jitter_ns = 0;
+        self.packet_loss_ppm = 0;
+        self.burst_loss_len = 0;
+        self.bandwidth_bps = 0;
+        self.connect_timeout_ms = 0;
+        self.recv_timeout_ms = 0;
+        self.uplink_latency_ns = 0;
+        self.uplink_jitter_ns = 0;
+        self.uplink_packet_loss_ppm = 0;
+        self.uplink_burst_loss_len = 0;
+        self.uplink_bandwidth_bps = 0;
+        self.downlink_latency_ns = 0;
+        self.downlink_jitter_ns = 0;
+        self.downlink_packet_loss_ppm = 0;
+        self.downlink_burst_loss_len = 0;
+        self.downlink_bandwidth_bps = 0;
+        self.ge_enabled = 0;
+        self.ge_p_good_to_bad_ppm = 0;
+        self.ge_p_bad_to_good_ppm = 0;
+        self.ge_loss_good_ppm = 0;
+        self.ge_loss_bad_ppm = 0;
+        self.conn_err_kind = 0;
+        self.conn_err_prob_ppm = 0;
+        self.half_open_after_bytes = 0;
+        self.half_open_err_kind = 0;
+        self.dup_prob_ppm = 0;
+        self.dup_max_extra = 0;
+        self.reorder_prob_ppm = 0;
+        self.reorder_max_delay_ns = 0;
+        self.reorder_window = 0;
+        self.dns_delay_ns = 0;
+        self.dns_timeout_ms = 0;
+        self.dns_nxdomain_ppm = 0;
     }
 
     fn clone_for_effective(&self) -> Self {
@@ -166,6 +354,15 @@ impl Config {
             target_prefix_len: self.target_prefix_len,
             target_port: self.target_port,
             target_protocol: self.target_protocol,
+            schedule_type: self.schedule_type,
+            schedule_param_a_ns: self.schedule_param_a_ns,
+            schedule_param_b_ns: self.schedule_param_b_ns,
+            schedule_param_c_ns: self.schedule_param_c_ns,
+            schedule_started_monotonic_ns: self.schedule_started_monotonic_ns,
         }
     }
+}
+
+fn scale_u64(value: u64, factor: f64) -> u64 {
+    ((value as f64) * factor).round() as u64
 }

@@ -146,6 +146,15 @@ Current scope:
 - IPv4 targets only.
 - Protocol can be `tcp` or `udp`.
 
+### `profile(...)`
+
+Apply a temporal profile (`ramp`, `spike`, `flapping`) and optional fault values.
+
+Examples:
+- `profile("spike", every_s=30, duration_s=5, latency_ms=400)`
+- `profile("flapping", on_s=2, off_s=3, packet_loss="2%")`
+- `profile("ramp", ramp_s=60, latency_ms=200, packet_loss="1%")`
+
 ### `dns_delay(delay_ms: int)`
 
 Inject DNS lookup delay (for `getaddrinfo`).
@@ -222,6 +231,7 @@ register_policy(
     dns_timeout_ms: int | None = None,
     dns_nxdomain: str | int | float | None = None,
     target: str | dict[str, Any] | None = None,
+    schedule: dict[str, Any] | None = None,
 ) -> None
 ```
 
@@ -233,6 +243,10 @@ Notes:
 - `target` accepts:
   - string format: `"tcp://10.1.2.3:443"`, `"10.1.2.3:443"`, `"10.0.0.0/8"`;
   - mapping format with keys: `target`, `host`, `cidr`, `port`, `protocol`.
+- `schedule` mapping accepts:
+  - `{"kind": "spike", "every_s": ..., "duration_s": ...}`
+  - `{"kind": "flapping", "on_s": ..., "off_s": ...}`
+  - `{"kind": "ramp", "ramp_s": ...}`
 
 ### `list_policies() -> list[str]`
 

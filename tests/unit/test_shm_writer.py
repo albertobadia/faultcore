@@ -148,6 +148,11 @@ class TestExports:
 
         assert callable(for_target)
 
+    def test_profile_is_exported(self):
+        from faultcore import profile
+
+        assert callable(profile)
+
     def test_apply_policy_is_exported(self):
         from faultcore import apply_policy
 

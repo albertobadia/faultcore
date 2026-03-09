@@ -1,34 +1,13 @@
-use faultcore_network::{Direction, FaultOsiEngine, LayerDecision};
+use faultcore_network::{
+    Direction, FaultOsiEngine, InterceptorRuntime, LayerDecision, PendingDatagram,
+    apply_connect_directive, apply_stream_directive, bind_fd_to_current_thread, clear_fd_binding,
+    init_runtime_shm, runtime_config_for_addr_or_fd, runtime_config_for_fd,
+    runtime_dns_config_for_current_thread, try_handle_setpriority,
+};
 use libc::{addrinfo, c_char, c_int, c_void, size_t, sockaddr, socklen_t, ssize_t};
-use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
-
-mod shm;
 
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
-
-const FAULTCORE_SETPRIORITY_LATENCY: c_int = 0xFA;
-const FAULTCORE_SETPRIORITY_BANDWIDTH: c_int = 0xFB;
-const FAULTCORE_SETPRIORITY_TIMEOUT: c_int = 0xFC;
-
-
-thread_local! {
-    static LATENCY_START: RefCell<HashMap<c_int, Instant>> = RefCell::new(HashMap::new());
-}
-
-lazy_static::lazy_static! {
-    static ref REORDER_PENDING_SENDTO: parking_lot::Mutex<HashMap<c_int, VecDeque<PendingDatagram>>> = parking_lot::Mutex::new(HashMap::new());
-}
-
-struct PendingDatagram {
-    data: Vec<u8>,
-    flags: c_int,
-    addr: Vec<u8>,
-    addr_len: socklen_t,
-    staged_at: Instant,
-}
 
 type SendFn = unsafe extern "C" fn(c_int, *const c_void, size_t, c_int) -> ssize_t;
 type RecvFn = unsafe extern "C" fn(c_int, *mut c_void, size_t, c_int) -> ssize_t;
@@ -69,6 +48,7 @@ lazy_static::lazy_static! {
     pub static ref ORIG_GETADDRINFO: GetAddrInfoFn = unsafe { get_original_fn("getaddrinfo") };
 
     pub static ref CHAOS_ENGINE: FaultOsiEngine = FaultOsiEngine::new();
+    pub static ref INTERCEPTOR_RUNTIME: InterceptorRuntime = InterceptorRuntime::new();
 }
 
 unsafe fn get_original_fn<T>(name: &str) -> T {
@@ -80,217 +60,6 @@ unsafe fn get_original_fn<T>(name: &str) -> T {
     unsafe { std::mem::transmute_copy(&fn_ptr) }
 }
 
-fn set_errno(val: i32) {
-    unsafe {
-        *libc::__errno_location() = val;
-    }
-}
-
-fn err_kind_to_errno(kind: u64) -> Option<i32> {
-    match kind {
-        1 => Some(libc::ECONNRESET),
-        2 => Some(libc::ECONNREFUSED),
-        3 => Some(libc::ENETUNREACH),
-        _ => None,
-    }
-}
-
-fn network_config_for_fd(fd: c_int) -> Option<faultcore_network::Config> {
-    Some(shm::get_config_for_fd(fd)?.into_network_config())
-}
-
-fn socket_protocol_for_fd(fd: c_int) -> u64 {
-    let mut sock_type: c_int = 0;
-    let mut len = std::mem::size_of::<c_int>() as socklen_t;
-    let rc = unsafe {
-        libc::getsockopt(
-            fd,
-            libc::SOL_SOCKET,
-            libc::SO_TYPE,
-            (&mut sock_type as *mut c_int).cast::<c_void>(),
-            &mut len,
-        )
-    };
-    if rc < 0 {
-        return 0;
-    }
-    match sock_type {
-        libc::SOCK_STREAM => 1,
-        libc::SOCK_DGRAM => 2,
-        _ => 0,
-    }
-}
-
-fn sockaddr_ipv4(addr: *const sockaddr, addr_len: socklen_t) -> Option<(u32, u16)> {
-    if addr.is_null() || addr_len < std::mem::size_of::<libc::sockaddr_in>() as socklen_t {
-        return None;
-    }
-    let family = unsafe { (*addr).sa_family as c_int };
-    if family != libc::AF_INET {
-        return None;
-    }
-    let in_addr = unsafe { &*(addr.cast::<libc::sockaddr_in>()) };
-    Some((u32::from_be(in_addr.sin_addr.s_addr), u16::from_be(in_addr.sin_port)))
-}
-
-fn peer_ipv4_for_fd(fd: c_int) -> Option<(u32, u16)> {
-    let mut storage: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
-    let mut len = std::mem::size_of::<libc::sockaddr_storage>() as socklen_t;
-    let rc = unsafe {
-        libc::getpeername(
-            fd,
-            (&mut storage as *mut libc::sockaddr_storage).cast::<sockaddr>(),
-            &mut len,
-        )
-    };
-    if rc < 0 {
-        return None;
-    }
-    sockaddr_ipv4((&storage as *const libc::sockaddr_storage).cast::<sockaddr>(), len)
-}
-
-fn matches_prefix(ip: u32, network: u32, prefix_len: u64) -> bool {
-    if prefix_len == 0 {
-        return true;
-    }
-    if prefix_len >= 32 {
-        return ip == network;
-    }
-    let mask = u32::MAX << (32 - prefix_len as u32);
-    (ip & mask) == (network & mask)
-}
-
-fn target_matches_endpoint(
-    cfg: &faultcore_network::Config,
-    endpoint: Option<(u32, u16)>,
-    protocol: u64,
-) -> bool {
-    if cfg.target_enabled == 0 || cfg.target_kind == 0 {
-        return true;
-    }
-    if cfg.target_protocol > 0 && cfg.target_protocol != protocol {
-        return false;
-    }
-    let Some((ip, port)) = endpoint else {
-        return false;
-    };
-    if cfg.target_port > 0 && cfg.target_port != u64::from(port) {
-        return false;
-    }
-    match cfg.target_kind {
-        1 => ip == cfg.target_ipv4 as u32,
-        2 => matches_prefix(ip, cfg.target_ipv4 as u32, cfg.target_prefix_len),
-        _ => false,
-    }
-}
-
-fn target_matches_fd(cfg: &faultcore_network::Config, fd: c_int) -> bool {
-    let protocol = socket_protocol_for_fd(fd);
-    target_matches_endpoint(cfg, peer_ipv4_for_fd(fd), protocol)
-}
-
-fn target_matches_addr_or_fd(
-    cfg: &faultcore_network::Config,
-    fd: c_int,
-    addr: *const sockaddr,
-    addr_len: socklen_t,
-) -> bool {
-    let protocol = socket_protocol_for_fd(fd);
-    let endpoint = sockaddr_ipv4(addr, addr_len).or_else(|| peer_ipv4_for_fd(fd));
-    target_matches_endpoint(cfg, endpoint, protocol)
-}
-
-fn map_connect_decision_to_result(decision: LayerDecision) -> Option<c_int> {
-    match decision {
-        LayerDecision::Continue => None,
-        LayerDecision::Drop => {
-            set_errno(libc::ECONNREFUSED);
-            Some(-1)
-        }
-        LayerDecision::DelayNs(latency_ns) => {
-            if latency_ns > 0 {
-                std::thread::sleep(std::time::Duration::from_nanos(latency_ns));
-            }
-            None
-        }
-        LayerDecision::TimeoutMs(_) => {
-            set_errno(libc::ETIMEDOUT);
-            Some(-1)
-        }
-        LayerDecision::Error(_) => {
-            set_errno(libc::EIO);
-            Some(-1)
-        }
-        LayerDecision::ConnectionErrorKind(kind) => {
-            set_errno(err_kind_to_errno(kind).unwrap_or(libc::EIO));
-            Some(-1)
-        }
-        LayerDecision::StageReorder | LayerDecision::Duplicate(_) | LayerDecision::NxDomain => {
-            set_errno(libc::EIO);
-            Some(-1)
-        }
-    }
-}
-
-fn map_stream_decision_to_result(fd: c_int, decision: LayerDecision) -> Option<ssize_t> {
-    match decision {
-        LayerDecision::Continue | LayerDecision::StageReorder | LayerDecision::Duplicate(_) => None,
-        LayerDecision::Drop => Some(0),
-        LayerDecision::DelayNs(latency_ns) => {
-            if is_non_blocking(fd) {
-                let mut elapsed = false;
-                LATENCY_START.with(|cell| {
-                    let mut latency_start = cell.borrow_mut();
-                    if let Some(start) = latency_start.get(&fd) {
-                        if start.elapsed().as_nanos() >= latency_ns as u128 {
-                            elapsed = true;
-                            latency_start.remove(&fd);
-                        }
-                    } else {
-                        latency_start.insert(fd, Instant::now());
-                    }
-                });
-                if !elapsed {
-                    set_errno(libc::EAGAIN);
-                    return Some(-1);
-                }
-            } else if latency_ns > 0 {
-                std::thread::sleep(std::time::Duration::from_nanos(latency_ns));
-            }
-            None
-        }
-        LayerDecision::TimeoutMs(_) => {
-            set_errno(libc::ETIMEDOUT);
-            Some(-1)
-        }
-        LayerDecision::Error(_) => {
-            set_errno(libc::EIO);
-            Some(-1)
-        }
-        LayerDecision::ConnectionErrorKind(kind) => {
-            set_errno(err_kind_to_errno(kind).unwrap_or(libc::EIO));
-            Some(-1)
-        }
-        LayerDecision::NxDomain => {
-            set_errno(libc::EIO);
-            Some(-1)
-        }
-    }
-}
-
-fn map_dns_decision_to_eai(decision: &LayerDecision) -> Option<c_int> {
-    match decision {
-        LayerDecision::Continue | LayerDecision::DelayNs(_) => None,
-        LayerDecision::TimeoutMs(_) => Some(libc::EAI_AGAIN),
-        LayerDecision::NxDomain => Some(libc::EAI_NONAME),
-        LayerDecision::Drop
-        | LayerDecision::Error(_)
-        | LayerDecision::ConnectionErrorKind(_)
-        | LayerDecision::StageReorder
-        | LayerDecision::Duplicate(_) => Some(libc::EAI_FAIL),
-    }
-}
-
 fn record_stream_bytes(fd: c_int, bytes: u64) {
     CHAOS_ENGINE.record_stream_bytes(fd, bytes);
 }
@@ -299,10 +68,9 @@ fn maybe_duplicate_send(fd: c_int, b: *const c_void, sent: ssize_t, f: c_int) {
     if sent <= 0 {
         return;
     }
-    let Some(cfg) = shm::get_config_for_fd(fd) else {
+    let Some(network_cfg) = runtime_config_for_fd(fd) else {
         return;
     };
-    let network_cfg = cfg.into_network_config();
     let count = match CHAOS_ENGINE.evaluate_stream_post(&network_cfg, Direction::Uplink) {
         LayerDecision::Duplicate(n) => n,
         _ => 0,
@@ -325,10 +93,9 @@ fn maybe_duplicate_sendto(
     if sent <= 0 {
         return;
     }
-    let Some(cfg) = shm::get_config_for_fd(fd) else {
+    let Some(network_cfg) = (unsafe { runtime_config_for_addr_or_fd(fd, addr, addr_len) }) else {
         return;
     };
-    let network_cfg = cfg.into_network_config();
     let count = match CHAOS_ENGINE.evaluate_stream_post(&network_cfg, Direction::Uplink) {
         LayerDecision::Duplicate(n) => n,
         _ => 0,
@@ -346,7 +113,7 @@ fn maybe_stage_reorder_sendto(
     f: c_int,
     addr: *const sockaddr,
     addr_len: socklen_t,
-    pending: &mut VecDeque<PendingDatagram>,
+    pending: &mut std::collections::VecDeque<PendingDatagram>,
 ) -> Option<ssize_t> {
     if l == 0 || b.is_null() {
         return None;
@@ -357,13 +124,7 @@ fn maybe_stage_reorder_sendto(
     } else {
         Vec::new()
     };
-    pending.push_back(PendingDatagram {
-        data,
-        flags: f,
-        addr: addr_bytes,
-        addr_len,
-        staged_at: Instant::now(),
-    });
+    INTERCEPTOR_RUNTIME.stage_reorder_datagram(pending, data, f, addr_bytes, addr_len);
     Some(l as ssize_t)
 }
 
@@ -380,24 +141,8 @@ fn send_pending_datagram(fd: c_int, pkt: &PendingDatagram) {
             pkt.data.len(),
             pkt.flags,
             addr_ptr,
-            pkt.addr_len,
+            pkt.addr_len as socklen_t,
         );
-    }
-}
-
-fn flush_expired_reorder(fd: c_int, pending: &mut VecDeque<PendingDatagram>, max_delay_ns: u64) {
-    if max_delay_ns == 0 {
-        return;
-    }
-
-    let max_delay = std::time::Duration::from_nanos(max_delay_ns);
-    while pending
-        .front()
-        .is_some_and(|pkt| pkt.staged_at.elapsed() >= max_delay)
-    {
-        if let Some(pkt) = pending.pop_front() {
-            send_pending_datagram(fd, &pkt);
-        }
     }
 }
 
@@ -438,7 +183,7 @@ fn initialize() {
         lazy_static::initialize(&ORIG_SENDTO);
         lazy_static::initialize(&ORIG_RECVFROM);
         lazy_static::initialize(&ORIG_GETADDRINFO);
-        let _ = shm::try_open_shm();
+        let _ = init_runtime_shm();
     }
 }
 
@@ -461,8 +206,7 @@ pub extern "C" fn socket(domain: c_int, ty: c_int, protocol: c_int) -> c_int {
     let fd = unsafe { (ORIG_SOCKET)(domain, ty, protocol) };
 
     if fd >= 0 {
-        let tid = shm::get_thread_id() as usize;
-        shm::assign_rule_to_fd(fd, tid);
+        bind_fd_to_current_thread(fd);
     }
 
     exit_hook();
@@ -476,12 +220,9 @@ pub extern "C" fn close(fd: c_int) -> c_int {
     }
 
     initialize();
-    LATENCY_START.with(|cell| {
-        cell.borrow_mut().remove(&fd);
-    });
     CHAOS_ENGINE.clear_fd_state(fd);
-    REORDER_PENDING_SENDTO.lock().remove(&fd);
-    shm::clear_rule_for_fd(fd);
+    INTERCEPTOR_RUNTIME.clear_fd_state(fd);
+    clear_fd_binding(fd);
 
     let result = unsafe { (ORIG_CLOSE)(fd) };
     exit_hook();
@@ -496,17 +237,14 @@ pub extern "C" fn send(s: c_int, b: *const c_void, l: size_t, f: c_int) -> ssize
 
     initialize();
     let mut faults_applied = false;
-    let result = if let Some(network_cfg) = network_config_for_fd(s) {
-        if !target_matches_fd(&network_cfg, s) {
-            unsafe { (ORIG_SEND)(s, b, l, f) }
+    let result = if let Some(network_cfg) = runtime_config_for_fd(s) {
+        faults_applied = true;
+        let decision = CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Uplink);
+        let directive = INTERCEPTOR_RUNTIME.map_stream_decision(s, decision, is_non_blocking(s));
+        if let Some(error) = apply_stream_directive(directive) {
+            error as ssize_t
         } else {
-            faults_applied = true;
-            let decision = CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Uplink);
-            if let Some(error) = map_stream_decision_to_result(s, decision) {
-                error
-            } else {
-                unsafe { (ORIG_SEND)(s, b, l, f) }
-            }
+            unsafe { (ORIG_SEND)(s, b, l, f) }
         }
     } else {
         unsafe { (ORIG_SEND)(s, b, l, f) }
@@ -530,17 +268,14 @@ pub extern "C" fn recv(s: c_int, b: *mut c_void, l: size_t, f: c_int) -> ssize_t
     }
 
     initialize();
-    let result = if let Some(network_cfg) = network_config_for_fd(s) {
-        if !target_matches_fd(&network_cfg, s) {
-            unsafe { (ORIG_RECV)(s, b, l, f) }
+    let result = if let Some(network_cfg) = runtime_config_for_fd(s) {
+        let decision =
+            CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Downlink);
+        let directive = INTERCEPTOR_RUNTIME.map_stream_decision(s, decision, is_non_blocking(s));
+        if let Some(error) = apply_stream_directive(directive) {
+            error as ssize_t
         } else {
-            let decision =
-                CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Downlink);
-            if let Some(error) = map_stream_decision_to_result(s, decision) {
-                error
-            } else {
-                unsafe { (ORIG_RECV)(s, b, l, f) }
-            }
+            unsafe { (ORIG_RECV)(s, b, l, f) }
         }
     } else {
         unsafe { (ORIG_RECV)(s, b, l, f) }
@@ -555,25 +290,23 @@ pub extern "C" fn recv(s: c_int, b: *mut c_void, l: size_t, f: c_int) -> ssize_t
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn connect(s: c_int, a: *const sockaddr, l: socklen_t) -> c_int {
+/// # Safety
+/// `a` must be either null or point to a valid socket address buffer of length `l`.
+pub unsafe extern "C" fn connect(s: c_int, a: *const sockaddr, l: socklen_t) -> c_int {
     if !enter_hook() {
         return unsafe { (ORIG_CONNECT)(s, a, l) };
     }
 
     initialize();
-    let tid = shm::get_thread_id() as usize;
-    shm::assign_rule_to_fd(s, tid);
+    bind_fd_to_current_thread(s);
 
-    let result = if let Some(network_cfg) = network_config_for_fd(s) {
-        if !target_matches_addr_or_fd(&network_cfg, s, a, l) {
-            unsafe { (ORIG_CONNECT)(s, a, l) }
+    let result = if let Some(network_cfg) = unsafe { runtime_config_for_addr_or_fd(s, a, l) } {
+        let decision = CHAOS_ENGINE.evaluate_connect(s, &network_cfg);
+        let directive = INTERCEPTOR_RUNTIME.map_connect_decision(decision);
+        if let Some(error) = apply_connect_directive(directive) {
+            error
         } else {
-            let decision = CHAOS_ENGINE.evaluate_connect(s, &network_cfg);
-            if let Some(error) = map_connect_decision_to_result(decision) {
-                error
-            } else {
-                unsafe { (ORIG_CONNECT)(s, a, l) }
-            }
+            unsafe { (ORIG_CONNECT)(s, a, l) }
         }
     } else {
         unsafe { (ORIG_CONNECT)(s, a, l) }
@@ -584,7 +317,10 @@ pub extern "C" fn connect(s: c_int, a: *const sockaddr, l: socklen_t) -> c_int {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn sendto(
+/// # Safety
+/// `b` must point to a readable buffer of `l` bytes.
+/// `addr` must be null or point to a valid socket address buffer of length `addr_len`.
+pub unsafe extern "C" fn sendto(
     s: c_int,
     b: *const c_void,
     l: size_t,
@@ -597,36 +333,31 @@ pub extern "C" fn sendto(
     }
 
     initialize();
-    let mut pending = REORDER_PENDING_SENDTO
-        .lock()
-        .remove(&s)
-        .unwrap_or_default();
+    let mut pending = INTERCEPTOR_RUNTIME.take_reorder_pending(s);
     let mut staged_reorder = false;
     let mut faults_applied = false;
-    let result = if let Some(network_cfg) = network_config_for_fd(s) {
-        if !target_matches_addr_or_fd(&network_cfg, s, addr, addr_len) {
-            unsafe { (ORIG_SENDTO)(s, b, l, f, addr, addr_len) }
-        } else {
-            faults_applied = true;
-            flush_expired_reorder(s, &mut pending, network_cfg.reorder_max_delay_ns);
-            let decision =
-                CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Uplink);
-            if let Some(error) = map_stream_decision_to_result(s, decision.clone()) {
-                error
-            } else if matches!(decision, LayerDecision::StageReorder) {
-                staged_reorder = true;
-                let staged = maybe_stage_reorder_sendto(b, l, f, addr, addr_len, &mut pending)
-                    .unwrap_or(l as ssize_t);
-                let window = network_cfg.reorder_window.max(1) as usize;
-                while pending.len() > window {
-                    if let Some(pkt) = pending.pop_front() {
-                        send_pending_datagram(s, &pkt);
-                    }
-                }
-                staged
-            } else {
-                unsafe { (ORIG_SENDTO)(s, b, l, f, addr, addr_len) }
+    let result = if let Some(network_cfg) = unsafe { runtime_config_for_addr_or_fd(s, addr, addr_len) } {
+        faults_applied = true;
+        for pkt in INTERCEPTOR_RUNTIME.flush_expired_reorder(&mut pending, network_cfg.reorder_max_delay_ns) {
+            send_pending_datagram(s, &pkt);
+        }
+        let decision = CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Uplink);
+        let directive = INTERCEPTOR_RUNTIME.map_stream_decision(s, decision.clone(), is_non_blocking(s));
+        if let Some(error) = apply_stream_directive(directive) {
+            error as ssize_t
+        } else if matches!(decision, LayerDecision::StageReorder) {
+            staged_reorder = true;
+            let staged =
+                maybe_stage_reorder_sendto(b, l, f, addr, addr_len, &mut pending).unwrap_or(l as ssize_t);
+            for pkt in INTERCEPTOR_RUNTIME.enforce_reorder_window(
+                &mut pending,
+                network_cfg.reorder_window as usize,
+            ) {
+                send_pending_datagram(s, &pkt);
             }
+            staged
+        } else {
+            unsafe { (ORIG_SENDTO)(s, b, l, f, addr, addr_len) }
         }
     } else {
         unsafe { (ORIG_SENDTO)(s, b, l, f, addr, addr_len) }
@@ -638,15 +369,12 @@ pub extern "C" fn sendto(
             maybe_duplicate_sendto(s, b, result, f, addr, addr_len);
         }
         if faults_applied
-            && !staged_reorder
-            && let Some(pkt) = pending.pop_front()
+            && let Some(pkt) = INTERCEPTOR_RUNTIME.pop_reorder_after_success(&mut pending, staged_reorder)
         {
             send_pending_datagram(s, &pkt);
         }
     }
-    if !pending.is_empty() {
-        REORDER_PENDING_SENDTO.lock().insert(s, pending);
-    }
+    INTERCEPTOR_RUNTIME.put_reorder_pending(s, pending);
 
     exit_hook();
     result
@@ -666,17 +394,14 @@ pub extern "C" fn recvfrom(
     }
 
     initialize();
-    let result = if let Some(network_cfg) = network_config_for_fd(s) {
-        if !target_matches_fd(&network_cfg, s) {
-            unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) }
+    let result = if let Some(network_cfg) = runtime_config_for_fd(s) {
+        let decision =
+            CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Downlink);
+        let directive = INTERCEPTOR_RUNTIME.map_stream_decision(s, decision, is_non_blocking(s));
+        if let Some(error) = apply_stream_directive(directive) {
+            error as ssize_t
         } else {
-            let decision =
-                CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Downlink);
-            if let Some(error) = map_stream_decision_to_result(s, decision) {
-                error
-            } else {
-                unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) }
-            }
+            unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) }
         }
     } else {
         unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) }
@@ -702,16 +427,14 @@ pub extern "C" fn getaddrinfo(
     }
 
     initialize();
-    let tid = shm::get_thread_id();
-    if let Some(cfg) = shm::get_config_for_tid(tid) {
-        let network_cfg = cfg.into_network_config();
+    if let Some(network_cfg) = runtime_dns_config_for_current_thread() {
         let decision = CHAOS_ENGINE.evaluate_dns_lookup(&network_cfg);
         if let LayerDecision::DelayNs(ns) = &decision {
             std::thread::sleep(std::time::Duration::from_nanos(*ns));
         } else if let LayerDecision::TimeoutMs(ms) = &decision {
             std::thread::sleep(std::time::Duration::from_millis(*ms));
         }
-        if let Some(eai) = map_dns_decision_to_eai(&decision) {
+        if let Some(eai) = INTERCEPTOR_RUNTIME.map_dns_decision_to_eai(&decision) {
             exit_hook();
             return eai;
         }
@@ -721,40 +444,10 @@ pub extern "C" fn getaddrinfo(
     exit_hook();
     result
 }
+
 #[unsafe(no_mangle)]
 pub extern "C" fn setpriority(which: c_int, who: c_int, prio: c_int) -> c_int {
-    let is_faultcore = matches!(
-        which,
-        FAULTCORE_SETPRIORITY_LATENCY
-            | FAULTCORE_SETPRIORITY_BANDWIDTH
-            | FAULTCORE_SETPRIORITY_TIMEOUT
-    );
-
-    if is_faultcore {
-        let tid = shm::get_thread_id() as usize;
-        if let Some(p) = unsafe { shm::get_config_ptr(tid, true) } {
-            let mut config = unsafe { p.read() };
-            match which {
-                FAULTCORE_SETPRIORITY_LATENCY => {
-                    config.latency_ns = (who as u64) * 1_000_000;
-                    config.packet_loss_ppm = prio as u64;
-                }
-                FAULTCORE_SETPRIORITY_BANDWIDTH => {
-                    config.bandwidth_bps = (prio as u64) * 1024;
-                }
-                FAULTCORE_SETPRIORITY_TIMEOUT => {
-                    if who != -1 {
-                        config.connect_timeout_ms = who as u64;
-                    }
-                    if prio != -1 {
-                        config.recv_timeout_ms = prio as u64;
-                    }
-                }
-                _ => {}
-            }
-            config.magic = shm::FAULTCORE_MAGIC;
-            unsafe { p.write(config) };
-        }
+    if try_handle_setpriority(which, who, prio) {
         return 0;
     }
 
@@ -774,60 +467,68 @@ pub extern "C" fn faultcore_interceptor_is_active() -> bool {
 mod tests {
     use super::*;
 
-    fn current_errno() -> i32 {
-        unsafe { *libc::__errno_location() }
-    }
-
     #[test]
     fn connect_timeout_maps_to_etimedout() {
-        set_errno(0);
-        let result = map_connect_decision_to_result(LayerDecision::TimeoutMs(10));
-        assert_eq!(result, Some(-1));
-        assert_eq!(current_errno(), libc::ETIMEDOUT);
+        let directive = INTERCEPTOR_RUNTIME.map_connect_decision(LayerDecision::TimeoutMs(10));
+        assert_eq!(
+            directive,
+            faultcore_network::ConnectDirective::ReturnErrno {
+                errno: libc::ETIMEDOUT,
+                ret: -1,
+            }
+        );
     }
 
     #[test]
     fn connect_error_kind_maps_to_errno() {
-        set_errno(0);
-        let result = map_connect_decision_to_result(LayerDecision::ConnectionErrorKind(1));
-        assert_eq!(result, Some(-1));
-        assert_eq!(current_errno(), libc::ECONNRESET);
+        let directive = INTERCEPTOR_RUNTIME.map_connect_decision(LayerDecision::ConnectionErrorKind(1));
+        assert_eq!(
+            directive,
+            faultcore_network::ConnectDirective::ReturnErrno {
+                errno: libc::ECONNRESET,
+                ret: -1,
+            }
+        );
     }
 
     #[test]
     fn stream_drop_maps_to_zero() {
-        let result = map_stream_decision_to_result(1, LayerDecision::Drop);
-        assert_eq!(result, Some(0));
+        let directive = INTERCEPTOR_RUNTIME.map_stream_decision(1, LayerDecision::Drop, false);
+        assert_eq!(directive, faultcore_network::StreamDirective::ReturnValue(0));
     }
 
     #[test]
     fn stream_timeout_maps_to_etimedout() {
-        set_errno(0);
-        let result = map_stream_decision_to_result(1, LayerDecision::TimeoutMs(50));
-        assert_eq!(result, Some(-1));
-        assert_eq!(current_errno(), libc::ETIMEDOUT);
+        let directive = INTERCEPTOR_RUNTIME.map_stream_decision(1, LayerDecision::TimeoutMs(50), false);
+        assert_eq!(
+            directive,
+            faultcore_network::StreamDirective::ReturnErrno {
+                errno: libc::ETIMEDOUT,
+                ret: -1,
+            }
+        );
     }
 
     #[test]
     fn stream_stage_reorder_is_non_terminal() {
-        let result = map_stream_decision_to_result(1, LayerDecision::StageReorder);
-        assert_eq!(result, None);
+        let directive = INTERCEPTOR_RUNTIME.map_stream_decision(1, LayerDecision::StageReorder, false);
+        assert_eq!(directive, faultcore_network::StreamDirective::Continue);
     }
 
     #[test]
     fn dns_mapping_contract_is_stable() {
         assert_eq!(
-            map_dns_decision_to_eai(&LayerDecision::TimeoutMs(1)),
+            INTERCEPTOR_RUNTIME.map_dns_decision_to_eai(&LayerDecision::TimeoutMs(1)),
             Some(libc::EAI_AGAIN)
         );
         assert_eq!(
-            map_dns_decision_to_eai(&LayerDecision::NxDomain),
+            INTERCEPTOR_RUNTIME.map_dns_decision_to_eai(&LayerDecision::NxDomain),
             Some(libc::EAI_NONAME)
         );
         assert_eq!(
-            map_dns_decision_to_eai(&LayerDecision::ConnectionErrorKind(1)),
+            INTERCEPTOR_RUNTIME.map_dns_decision_to_eai(&LayerDecision::ConnectionErrorKind(1)),
             Some(libc::EAI_FAIL)
         );
-        assert_eq!(map_dns_decision_to_eai(&LayerDecision::DelayNs(1)), None);
+        assert_eq!(INTERCEPTOR_RUNTIME.map_dns_decision_to_eai(&LayerDecision::DelayNs(1)), None);
     }
 }

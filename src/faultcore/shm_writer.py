@@ -6,7 +6,7 @@ import threading
 FAULTCORE_MAGIC = 0xFACC0DE
 MAX_FDS = 131072
 MAX_TIDS = 65536
-CONFIG_SIZE = 336
+CONFIG_SIZE = 376
 
 _OFFSET_MAGIC = 0
 _OFFSET_VERSION = 4
@@ -50,6 +50,11 @@ _OFFSET_TARGET_IPV4 = 300
 _OFFSET_TARGET_PREFIX_LEN = 308
 _OFFSET_TARGET_PORT = 316
 _OFFSET_TARGET_PROTOCOL = 324
+_OFFSET_SCHEDULE_TYPE = 332
+_OFFSET_SCHEDULE_PARAM_A = 340
+_OFFSET_SCHEDULE_PARAM_B = 348
+_OFFSET_SCHEDULE_PARAM_C = 356
+_OFFSET_SCHEDULE_STARTED_MONOTONIC_NS = 364
 
 
 class SHMWriter:
@@ -264,6 +269,30 @@ class SHMWriter:
             struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_PREFIX_LEN, prefix_len)
             struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_PORT, port)
             struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_PROTOCOL, protocol)
+
+        self._write_versioned(tid, writer)
+
+    def write_schedule(
+        self,
+        tid: int,
+        *,
+        schedule_type: int,
+        param_a_ns: int = 0,
+        param_b_ns: int = 0,
+        param_c_ns: int = 0,
+        started_monotonic_ns: int = 0,
+    ) -> None:
+        def writer(offset: int) -> None:
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_SCHEDULE_TYPE, schedule_type)
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_SCHEDULE_PARAM_A, param_a_ns)
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_SCHEDULE_PARAM_B, param_b_ns)
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_SCHEDULE_PARAM_C, param_c_ns)
+            struct.pack_into(
+                "<Q",
+                self._mmap,
+                offset + _OFFSET_SCHEDULE_STARTED_MONOTONIC_NS,
+                started_monotonic_ns,
+            )
 
         self._write_versioned(tid, writer)
 

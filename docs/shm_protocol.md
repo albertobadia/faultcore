@@ -2,16 +2,17 @@
 
 This document defines the shared binary contract between:
 - `src/faultcore/shm_writer.py` (Python writer)
-- `faultcore_interceptor/src/shm.rs` (Rust reader/interceptor)
+- `faultcore_network/src/shm_contract.rs` (Rust contract)
+- `faultcore_network/src/shm_runtime.rs` (Rust SHM runtime)
 
 ## Segment
 - Name: `FAULTCORE_CONFIG_SHM` or `"/faultcore_<pid>_config"`
 - Type: POSIX SHM (`/dev/shm/...`)
 - Size:
   - FD table + TID hash table: `(MAX_FDS + MAX_TIDS) * CONFIG_SIZE`
-  - The interceptor also reserves a region for `PolicyState`.
+  - The Rust SHM runtime also reserves a region for `PolicyState`.
 
-## FaultcoreConfig (336 bytes)
+## FaultcoreConfig (376 bytes)
 - Endianness: little-endian
 - Fixed packed layout
 
@@ -59,11 +60,16 @@ This document defines the shared binary contract between:
 | `target_prefix_len` | 308 | 8 | `u64` |
 | `target_port` | 316 | 8 | `u64` |
 | `target_protocol` | 324 | 8 | `u64` |
-| `reserved` | 332 | 4 | `u32` |
+| `schedule_type` | 332 | 8 | `u64` |
+| `schedule_param_a_ns` | 340 | 8 | `u64` |
+| `schedule_param_b_ns` | 348 | 8 | `u64` |
+| `schedule_param_c_ns` | 356 | 8 | `u64` |
+| `schedule_started_monotonic_ns` | 364 | 8 | `u64` |
+| `reserved` | 372 | 4 | `u32` |
 
 Constants:
 - `FAULTCORE_MAGIC = 0xFACC0DE`
-- `CONFIG_SIZE = 336`
+- `CONFIG_SIZE = 376`
 - `MAX_FDS = 131072`
 - `MAX_TIDS = 65536`
 
@@ -90,3 +96,5 @@ The SHM layout is stable, and runtime consumption is consolidated:
 - The interceptor only maps `LayerDecision` to return values/errno (`syscalls` and `getaddrinfo`).
 
 This reduces duplicated logic between engine/interceptor and keeps behavior verifiable through mapping tests.
+
+For module-level ownership and dataflow, see `docs/architecture.md`.

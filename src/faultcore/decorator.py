@@ -209,6 +209,45 @@ def _build_target_profile(
     }
 
 
+def _build_schedule_profile(
+    *,
+    kind: str,
+    every_s: int | float | None = None,
+    duration_s: int | float | None = None,
+    on_s: int | float | None = None,
+    off_s: int | float | None = None,
+    ramp_s: int | float | None = None,
+) -> dict[str, int]:
+    normalized = kind.strip().lower()
+    if normalized == "spike":
+        if every_s is None or duration_s is None:
+            raise ValueError("spike profile requires every_s and duration_s")
+        cycle_ns = int(float(every_s) * 1_000_000_000)
+        active_ns = int(float(duration_s) * 1_000_000_000)
+        if cycle_ns <= 0 or active_ns <= 0 or active_ns > cycle_ns:
+            raise ValueError("spike profile requires 0 < duration_s <= every_s")
+        return {"schedule_type": 2, "param_a_ns": cycle_ns, "param_b_ns": active_ns, "param_c_ns": 0}
+
+    if normalized == "flapping":
+        if on_s is None or off_s is None:
+            raise ValueError("flapping profile requires on_s and off_s")
+        on_ns = int(float(on_s) * 1_000_000_000)
+        off_ns = int(float(off_s) * 1_000_000_000)
+        if on_ns <= 0 or off_ns <= 0:
+            raise ValueError("flapping profile requires on_s > 0 and off_s > 0")
+        return {"schedule_type": 3, "param_a_ns": on_ns, "param_b_ns": off_ns, "param_c_ns": 0}
+
+    if normalized == "ramp":
+        if ramp_s is None:
+            raise ValueError("ramp profile requires ramp_s")
+        ramp_ns = int(float(ramp_s) * 1_000_000_000)
+        if ramp_ns <= 0:
+            raise ValueError("ramp profile requires ramp_s > 0")
+        return {"schedule_type": 1, "param_a_ns": ramp_ns, "param_b_ns": 0, "param_c_ns": 0}
+
+    raise ValueError("schedule kind must be one of: ramp, spike, flapping")
+
+
 class FaultWrapper:
     def __init__(
         self,
@@ -228,6 +267,7 @@ class FaultWrapper:
         packet_reorder_profile: dict[str, int] | None = None,
         dns_profile: dict[str, int] | None = None,
         target_profile: dict[str, int] | None = None,
+        schedule_profile: dict[str, int] | None = None,
     ):
         functools.update_wrapper(self, func)
         self._func = func
@@ -246,6 +286,7 @@ class FaultWrapper:
         self._packet_reorder_profile = packet_reorder_profile or {}
         self._dns_profile = dns_profile or {}
         self._target_profile = target_profile or {}
+        self._schedule_profile = schedule_profile or {}
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._func, name)
@@ -356,6 +397,16 @@ class FaultWrapper:
                 protocol=self._target_profile.get("protocol", 0),
             )
 
+        if self._schedule_profile:
+            shm.write_schedule(
+                tid,
+                schedule_type=self._schedule_profile.get("schedule_type", 0),
+                param_a_ns=self._schedule_profile.get("param_a_ns", 0),
+                param_b_ns=self._schedule_profile.get("param_b_ns", 0),
+                param_c_ns=self._schedule_profile.get("param_c_ns", 0),
+                started_monotonic_ns=time.monotonic_ns(),
+            )
+
         timeout_ms = self._timeouts[0] if self._timeouts else None
 
         if timeout_ms and timeout_ms > 0 and not iscoroutinefunction(self._func):
@@ -402,7 +453,8 @@ class FaultWrapper:
             f"packet_duplicate={self._packet_duplicate_profile}, "
             f"packet_reorder={self._packet_reorder_profile}, "
             f"dns={self._dns_profile}, "
-            f"target={self._target_profile}) for {self._func!r}>"
+            f"target={self._target_profile}, "
+            f"schedule={self._schedule_profile}) for {self._func!r}>"
         )
 
 
@@ -639,6 +691,50 @@ def for_target(
     return decorator
 
 
+def profile(
+    kind: str,
+    *,
+    every_s: int | float | None = None,
+    duration_s: int | float | None = None,
+    on_s: int | float | None = None,
+    off_s: int | float | None = None,
+    ramp_s: int | float | None = None,
+    latency_ms: int | None = None,
+    jitter_ms: int | None = None,
+    packet_loss: str | int | float | None = None,
+    burst_loss_len: int | None = None,
+    rate: str | int | float | None = None,
+):
+    schedule_profile = _build_schedule_profile(
+        kind=kind,
+        every_s=every_s,
+        duration_s=duration_s,
+        on_s=on_s,
+        off_s=off_s,
+        ramp_s=ramp_s,
+    )
+    direction = _build_direction_profile(
+        latency_ms=latency_ms,
+        jitter_ms=jitter_ms,
+        packet_loss=packet_loss,
+        burst_loss_len=burst_loss_len,
+        rate=rate,
+    )
+
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
+        return FaultWrapper(
+            func,
+            latency_ms=direction.get("latency_ms"),
+            jitter_ms=direction.get("jitter_ms"),
+            packet_loss_ppm=direction.get("packet_loss_ppm"),
+            burst_loss_len=direction.get("burst_loss_len"),
+            bandwidth_bps=direction.get("bandwidth_bps"),
+            schedule_profile=schedule_profile,
+        )
+
+    return decorator
+
+
 def _parse_rate(rate: str | int | float) -> int:
     if isinstance(rate, (int, float)):
         if rate < 0:
@@ -722,6 +818,7 @@ def apply_policy(_key: str):
             packet_reorder_profile=policy.get("packet_reorder_profile"),
             dns_profile=policy.get("dns_profile"),
             target_profile=policy.get("target_profile"),
+            schedule_profile=policy.get("schedule_profile"),
         )
 
     return decorator
@@ -761,6 +858,7 @@ def register_policy(
     dns_timeout_ms: int | None = None,
     dns_nxdomain: str | int | float | None = None,
     target: str | dict[str, Any] | None = None,
+    schedule: dict[str, Any] | None = None,
 ) -> None:
     if not name:
         raise ValueError("policy name must be non-empty")
@@ -872,6 +970,17 @@ def register_policy(
             )
         else:
             raise ValueError("target must be a string or mapping when provided")
+    if schedule is not None:
+        if not isinstance(schedule, dict):
+            raise ValueError("schedule must be a mapping when provided")
+        policy["schedule_profile"] = _build_schedule_profile(
+            kind=schedule.get("kind", ""),
+            every_s=schedule.get("every_s"),
+            duration_s=schedule.get("duration_s"),
+            on_s=schedule.get("on_s"),
+            off_s=schedule.get("off_s"),
+            ramp_s=schedule.get("ramp_s"),
+        )
     with _POLICY_LOCK:
         _POLICY_REGISTRY[name] = policy
 
@@ -944,6 +1053,7 @@ def load_policies(path: str | Path) -> int:
             dns_timeout_ms=cfg.get("dns_timeout_ms"),
             dns_nxdomain=cfg.get("dns_nxdomain"),
             target=cfg.get("target"),
+            schedule=cfg.get("schedule"),
         )
         loaded += 1
     return loaded

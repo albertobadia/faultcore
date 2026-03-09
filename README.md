@@ -46,6 +46,7 @@ def network_operation():
 | Document | Scope |
 |---|---|
 | [`docs/api_reference.md`](docs/api_reference.md) | Public Python API, signatures, accepted value formats, sync/async behavior |
+| [`docs/architecture.md`](docs/architecture.md) | System architecture, module responsibilities, runtime flow, and ownership boundaries |
 | [`docs/policies_and_context.md`](docs/policies_and_context.md) | Policy registry, `fault()`, thread policy context, and policy file loading |
 | [`docs/interceptor_and_shm.md`](docs/interceptor_and_shm.md) | Linux `LD_PRELOAD` flow, interceptor behavior, and SHM integration |
 | [`docs/testing_and_examples.md`](docs/testing_and_examples.md) | Build/test workflow (`sh tests.sh`) and example execution guidance |
