@@ -140,20 +140,25 @@ if __name__ == "__main__":
     parser.add_argument("--host", default="localhost", help="Server host")
     parser.add_argument("--port", type=int, default=9000, help="Server port")
     parser.add_argument(
-        "--mode", choices=["connect", "recv", "send", "disconnect"], default="connect", help="Test mode"
+        "--mode", choices=["connect", "recv", "send", "disconnect", "all"], default="all", help="Test mode"
     )
-    parser.add_argument("--timeout", type=int, default=3000, help="Timeout in milliseconds")
+    parser.add_argument("--timeout", type=int, default=1000, help="Timeout in milliseconds")
     args = parser.parse_args()
 
-    result = None
+    results = []
     if args.mode == "connect":
-        result = test_connect_timeout(args.host, args.port, args.timeout)
+        results.append(test_connect_timeout(args.host, args.port, args.timeout))
     elif args.mode == "recv":
-        result = test_recv_timeout(args.host, args.port, args.timeout)
+        results.append(test_recv_timeout(args.host, args.port, args.timeout))
     elif args.mode == "send":
-        result = test_send_timeout(args.host, args.port, args.timeout)
+        results.append(test_send_timeout(args.host, args.port, args.timeout))
     elif args.mode == "disconnect":
-        result = test_graceful_disconnect(args.host, args.port)
+        results.append(test_graceful_disconnect(args.host, args.port))
+    else:
+        results.append(test_connect_timeout(args.host, args.port, args.timeout))
+        results.append(test_recv_timeout(args.host, args.port, args.timeout))
+        results.append(test_send_timeout(args.host, args.port, args.timeout))
+        results.append(test_graceful_disconnect(args.host, args.port))
 
-    if result is None or result is False:
+    if any(result is None or result is False for result in results):
         sys.exit(1)

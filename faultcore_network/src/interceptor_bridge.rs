@@ -2,8 +2,8 @@ use libc::{c_int, sockaddr, socklen_t};
 
 use crate::{
     Config, Direction, Endpoint, FaultOsiEngine, LayerDecision, TargetRule, assign_rule_to_fd,
-    clear_rule_for_fd, endpoint_for_addr_or_fd, endpoint_for_fd, get_config_for_fd, get_config_for_tid,
-    get_target_rules_for_tid_slot, get_thread_id, get_tid_slot_for_fd, monotonic_now_ns, try_open_shm,
+    clear_rule_for_fd, endpoint_for_addr_or_fd, endpoint_for_fd, get_config_for_tid,
+    get_target_rules_for_tid_slot, get_thread_id, get_tid_slot_for_tid, monotonic_now_ns, try_open_shm,
 };
 
 fn endpoint_matches_rule(endpoint: Endpoint, rule: &TargetRule) -> bool {
@@ -53,13 +53,12 @@ fn select_best_target_rule(
     selected_idx.map(|idx| rules[idx])
 }
 
-fn apply_multi_target_for_fd(mut cfg: Config, fd: c_int, endpoint: Option<Endpoint>) -> Option<Config> {
+fn apply_multi_target_for_tid(mut cfg: Config, tid_slot: usize, endpoint: Option<Endpoint>) -> Option<Config> {
     if cfg.target_enabled <= 1 {
         return cfg.runtime_filtered(endpoint, monotonic_now_ns());
     }
     let endpoint = endpoint?;
-    let slot = get_tid_slot_for_fd(fd)?;
-    let rules = get_target_rules_for_tid_slot(slot)?;
+    let rules = get_target_rules_for_tid_slot(tid_slot)?;
     let count = usize::min(cfg.target_enabled as usize, rules.len());
     let rule = select_best_target_rule(endpoint, &rules, count)?;
     cfg.target_enabled = 1;
@@ -88,8 +87,9 @@ pub fn clear_fd_binding(fd: c_int) {
 }
 
 pub fn runtime_config_for_fd(fd: c_int) -> Option<Config> {
-    let cfg = get_config_for_fd(fd)?.into_network_config();
-    apply_multi_target_for_fd(cfg, fd, endpoint_for_fd(fd))
+    let tid = get_thread_id();
+    let cfg = get_config_for_tid(tid)?.into_network_config();
+    apply_multi_target_for_tid(cfg, get_tid_slot_for_tid(tid), endpoint_for_fd(fd))
 }
 
 /// # Safety
@@ -99,8 +99,13 @@ pub unsafe fn runtime_config_for_addr_or_fd(
     addr: *const sockaddr,
     addr_len: socklen_t,
 ) -> Option<Config> {
-    let cfg = get_config_for_fd(fd)?.into_network_config();
-    apply_multi_target_for_fd(cfg, fd, unsafe { endpoint_for_addr_or_fd(fd, addr, addr_len) })
+    let tid = get_thread_id();
+    let cfg = get_config_for_tid(tid)?.into_network_config();
+    apply_multi_target_for_tid(
+        cfg,
+        get_tid_slot_for_tid(tid),
+        unsafe { endpoint_for_addr_or_fd(fd, addr, addr_len) },
+    )
 }
 
 pub fn runtime_dns_config_for_current_thread() -> Option<Config> {

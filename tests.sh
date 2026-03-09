@@ -2,7 +2,7 @@
 # Test script for faultcore
 # Runs pytest with interceptor preloaded
 
-set -e
+set -euo pipefail
 
 cd faultcore_interceptor
 cargo test
@@ -15,6 +15,7 @@ cd ..
 
 ECHO_PID=""
 HTTP_PID=""
+PYTHON_BIN=".venv/bin/python"
 
 cleanup() {
     echo "Cleaning up servers..."
@@ -27,6 +28,21 @@ cleanup() {
 }
 
 trap cleanup EXIT
+
+wait_for_port() {
+    local host="$1"
+    local port="$2"
+    local attempts="${3:-40}"
+    local i=0
+    while [ "$i" -lt "$attempts" ]; do
+        if (echo >"/dev/tcp/$host/$port") >/dev/null 2>&1; then
+            return 0
+        fi
+        i=$((i + 1))
+        sleep 0.1
+    done
+    return 1
+}
 
 # Detect OS and set interceptor variables
 INTERCEPTOR=""
@@ -57,61 +73,43 @@ pkill -f "tcp_echo_server.py" || true
 pkill -f "uvicorn.*http_server" || true
 
 # Start servers in background
-.venv/bin/python tests/integration/servers/tcp_echo_server.py --host 127.0.0.1 --port 9000 > /tmp/echo_server.log 2>&1 &
+"$PYTHON_BIN" tests/integration/servers/tcp_echo_server.py --host 127.0.0.1 --port 9000 > /tmp/echo_server.log 2>&1 &
 ECHO_PID=$!
-.venv/bin/python -m uvicorn tests.integration.servers.http_server:app --host 127.0.0.1 --port 8000 > /tmp/http_server.log 2>&1 &
+"$PYTHON_BIN" -m uvicorn tests.integration.servers.http_server:app --host 127.0.0.1 --port 8000 > /tmp/http_server.log 2>&1 &
 HTTP_PID=$!
 
 # Wait for servers to be ready
 echo "Waiting for servers to start..."
-sleep 2
+wait_for_port "$ECHO_SERVER_HOST" "$ECHO_SERVER_PORT"
+wait_for_port "$HTTP_SERVER_HOST" "$HTTP_SERVER_PORT"
 
 # Run pytest unit tests with the interceptor (using python directly to ensure env vars are passed)
-PYTEST=".venv/bin/python -m pytest"
+PYTEST="$PYTHON_BIN -m pytest"
 echo "Running unit tests with interceptor..."
 LD_PRELOAD="$INTERCEPTOR" $PYTEST tests/unit -v -s
 
-# Run integration CLI scripts (argument-driven probes, discovered dynamically)
+# Run integration CLI scripts (auto-discovery; each script defines its own default suite)
 echo "Running integration CLI scripts with interceptor..."
+run_integration_script() {
+    local script="$1"
+    shift
+    echo "Running integration script: $script $*"
+    LD_PRELOAD="$INTERCEPTOR" "$PYTHON_BIN" "$script" \
+        --host "$ECHO_SERVER_HOST" \
+        --port "$ECHO_SERVER_PORT" \
+        "$@"
+}
+
 shopt -s nullglob
 INTEGRATION_SCRIPTS=(tests/integration/test_*.py)
 shopt -u nullglob
 
-if [ ${#INTEGRATION_SCRIPTS[@]} -eq 0 ]; then
+if [ "${#INTEGRATION_SCRIPTS[@]}" -eq 0 ]; then
     echo "Warning: no integration scripts found in tests/integration/"
 else
-    run_integration_script() {
-        local script="$1"
-        shift
-        echo "Running integration script: $script $*"
-        LD_PRELOAD="$INTERCEPTOR" .venv/bin/python "$script" \
-            --host "$ECHO_SERVER_HOST" \
-            --port "$ECHO_SERVER_PORT" \
-            "$@"
-    }
-
-    for script in "${INTEGRATION_SCRIPTS[@]}"; do
-        case "$script" in
-            tests/integration/test_bandwidth.py)
-                run_integration_script "$script" --mode send --size 1024 --duration 2
-                run_integration_script "$script" --mode recv --duration 2
-                run_integration_script "$script" --mode throughput --messages 20
-                ;;
-            tests/integration/test_latency.py)
-                run_integration_script "$script" --mode latency --message "Hello FaultCore" --count 5
-                run_integration_script "$script" --mode connect-timeout --timeout 2
-                run_integration_script "$script" --mode recv-timeout --timeout 2
-                ;;
-            tests/integration/test_timeout.py)
-                run_integration_script "$script" --mode connect --timeout 1000
-                run_integration_script "$script" --mode recv --timeout 1000
-                run_integration_script "$script" --mode send --timeout 1000
-                run_integration_script "$script" --mode disconnect
-                ;;
-            *)
-                # Generic fallback for future integration scripts.
-                run_integration_script "$script"
-                ;;
-        esac
+    IFS=$'\n' SORTED_SCRIPTS=($(printf "%s\n" "${INTEGRATION_SCRIPTS[@]}" | sort))
+    unset IFS
+    for script in "${SORTED_SCRIPTS[@]}"; do
+        run_integration_script "$script"
     done
 fi

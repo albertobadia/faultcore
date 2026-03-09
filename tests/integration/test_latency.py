@@ -117,20 +117,24 @@ if __name__ == "__main__":
     parser.add_argument("--host", default="localhost", help="Server host")
     parser.add_argument("--port", type=int, default=9000, help="Server port")
     parser.add_argument("--message", default="Hello FaultCore", help="Message to send")
-    parser.add_argument("--count", type=int, default=10, help="Number of messages")
+    parser.add_argument("--count", type=int, default=5, help="Number of messages")
     parser.add_argument(
-        "--mode", choices=["latency", "connect-timeout", "recv-timeout"], default="latency", help="Test mode"
+        "--mode", choices=["latency", "connect-timeout", "recv-timeout", "all"], default="all", help="Test mode"
     )
-    parser.add_argument("--timeout", type=float, default=5.0, help="Timeout in seconds")
+    parser.add_argument("--timeout", type=float, default=2.0, help="Timeout in seconds")
     args = parser.parse_args()
 
-    result = None
+    results = []
     if args.mode == "latency":
-        result = test_latency(args.host, args.port, args.message, args.count)
+        results.append(test_latency(args.host, args.port, args.message, args.count))
     elif args.mode == "connect-timeout":
-        result = test_connect_timeout(args.host, args.port, args.timeout)
+        results.append(test_connect_timeout(args.host, args.port, args.timeout))
     elif args.mode == "recv-timeout":
-        result = test_recv_timeout(args.host, args.port, args.timeout)
+        results.append(test_recv_timeout(args.host, args.port, args.timeout))
+    else:
+        results.append(test_latency(args.host, args.port, args.message, args.count))
+        results.append(test_connect_timeout(args.host, args.port, args.timeout))
+        results.append(test_recv_timeout(args.host, args.port, args.timeout))
 
-    if result is None:
+    if any(result is None for result in results):
         sys.exit(1)

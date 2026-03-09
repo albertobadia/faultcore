@@ -27,8 +27,9 @@ pub use setpriority_compat::{
     try_handle_setpriority,
 };
 pub use shm_runtime::{
-    assign_rule_to_fd, clear_rule_for_fd, get_config_for_fd, get_config_for_tid, get_thread_id, is_shm_open,
-    try_open_shm, update_config_for_tid, get_target_rules_for_tid_slot, get_tid_slot_for_fd,
+    assign_rule_to_fd, clear_rule_for_fd, get_config_for_fd, get_config_for_tid, get_config_for_tid_slot,
+    get_target_rules_for_tid_slot, get_thread_id, get_tid_slot_for_fd, get_tid_slot_for_tid, is_shm_open,
+    try_open_shm, update_config_for_tid,
 };
 pub use shm_contract::{
     FAULTCORE_MAGIC, FAULTCORE_SHM_SIZE, FaultcoreConfig, MAX_BANDWIDTH_BPS, MAX_FDS, MAX_LATENCY_NS,

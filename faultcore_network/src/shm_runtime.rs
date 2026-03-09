@@ -145,6 +145,10 @@ pub fn get_tid_slot_for_fd(fd: c_int) -> Option<usize> {
     }
 }
 
+pub fn get_tid_slot_for_tid(tid: u64) -> usize {
+    tid_slot(tid as usize)
+}
+
 pub fn get_target_rules_for_tid_slot(slot: usize) -> Option<[TargetRule; MAX_TARGET_RULES_PER_TID]> {
     if !is_shm_open() {
         try_open_shm();
@@ -226,6 +230,42 @@ pub fn get_config_for_tid(tid: u64) -> Option<FaultcoreConfig> {
     None
 }
 
+pub fn get_config_for_tid_slot(slot: usize) -> Option<FaultcoreConfig> {
+    if !is_shm_open() {
+        try_open_shm();
+    }
+    if slot >= MAX_TIDS {
+        return None;
+    }
+
+    unsafe {
+        let ptr_val = *SHM_POINTER.read();
+        if ptr_val == 0 {
+            return None;
+        }
+        let config_ptr = (ptr_val as *mut FaultcoreConfig).add(MAX_FDS + slot);
+        for _ in 0..10 {
+            let version_ptr = config_ptr.cast::<u8>().add(4);
+            let v1 = ptr::read_unaligned(version_ptr as *const u64);
+            if !v1.is_multiple_of(2) {
+                continue;
+            }
+            fence(Ordering::SeqCst);
+            let config = ptr::read_unaligned(config_ptr);
+            fence(Ordering::SeqCst);
+            let v2 = ptr::read_unaligned(version_ptr as *const u64);
+            if v1 != v2 {
+                continue;
+            }
+            if config.is_valid() {
+                return Some(config);
+            }
+            break;
+        }
+    }
+    None
+}
+
 pub fn assign_rule_to_fd(fd: c_int, tid: usize) {
     if fd < 0 {
         return;
@@ -233,14 +273,6 @@ pub fn assign_rule_to_fd(fd: c_int, tid: usize) {
     unsafe {
         if let Some(owners) = get_fd_owner_base_ptr() {
             ptr::write_unaligned(owners.add(fd as usize), tid_slot(tid) as u64);
-        }
-        if let Some(tid_ptr) = get_config_ptr(tid, true) {
-            let tid_cfg = tid_ptr.read();
-            if tid_cfg.is_valid()
-                && let Some(fd_ptr) = get_config_ptr(fd as usize, false)
-            {
-                fd_ptr.write(tid_cfg);
-            }
         }
     }
 }
@@ -582,6 +614,39 @@ mod tests {
             assert_eq!(schedule_started_monotonic_ns, 0);
             assert_eq!(reserved, 0);
         }
+
+        *SHM_POINTER.write() = prev_ptr;
+        SHM_OPEN.store(prev_open, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn test_get_config_for_tid_slot_reads_tid_region() {
+        let mut table = vec![0u64; FAULTCORE_SHM_SIZE.div_ceil(core::mem::size_of::<u64>())];
+
+        let prev_ptr = *SHM_POINTER.read();
+        let prev_open = SHM_OPEN.load(Ordering::SeqCst);
+
+        *SHM_POINTER.write() = table.as_mut_ptr().cast::<u8>() as usize;
+        SHM_OPEN.store(1, Ordering::SeqCst);
+
+        let slot = 123usize;
+        unsafe {
+            let base = *SHM_POINTER.read() as *mut FaultcoreConfig;
+            let ptr = base.add(MAX_FDS + slot);
+            ptr::write_unaligned(ptr, FaultcoreConfig {
+                magic: FAULTCORE_MAGIC,
+                version: 2,
+                reorder_prob_ppm: 1_000_000,
+                reorder_window: 2,
+                ..Default::default()
+            });
+        }
+
+        let cfg = get_config_for_tid_slot(slot).expect("tid slot config should be readable");
+        let reorder_prob_ppm = cfg.reorder_prob_ppm;
+        let reorder_window = cfg.reorder_window;
+        assert_eq!(reorder_prob_ppm, 1_000_000);
+        assert_eq!(reorder_window, 2);
 
         *SHM_POINTER.write() = prev_ptr;
         SHM_OPEN.store(prev_open, Ordering::SeqCst);

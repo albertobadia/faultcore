@@ -146,19 +146,23 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="FaultCore Bandwidth Test Client")
     parser.add_argument("--host", default="localhost", help="Server host")
     parser.add_argument("--port", type=int, default=9000, help="Server port")
-    parser.add_argument("--mode", choices=["send", "recv", "throughput"], default="send", help="Test mode")
+    parser.add_argument("--mode", choices=["send", "recv", "throughput", "all"], default="all", help="Test mode")
     parser.add_argument("--size", type=int, default=1024, help="Data size for send test")
-    parser.add_argument("--duration", type=float, default=5.0, help="Test duration in seconds")
-    parser.add_argument("--messages", type=int, default=100, help="Number of messages for throughput")
+    parser.add_argument("--duration", type=float, default=2.0, help="Test duration in seconds")
+    parser.add_argument("--messages", type=int, default=20, help="Number of messages for throughput")
     args = parser.parse_args()
 
-    result = None
+    results = []
     if args.mode == "send":
-        result = test_bandwidth_send(args.host, args.port, args.size, args.duration)
+        results.append(test_bandwidth_send(args.host, args.port, args.size, args.duration))
     elif args.mode == "recv":
-        result = test_bandwidth_recv(args.host, args.port, args.duration)
+        results.append(test_bandwidth_recv(args.host, args.port, args.duration))
     elif args.mode == "throughput":
-        result = test_throughput(args.host, args.port, args.messages)
+        results.append(test_throughput(args.host, args.port, args.messages))
+    else:
+        results.append(test_bandwidth_send(args.host, args.port, args.size, args.duration))
+        results.append(test_bandwidth_recv(args.host, args.port, args.duration))
+        results.append(test_throughput(args.host, args.port, args.messages))
 
-    if result is None:
+    if any(result is None for result in results):
         sys.exit(1)
