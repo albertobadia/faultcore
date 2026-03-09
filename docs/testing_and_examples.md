@@ -57,6 +57,7 @@ Some examples expect local servers:
 - `examples/06_multi_protocol.py`
 - `examples/08_bandwidth_throttle.py`
 - `examples/09_network_timeout.py`
+- `examples/10_target_priority.py`
 
 ## Notes on Rate Semantics
 
