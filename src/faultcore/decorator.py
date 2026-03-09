@@ -92,8 +92,23 @@ def _build_packet_duplicate_profile(*, prob: str | int | float = "100%", max_ext
     return {"prob_ppm": _parse_packet_loss(prob), "max_extra": extra}
 
 
-def _build_packet_reorder_profile(*, prob: str | int | float = "100%") -> dict[str, int]:
-    return {"prob_ppm": _parse_packet_loss(prob)}
+def _build_packet_reorder_profile(
+    *,
+    prob: str | int | float = "100%",
+    max_delay_ms: int = 0,
+    window: int = 1,
+) -> dict[str, int]:
+    delay_ms = int(max_delay_ms)
+    if delay_ms < 0:
+        raise ValueError("max_delay_ms must be >= 0")
+    reorder_window = int(window)
+    if reorder_window <= 0:
+        raise ValueError("window must be > 0")
+    return {
+        "prob_ppm": _parse_packet_loss(prob),
+        "max_delay_ns": delay_ms * 1_000_000,
+        "window": reorder_window,
+    }
 
 
 def _build_dns_profile(
@@ -240,6 +255,8 @@ class FaultWrapper:
             shm.write_packet_reorder(
                 tid,
                 prob_ppm=self._packet_reorder_profile.get("prob_ppm", 0),
+                max_delay_ns=self._packet_reorder_profile.get("max_delay_ns", 0),
+                window=self._packet_reorder_profile.get("window", 1),
             )
 
         if self._dns_profile:
@@ -469,8 +486,13 @@ def packet_duplicate(*, prob: str | int | float = "100%", max_extra: int = 1):
     return decorator
 
 
-def packet_reorder(*, prob: str | int | float = "100%"):
-    profile = _build_packet_reorder_profile(prob=prob)
+def packet_reorder(
+    *,
+    prob: str | int | float = "100%",
+    max_delay_ms: int = 0,
+    window: int = 1,
+):
+    profile = _build_packet_reorder_profile(prob=prob, max_delay_ms=max_delay_ms, window=window)
 
     def decorator(func: Callable[..., Any]) -> FaultWrapper:
         return FaultWrapper(func, packet_reorder_profile=profile)
@@ -713,6 +735,8 @@ def register_policy(
             raise ValueError("packet_reorder must be a mapping when provided")
         policy["packet_reorder_profile"] = _build_packet_reorder_profile(
             prob=packet_reorder.get("prob", "100%"),
+            max_delay_ms=packet_reorder.get("max_delay_ms", 0),
+            window=packet_reorder.get("window", 1),
         )
     dns_profile = _build_dns_profile(
         delay_ms=dns_delay_ms,

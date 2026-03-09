@@ -59,6 +59,8 @@ pub struct FaultcoreConfig {
     pub dup_prob_ppm: u64,
     pub dup_max_extra: u64,
     pub reorder_prob_ppm: u64,
+    pub reorder_max_delay_ns: u64,
+    pub reorder_window: u64,
     pub dns_delay_ns: u64,
     pub dns_timeout_ms: u64,
     pub dns_nxdomain_ppm: u64,
@@ -102,6 +104,7 @@ impl FaultcoreConfig {
             && self.half_open_err_kind <= 3
             && self.dup_prob_ppm <= 1_000_000
             && self.reorder_prob_ppm <= 1_000_000
+            && self.reorder_window <= 1_000_000
             && self.dns_delay_ns <= MAX_LATENCY_NS
             && self.dns_nxdomain_ppm <= 1_000_000
     }
@@ -137,6 +140,8 @@ impl FaultcoreConfig {
             dup_prob_ppm: self.dup_prob_ppm,
             dup_max_extra: self.dup_max_extra,
             reorder_prob_ppm: self.reorder_prob_ppm,
+            reorder_max_delay_ns: self.reorder_max_delay_ns,
+            reorder_window: self.reorder_window,
             dns_delay_ns: self.dns_delay_ns,
             dns_timeout_ms: self.dns_timeout_ms,
             dns_nxdomain_ppm: self.dns_nxdomain_ppm,
@@ -362,6 +367,8 @@ mod tests {
             dup_prob_ppm: 0,
             dup_max_extra: 0,
             reorder_prob_ppm: 0,
+            reorder_max_delay_ns: 0,
+            reorder_window: 0,
             dns_delay_ns: 0,
             dns_timeout_ms: 0,
             dns_nxdomain_ppm: 0,
@@ -404,6 +411,8 @@ mod tests {
             dup_prob_ppm: 0,
             dup_max_extra: 0,
             reorder_prob_ppm: 0,
+            reorder_max_delay_ns: 0,
+            reorder_window: 0,
             dns_delay_ns: 0,
             dns_timeout_ms: 0,
             dns_nxdomain_ppm: 0,
@@ -485,6 +494,8 @@ mod tests {
                 dup_prob_ppm: 0,
                 dup_max_extra: 0,
                 reorder_prob_ppm: 0,
+                reorder_max_delay_ns: 0,
+                reorder_window: 0,
                 dns_delay_ns: 0,
                 dns_timeout_ms: 0,
                 dns_nxdomain_ppm: 0,
@@ -528,9 +539,11 @@ mod tests {
             let dup_prob_ppm = ptr::read_unaligned(base.add(220) as *const u64);
             let dup_max_extra = ptr::read_unaligned(base.add(228) as *const u64);
             let reorder_prob_ppm = ptr::read_unaligned(base.add(236) as *const u64);
-            let dns_delay_ns = ptr::read_unaligned(base.add(244) as *const u64);
-            let dns_timeout_ms = ptr::read_unaligned(base.add(252) as *const u64);
-            let dns_nxdomain_ppm = ptr::read_unaligned(base.add(260) as *const u64);
+            let reorder_max_delay_ns = ptr::read_unaligned(base.add(244) as *const u64);
+            let reorder_window = ptr::read_unaligned(base.add(252) as *const u64);
+            let dns_delay_ns = ptr::read_unaligned(base.add(260) as *const u64);
+            let dns_timeout_ms = ptr::read_unaligned(base.add(268) as *const u64);
+            let dns_nxdomain_ppm = ptr::read_unaligned(base.add(276) as *const u64);
             assert_eq!(magic, 0);
             assert_eq!(version, 0);
             assert_eq!(latency_ns, 0);
@@ -562,6 +575,8 @@ mod tests {
             assert_eq!(dup_prob_ppm, 0);
             assert_eq!(dup_max_extra, 0);
             assert_eq!(reorder_prob_ppm, 0);
+            assert_eq!(reorder_max_delay_ns, 0);
+            assert_eq!(reorder_window, 0);
             assert_eq!(dns_delay_ns, 0);
             assert_eq!(dns_timeout_ms, 0);
             assert_eq!(dns_nxdomain_ppm, 0);

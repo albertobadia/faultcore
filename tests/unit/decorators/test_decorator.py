@@ -2,10 +2,12 @@ import asyncio
 import json
 import threading
 import time
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 import faultcore
+from faultcore.decorator import _parse_packet_loss, clear_policies, get_thread_policy
 
 
 class TestTimeoutDecorator:
@@ -74,8 +76,6 @@ class TestTimeoutDecorator:
 
 class TestLatencyDecorator:
     def test_latency_decorator_writes_latency_to_shm(self, monkeypatch):
-        from unittest.mock import MagicMock, patch
-
         mock_shm = MagicMock()
         mock_shm.write_latency = MagicMock()
         mock_shm.write_timeouts = MagicMock()
@@ -104,8 +104,6 @@ class TestLatencyDecorator:
 
 class TestJitterDecorator:
     def test_jitter_decorator_writes_jitter_to_shm(self):
-        from unittest.mock import MagicMock, patch
-
         mock_shm = MagicMock()
         mock_shm.write_jitter = MagicMock()
         mock_shm.clear = MagicMock()
@@ -132,8 +130,6 @@ class TestJitterDecorator:
 
 class TestTimeoutDecoratorWritesCorrectFields:
     def test_timeout_writes_network_timeout_fields(self, monkeypatch):
-        from unittest.mock import MagicMock, patch
-
         mock_shm = MagicMock()
         mock_shm.write_latency = MagicMock()
         mock_shm.write_timeouts = MagicMock()
@@ -153,8 +149,6 @@ class TestTimeoutDecoratorWritesCorrectFields:
                 mock_shm.clear.assert_called_once_with(12345)
 
     def test_connect_timeout_writes_connect_only(self):
-        from unittest.mock import MagicMock, patch
-
         mock_shm = MagicMock()
         mock_shm.write_timeouts = MagicMock()
         mock_shm.clear = MagicMock()
@@ -171,8 +165,6 @@ class TestTimeoutDecoratorWritesCorrectFields:
                 mock_shm.clear.assert_called_once_with(12346)
 
     def test_recv_timeout_writes_recv_only(self):
-        from unittest.mock import MagicMock, patch
-
         mock_shm = MagicMock()
         mock_shm.write_timeouts = MagicMock()
         mock_shm.clear = MagicMock()
@@ -258,8 +250,6 @@ class TestRateLimitDecorator:
 
 class TestPacketLossDecorator:
     def test_packet_loss_decorator_writes_packet_loss_to_shm(self):
-        from unittest.mock import MagicMock, patch
-
         mock_shm = MagicMock()
         mock_shm.write_packet_loss = MagicMock()
         mock_shm.clear = MagicMock()
@@ -277,8 +267,6 @@ class TestPacketLossDecorator:
                 mock_shm.clear.assert_called_once_with(91011)
 
     def test_parse_packet_loss_variants(self):
-        from faultcore.decorator import _parse_packet_loss
-
         assert _parse_packet_loss(0.5) == 500_000
         assert _parse_packet_loss("0.5") == 500_000
         assert _parse_packet_loss(25) == 250_000
@@ -287,8 +275,6 @@ class TestPacketLossDecorator:
         assert _parse_packet_loss(250_000) == 250_000
 
     def test_parse_packet_loss_rejects_invalid_values(self):
-        from faultcore.decorator import _parse_packet_loss
-
         with pytest.raises(ValueError):
             _parse_packet_loss(-1)
         with pytest.raises(ValueError):
@@ -299,8 +285,6 @@ class TestPacketLossDecorator:
 
 class TestBurstLossDecorator:
     def test_burst_loss_decorator_writes_burst_len_to_shm(self):
-        from unittest.mock import MagicMock, patch
-
         mock_shm = MagicMock()
         mock_shm.write_burst_loss = MagicMock()
         mock_shm.clear = MagicMock()
@@ -327,8 +311,6 @@ class TestBurstLossDecorator:
 
 class TestDirectionalDecorators:
     def test_uplink_writes_directional_fields_to_shm(self):
-        from unittest.mock import MagicMock, patch
-
         mock_shm = MagicMock()
         mock_shm.write_uplink = MagicMock()
         mock_shm.clear = MagicMock()
@@ -352,8 +334,6 @@ class TestDirectionalDecorators:
                 mock_shm.clear.assert_called_once_with(731)
 
     def test_downlink_writes_directional_fields_to_shm(self):
-        from unittest.mock import MagicMock, patch
-
         mock_shm = MagicMock()
         mock_shm.write_downlink = MagicMock()
         mock_shm.clear = MagicMock()
@@ -387,8 +367,6 @@ class TestDirectionalDecorators:
 
 class TestCorrelatedLossDecorator:
     def test_correlated_loss_writes_profile_to_shm(self):
-        from unittest.mock import MagicMock, patch
-
         mock_shm = MagicMock()
         mock_shm.write_correlated_loss = MagicMock()
         mock_shm.clear = MagicMock()
@@ -419,8 +397,6 @@ class TestCorrelatedLossDecorator:
 
 class TestConnectionErrorDecorators:
     def test_connection_error_writes_profile_to_shm(self):
-        from unittest.mock import MagicMock, patch
-
         mock_shm = MagicMock()
         mock_shm.write_connection_error = MagicMock()
         mock_shm.clear = MagicMock()
@@ -441,8 +417,6 @@ class TestConnectionErrorDecorators:
                 mock_shm.clear.assert_called_once_with(976)
 
     def test_half_open_writes_profile_to_shm(self):
-        from unittest.mock import MagicMock, patch
-
         mock_shm = MagicMock()
         mock_shm.write_half_open = MagicMock()
         mock_shm.clear = MagicMock()
@@ -469,8 +443,6 @@ class TestConnectionErrorDecorators:
 
 class TestDuplicateAndReorderDecorators:
     def test_packet_duplicate_writes_profile_to_shm(self):
-        from unittest.mock import MagicMock, patch
-
         mock_shm = MagicMock()
         mock_shm.write_packet_duplicate = MagicMock()
         mock_shm.clear = MagicMock()
@@ -491,8 +463,6 @@ class TestDuplicateAndReorderDecorators:
                 mock_shm.clear.assert_called_once_with(978)
 
     def test_packet_reorder_writes_profile_to_shm(self):
-        from unittest.mock import MagicMock, patch
-
         mock_shm = MagicMock()
         mock_shm.write_packet_reorder = MagicMock()
         mock_shm.clear = MagicMock()
@@ -508,18 +478,45 @@ class TestDuplicateAndReorderDecorators:
                 mock_shm.write_packet_reorder.assert_called_once_with(
                     979,
                     prob_ppm=15_000,
+                    max_delay_ns=0,
+                    window=1,
                 )
                 mock_shm.clear.assert_called_once_with(979)
+
+    def test_packet_reorder_writes_extended_profile_to_shm(self):
+        mock_shm = MagicMock()
+        mock_shm.write_packet_reorder = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=983):
+
+                @faultcore.packet_reorder(prob="2%", max_delay_ms=75, window=4)
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_packet_reorder.assert_called_once_with(
+                    983,
+                    prob_ppm=20_000,
+                    max_delay_ns=75_000_000,
+                    window=4,
+                )
+                mock_shm.clear.assert_called_once_with(983)
 
     def test_packet_duplicate_rejects_invalid_max_extra(self):
         with pytest.raises(ValueError):
             faultcore.packet_duplicate(max_extra=0)
 
+    def test_packet_reorder_rejects_invalid_extended_fields(self):
+        with pytest.raises(ValueError):
+            faultcore.packet_reorder(max_delay_ms=-1)
+        with pytest.raises(ValueError):
+            faultcore.packet_reorder(window=0)
+
 
 class TestDnsDecorators:
     def test_dns_delay_writes_profile_to_shm(self):
-        from unittest.mock import MagicMock, patch
-
         mock_shm = MagicMock()
         mock_shm.write_dns = MagicMock()
         mock_shm.clear = MagicMock()
@@ -541,8 +538,6 @@ class TestDnsDecorators:
                 mock_shm.clear.assert_called_once_with(980)
 
     def test_dns_timeout_writes_profile_to_shm(self):
-        from unittest.mock import MagicMock, patch
-
         mock_shm = MagicMock()
         mock_shm.write_dns = MagicMock()
         mock_shm.clear = MagicMock()
@@ -564,8 +559,6 @@ class TestDnsDecorators:
                 mock_shm.clear.assert_called_once_with(981)
 
     def test_dns_nxdomain_writes_profile_to_shm(self):
-        from unittest.mock import MagicMock, patch
-
         mock_shm = MagicMock()
         mock_shm.write_dns = MagicMock()
         mock_shm.clear = MagicMock()
@@ -589,8 +582,6 @@ class TestDnsDecorators:
 
 class TestPolicyRegistry:
     def test_apply_policy_uses_registered_policy(self):
-        from unittest.mock import MagicMock, patch
-
         faultcore.register_policy(
             "slow_link",
             latency_ms=50,
@@ -627,8 +618,6 @@ class TestPolicyRegistry:
                 mock_shm.clear.assert_called_once_with(5150)
 
     def test_fault_auto_reads_thread_policy(self):
-        from unittest.mock import MagicMock, patch
-
         faultcore.register_policy("auto_policy", packet_loss="0.1%")
         faultcore.set_thread_policy("auto_policy")
 
@@ -652,17 +641,11 @@ class TestPolicyRegistry:
     def test_fault_context_sets_and_restores_thread_policy(self):
         faultcore.set_thread_policy("outer")
         with faultcore.fault_context("inner"):
-            from faultcore.decorator import get_thread_policy
-
             assert get_thread_policy() == "inner"
-        from faultcore.decorator import get_thread_policy
-
         assert get_thread_policy() == "outer"
         faultcore.set_thread_policy(None)
 
     def test_register_policy_with_split_timeouts(self):
-        from unittest.mock import MagicMock, patch
-
         faultcore.register_policy("split_timeouts", connect_timeout_ms=321, recv_timeout_ms=654)
 
         mock_shm = MagicMock()
@@ -681,8 +664,6 @@ class TestPolicyRegistry:
                 mock_shm.clear.assert_called_once_with(612)
 
     def test_register_policy_with_uplink_and_downlink_profiles(self):
-        from unittest.mock import MagicMock, patch
-
         faultcore.register_policy(
             "directional",
             uplink={"latency_ms": 10, "rate": "5mbps"},
@@ -721,8 +702,6 @@ class TestPolicyRegistry:
                 mock_shm.clear.assert_called_once_with(890)
 
     def test_register_policy_with_correlated_loss_profile(self):
-        from unittest.mock import MagicMock, patch
-
         faultcore.register_policy(
             "ge_policy",
             correlated_loss={
@@ -756,8 +735,6 @@ class TestPolicyRegistry:
                 mock_shm.clear.assert_called_once_with(891)
 
     def test_register_policy_with_connection_error_and_half_open(self):
-        from unittest.mock import MagicMock, patch
-
         faultcore.register_policy(
             "conn_policy",
             connection_error={"kind": "reset", "prob": "5%"},
@@ -790,12 +767,10 @@ class TestPolicyRegistry:
                 mock_shm.clear.assert_called_once_with(892)
 
     def test_register_policy_with_packet_duplicate_and_reorder(self):
-        from unittest.mock import MagicMock, patch
-
         faultcore.register_policy(
             "dup_reorder_policy",
             packet_duplicate={"prob": "3%", "max_extra": 2},
-            packet_reorder={"prob": "1%"},
+            packet_reorder={"prob": "1%", "max_delay_ms": 50, "window": 3},
         )
 
         mock_shm = MagicMock()
@@ -819,12 +794,12 @@ class TestPolicyRegistry:
                 mock_shm.write_packet_reorder.assert_called_once_with(
                     893,
                     prob_ppm=10_000,
+                    max_delay_ns=50_000_000,
+                    window=3,
                 )
                 mock_shm.clear.assert_called_once_with(893)
 
     def test_register_policy_with_dns_fields(self):
-        from unittest.mock import MagicMock, patch
-
         faultcore.register_policy(
             "dns_policy",
             dns_delay_ms=150,
@@ -887,8 +862,6 @@ class TestPolicyRegistry:
             faultcore.register_policy("bad15", dns_timeout_ms=-1)
 
     def test_registry_introspection_and_unregister(self):
-        from faultcore.decorator import clear_policies
-
         clear_policies()
         faultcore.register_policy("b_policy", latency_ms=2)
         faultcore.register_policy("a_policy", latency_ms=1)
@@ -902,8 +875,6 @@ class TestPolicyRegistry:
         assert faultcore.list_policies() == ["b_policy"]
 
     def test_registry_thread_safety_under_parallel_updates(self):
-        from faultcore.decorator import clear_policies
-
         clear_policies()
 
         def worker(idx: int) -> None:
@@ -939,8 +910,6 @@ class TestPolicyRegistry:
 
         loaded = faultcore.load_policies(file_path)
         assert loaded == 1
-
-        from unittest.mock import MagicMock, patch
 
         mock_shm = MagicMock()
         mock_shm.write_latency = MagicMock()
@@ -1038,8 +1007,6 @@ class TestTimeoutContract:
 
 class TestTimeoutShmLifecycle:
     def test_sync_timeout_clears_shm_on_timeout_error(self):
-        from unittest.mock import MagicMock, patch
-
         mock_shm = MagicMock()
         mock_shm.write_timeouts = MagicMock()
         mock_shm.clear = MagicMock()
@@ -1058,8 +1025,6 @@ class TestTimeoutShmLifecycle:
                 mock_shm.clear.assert_called_once_with(777)
 
     def test_sync_timeout_clears_shm_on_function_exception(self):
-        from unittest.mock import MagicMock, patch
-
         mock_shm = MagicMock()
         mock_shm.write_timeouts = MagicMock()
         mock_shm.clear = MagicMock()
@@ -1078,8 +1043,6 @@ class TestTimeoutShmLifecycle:
                 mock_shm.clear.assert_called_once_with(778)
 
     async def test_async_timeout_clears_shm_on_timeout_error(self):
-        from unittest.mock import MagicMock, patch
-
         mock_shm = MagicMock()
         mock_shm.write_timeouts = MagicMock()
         mock_shm.clear = MagicMock()
@@ -1100,8 +1063,6 @@ class TestTimeoutShmLifecycle:
 
 class TestAsyncShmLifecycle:
     async def test_async_decorator_keeps_policy_until_coroutine_finishes(self):
-        from unittest.mock import MagicMock, patch
-
         mock_shm = MagicMock()
         mock_shm.write_latency = MagicMock()
         mock_shm.write_timeouts = MagicMock()

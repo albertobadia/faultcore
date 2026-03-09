@@ -128,6 +128,8 @@ Inject packet reordering (MVP on `sendto` path).
 
 Optional keyword fields:
 - `prob`: reorder probability (same formats as `packet_loss(...)`, default `"100%"`)
+- `max_delay_ms`: max staging delay before forced flush, must be `>= 0` (default `0`)
+- `window`: max queued staged datagrams per socket, must be `> 0` (default `1`)
 
 ### `dns_delay(delay_ms: int)`
 
@@ -211,6 +213,7 @@ Notes:
 - `name` must be non-empty.
 - `timeout_ms` sets both connect/recv.
 - `connect_timeout_ms`/`recv_timeout_ms` override split timeouts when provided.
+- `packet_reorder` accepts `prob`, `max_delay_ms`, and `window`.
 
 ### `list_policies() -> list[str]`
 
@@ -261,12 +264,12 @@ Search common build paths for `libfaultcore_interceptor.so`.
 
 ## Runtime Network Engine (Rust)
 
-El runtime de red ahora usa una arquitectura única por contexto:
+The network runtime now uses a single context-driven architecture:
 
 - `PacketContext`: `fd`, `bytes`, `operation`, `direction`, `config`.
 - `Operation`: `Connect`, `Send`, `Recv`, `DnsLookup`.
 - `Direction`: `Uplink`, `Downlink`.
-- `LayerDecision` (contrato único):
+- `LayerDecision` (single decision contract):
   - `Continue`
   - `DelayNs(u64)`
   - `Drop`
@@ -279,13 +282,13 @@ El runtime de red ahora usa una arquitectura única por contexto:
 
 Pipeline:
 
-- Orden fijo `L1 -> L2 -> L3 -> L4 -> L5 -> L6 -> L7`.
-- Cada capa decide con `applies_to(context)` y `process(context)`.
-- El interceptor solo traduce `LayerDecision` a comportamiento syscall/errno.
+- Fixed order `L1 -> L2 -> L3 -> L4 -> L5 -> L6 -> L7`.
+- Each layer decides via `applies_to(context)` and `process(context)`.
+- The interceptor only translates `LayerDecision` into syscall/errno behavior.
 
-Sin compatibilidad retroactiva:
+No backward compatibility layer:
 
-- APIs internas anteriores de engine por tipo (`ConnectAction`, `StreamAction`, `DnsAction`) ya no son el contrato vigente.
+- Previous type-specific internal engine APIs (`ConnectAction`, `StreamAction`, `DnsAction`) are no longer the active contract.
 - SHM state is cleared in `finally` blocks for:
   - successful execution;
   - raised exceptions;

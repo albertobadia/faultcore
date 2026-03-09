@@ -1,21 +1,21 @@
 # Faultcore Shared Memory Protocol
 
-Este documento define el contrato binario compartido entre:
-- `src/faultcore/shm_writer.py` (writer Python)
-- `faultcore_interceptor/src/shm.rs` (reader/interceptor Rust)
+This document defines the shared binary contract between:
+- `src/faultcore/shm_writer.py` (Python writer)
+- `faultcore_interceptor/src/shm.rs` (Rust reader/interceptor)
 
-## Segmento
-- Nombre: `FAULTCORE_CONFIG_SHM` o `"/faultcore_<pid>_config"`
-- Tipo: POSIX SHM (`/dev/shm/...`)
-- Tamaño:
-  - Tabla de FDs + tabla hash de TIDs: `(MAX_FDS + MAX_TIDS) * CONFIG_SIZE`
-  - En el interceptor además se reserva una región para `PolicyState`.
+## Segment
+- Name: `FAULTCORE_CONFIG_SHM` or `"/faultcore_<pid>_config"`
+- Type: POSIX SHM (`/dev/shm/...`)
+- Size:
+  - FD table + TID hash table: `(MAX_FDS + MAX_TIDS) * CONFIG_SIZE`
+  - The interceptor also reserves a region for `PolicyState`.
 
-## FaultcoreConfig (272 bytes)
+## FaultcoreConfig (288 bytes)
 - Endianness: little-endian
-- Layout fijo (packed)
+- Fixed packed layout
 
-| Campo | Offset | Tamaño | Tipo |
+| Field | Offset | Size | Type |
 |---|---:|---:|---|
 | `magic` | 0 | 4 | `u32` |
 | `version` | 4 | 8 | `u64` |
@@ -48,37 +48,39 @@ Este documento define el contrato binario compartido entre:
 | `dup_prob_ppm` | 220 | 8 | `u64` |
 | `dup_max_extra` | 228 | 8 | `u64` |
 | `reorder_prob_ppm` | 236 | 8 | `u64` |
-| `dns_delay_ns` | 244 | 8 | `u64` |
-| `dns_timeout_ms` | 252 | 8 | `u64` |
-| `dns_nxdomain_ppm` | 260 | 8 | `u64` |
-| `reserved` | 268 | 4 | `u32` |
+| `reorder_max_delay_ns` | 244 | 8 | `u64` |
+| `reorder_window` | 252 | 8 | `u64` |
+| `dns_delay_ns` | 260 | 8 | `u64` |
+| `dns_timeout_ms` | 268 | 8 | `u64` |
+| `dns_nxdomain_ppm` | 276 | 8 | `u64` |
+| `reserved` | 284 | 4 | `u32` |
 
-Constantes:
+Constants:
 - `FAULTCORE_MAGIC = 0xFACC0DE`
-- `CONFIG_SIZE = 272`
+- `CONFIG_SIZE = 288`
 - `MAX_FDS = 131072`
 - `MAX_TIDS = 65536`
 
-## Consistencia de escritura/lectura
-- Python usa versionado optimista:
-  - marca `version` impar durante escritura;
-  - escribe `magic` + payload;
-  - publica `version` par al finalizar.
-- Rust valida lectura estable con doble lectura de `version` y fences.
+## Write/Read Consistency
+- Python uses optimistic versioning:
+  - marks `version` as odd during write;
+  - writes `magic` + payload;
+  - publishes `version` as even when done.
+- Rust validates stable reads using a double-read of `version` plus fences.
 
-## Regla de compatibilidad
-Todo cambio en offsets/tamaño debe:
-1. actualizar este documento,
-2. actualizar Python y Rust juntos,
-3. mantener tests de contrato en verde.
+## Compatibility Rule
+Any change in offsets/size must:
+1. update this document,
+2. update Python and Rust together,
+3. keep SHM contract tests green.
 
-## Modelo runtime sobre SHM
+## Runtime Model over SHM
 
-El SHM no cambió de layout, pero su consumo runtime sí está consolidado:
+The SHM layout is stable, and runtime consumption is consolidated:
 
-- El engine construye `PacketContext` por operación (`Connect`, `Send`, `Recv`, `DnsLookup`).
-- El pipeline aplica capas en orden OSI fijo `L1..L7`.
-- Todas las decisiones de fault viajan como `LayerDecision` único.
-- El interceptor solo mapea `LayerDecision` a retorno/errno (`syscalls` y `getaddrinfo`).
+- The engine builds `PacketContext` by operation (`Connect`, `Send`, `Recv`, `DnsLookup`).
+- The FaultOSI pipeline applies layers in fixed OSI order `L1..L7`.
+- All fault decisions flow through a single `LayerDecision` enum.
+- The interceptor only maps `LayerDecision` to return values/errno (`syscalls` and `getaddrinfo`).
 
-Esto reduce lógica duplicada entre engine/interceptor y hace verificable el contrato con tests de mapeo.
+This reduces duplicated logic between engine/interceptor and keeps behavior verifiable through mapping tests.

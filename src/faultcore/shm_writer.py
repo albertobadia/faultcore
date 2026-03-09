@@ -6,7 +6,7 @@ import threading
 FAULTCORE_MAGIC = 0xFACC0DE
 MAX_FDS = 131072
 MAX_TIDS = 65536
-CONFIG_SIZE = 272
+CONFIG_SIZE = 288
 
 _OFFSET_MAGIC = 0
 _OFFSET_VERSION = 4
@@ -39,9 +39,11 @@ _OFFSET_HALF_OPEN_ERR_KIND = 212
 _OFFSET_DUP_PROB_PPM = 220
 _OFFSET_DUP_MAX_EXTRA = 228
 _OFFSET_REORDER_PROB_PPM = 236
-_OFFSET_DNS_DELAY_NS = 244
-_OFFSET_DNS_TIMEOUT_MS = 252
-_OFFSET_DNS_NXDOMAIN_PPM = 260
+_OFFSET_REORDER_MAX_DELAY_NS = 244
+_OFFSET_REORDER_WINDOW = 252
+_OFFSET_DNS_DELAY_NS = 260
+_OFFSET_DNS_TIMEOUT_MS = 268
+_OFFSET_DNS_NXDOMAIN_PPM = 276
 
 
 class SHMWriter:
@@ -205,9 +207,18 @@ class SHMWriter:
 
         self._write_versioned(tid, writer)
 
-    def write_packet_reorder(self, tid: int, *, prob_ppm: int) -> None:
+    def write_packet_reorder(
+        self,
+        tid: int,
+        *,
+        prob_ppm: int,
+        max_delay_ns: int = 0,
+        window: int = 1,
+    ) -> None:
         def writer(offset: int) -> None:
             struct.pack_into("<Q", self._mmap, offset + _OFFSET_REORDER_PROB_PPM, prob_ppm)
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_REORDER_MAX_DELAY_NS, max_delay_ns)
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_REORDER_WINDOW, window)
 
         self._write_versioned(tid, writer)
 

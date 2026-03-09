@@ -1,7 +1,7 @@
-use faultcore_network::{ChaosEngine, Direction, LayerDecision};
+use faultcore_network::{Direction, FaultOsiEngine, LayerDecision};
 use libc::{addrinfo, c_char, c_int, c_void, size_t, sockaddr, socklen_t, ssize_t};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
@@ -19,7 +19,7 @@ thread_local! {
 }
 
 lazy_static::lazy_static! {
-    static ref REORDER_PENDING_SENDTO: parking_lot::Mutex<HashMap<c_int, PendingDatagram>> = parking_lot::Mutex::new(HashMap::new());
+    static ref REORDER_PENDING_SENDTO: parking_lot::Mutex<HashMap<c_int, VecDeque<PendingDatagram>>> = parking_lot::Mutex::new(HashMap::new());
 }
 
 struct PendingDatagram {
@@ -27,6 +27,7 @@ struct PendingDatagram {
     flags: c_int,
     addr: Vec<u8>,
     addr_len: socklen_t,
+    staged_at: Instant,
 }
 
 type SendFn = unsafe extern "C" fn(c_int, *const c_void, size_t, c_int) -> ssize_t;
@@ -67,7 +68,7 @@ lazy_static::lazy_static! {
     pub static ref ORIG_RECVFROM: RecvFromFn = unsafe { get_original_fn("recvfrom") };
     pub static ref ORIG_GETADDRINFO: GetAddrInfoFn = unsafe { get_original_fn("getaddrinfo") };
 
-    pub static ref CHAOS_ENGINE: ChaosEngine = ChaosEngine::new();
+    pub static ref CHAOS_ENGINE: FaultOsiEngine = FaultOsiEngine::new();
 }
 
 unsafe fn get_original_fn<T>(name: &str) -> T {
@@ -239,12 +240,12 @@ fn maybe_duplicate_sendto(
 }
 
 fn maybe_stage_reorder_sendto(
-    fd: c_int,
     b: *const c_void,
     l: size_t,
     f: c_int,
     addr: *const sockaddr,
     addr_len: socklen_t,
+    pending: &mut VecDeque<PendingDatagram>,
 ) -> Option<ssize_t> {
     if l == 0 || b.is_null() {
         return None;
@@ -255,16 +256,48 @@ fn maybe_stage_reorder_sendto(
     } else {
         Vec::new()
     };
-    REORDER_PENDING_SENDTO.lock().insert(
-        fd,
-        PendingDatagram {
-            data,
-            flags: f,
-            addr: addr_bytes,
-            addr_len,
-        },
-    );
+    pending.push_back(PendingDatagram {
+        data,
+        flags: f,
+        addr: addr_bytes,
+        addr_len,
+        staged_at: Instant::now(),
+    });
     Some(l as ssize_t)
+}
+
+fn send_pending_datagram(fd: c_int, pkt: &PendingDatagram) {
+    let addr_ptr = if pkt.addr.is_empty() {
+        std::ptr::null()
+    } else {
+        pkt.addr.as_ptr().cast::<sockaddr>()
+    };
+    unsafe {
+        let _ = (ORIG_SENDTO)(
+            fd,
+            pkt.data.as_ptr().cast::<c_void>(),
+            pkt.data.len(),
+            pkt.flags,
+            addr_ptr,
+            pkt.addr_len,
+        );
+    }
+}
+
+fn flush_expired_reorder(fd: c_int, pending: &mut VecDeque<PendingDatagram>, max_delay_ns: u64) {
+    if max_delay_ns == 0 {
+        return;
+    }
+
+    let max_delay = std::time::Duration::from_nanos(max_delay_ns);
+    while pending
+        .front()
+        .is_some_and(|pkt| pkt.staged_at.elapsed() >= max_delay)
+    {
+        if let Some(pkt) = pending.pop_front() {
+            send_pending_datagram(fd, &pkt);
+        }
+    }
 }
 
 lazy_static::lazy_static! {
@@ -447,16 +480,27 @@ pub extern "C" fn sendto(
     }
 
     initialize();
-    let mut pending = REORDER_PENDING_SENDTO.lock().remove(&s);
+    let mut pending = REORDER_PENDING_SENDTO
+        .lock()
+        .remove(&s)
+        .unwrap_or_default();
+    let mut staged_reorder = false;
     let result = if let Some(network_cfg) = network_config_for_fd(s) {
+        flush_expired_reorder(s, &mut pending, network_cfg.reorder_max_delay_ns);
         let decision = CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Uplink);
         if let Some(error) = map_stream_decision_to_result(s, decision.clone()) {
-            if let Some(pkt) = pending.take() {
-                REORDER_PENDING_SENDTO.lock().insert(s, pkt);
-            }
             error
-        } else if matches!(decision, LayerDecision::StageReorder) && pending.is_none() {
-            maybe_stage_reorder_sendto(s, b, l, f, addr, addr_len).unwrap_or(l as ssize_t)
+        } else if matches!(decision, LayerDecision::StageReorder) {
+            staged_reorder = true;
+            let staged = maybe_stage_reorder_sendto(b, l, f, addr, addr_len, &mut pending)
+                .unwrap_or(l as ssize_t);
+            let window = network_cfg.reorder_window.max(1) as usize;
+            while pending.len() > window {
+                if let Some(pkt) = pending.pop_front() {
+                    send_pending_datagram(s, &pkt);
+                }
+            }
+            staged
         } else {
             unsafe { (ORIG_SENDTO)(s, b, l, f, addr, addr_len) }
         }
@@ -466,24 +510,17 @@ pub extern "C" fn sendto(
 
     if result > 0 {
         record_stream_bytes(s, result as u64);
-        maybe_duplicate_sendto(s, b, result, f, addr, addr_len);
-        if let Some(pkt) = pending.take() {
-            let addr_ptr = if pkt.addr.is_empty() {
-                std::ptr::null()
-            } else {
-                pkt.addr.as_ptr().cast::<sockaddr>()
-            };
-            unsafe {
-                let _ = (ORIG_SENDTO)(
-                    s,
-                    pkt.data.as_ptr().cast::<c_void>(),
-                    pkt.data.len(),
-                    pkt.flags,
-                    addr_ptr,
-                    pkt.addr_len,
-                );
-            }
+        if !staged_reorder {
+            maybe_duplicate_sendto(s, b, result, f, addr, addr_len);
         }
+        if !staged_reorder
+            && let Some(pkt) = pending.pop_front()
+        {
+            send_pending_datagram(s, &pkt);
+        }
+    }
+    if !pending.is_empty() {
+        REORDER_PENDING_SENDTO.lock().insert(s, pending);
     }
 
     exit_hook();

@@ -9,6 +9,7 @@ High-performance fault injection and network simulation for Python, backed by Ru
 - network timeouts (`connect_timeout`, `recv_timeout`);
 - bandwidth throttling (`rate_limit`);
 - latency, jitter, packet loss, and burst loss;
+- `FaultOSI`: OSI-pragmatic L1..L7 fault pipeline in `faultcore_network`;
 - transparent socket interception with `LD_PRELOAD` on Linux.
 
 This README is an index. Detailed documentation lives in `docs/`.
