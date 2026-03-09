@@ -19,7 +19,110 @@ _THREAD_POLICY: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "faultcore_thread_policy",
     default=None,
 )
+_METRICS_CONTEXT_BASELINE: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "faultcore_metrics_context_baseline",
+    default=None,
+)
 _POLICY_LOCK = threading.RLock()
+
+_METRICS_FIELDS = (
+    "continue",
+    "delay",
+    "drop",
+    "timeout",
+    "error",
+    "connection_error",
+    "reorder",
+    "duplicate",
+    "nxdomain",
+    "skipped",
+)
+
+
+def _read_fault_metrics_snapshot() -> dict[str, Any] | None:
+    import ctypes
+
+    class LayerMetrics(ctypes.Structure):
+        _fields_ = [
+            ("stage", ctypes.c_uint8),
+            ("reserved", ctypes.c_uint8 * 7),
+            ("continue_count", ctypes.c_uint64),
+            ("delay_count", ctypes.c_uint64),
+            ("drop_count", ctypes.c_uint64),
+            ("timeout_count", ctypes.c_uint64),
+            ("error_count", ctypes.c_uint64),
+            ("connection_error_count", ctypes.c_uint64),
+            ("reorder_count", ctypes.c_uint64),
+            ("duplicate_count", ctypes.c_uint64),
+            ("nxdomain_count", ctypes.c_uint64),
+            ("skipped_count", ctypes.c_uint64),
+        ]
+
+    class MetricsSnapshot(ctypes.Structure):
+        _fields_ = [
+            ("len", ctypes.c_uint64),
+            ("layers", LayerMetrics * 7),
+        ]
+
+    lib = ctypes.CDLL(None)
+    if not hasattr(lib, "faultcore_metrics_snapshot"):
+        return None
+
+    snapshot_fn = lib.faultcore_metrics_snapshot
+    snapshot_fn.argtypes = [ctypes.POINTER(MetricsSnapshot)]
+    snapshot_fn.restype = ctypes.c_bool
+
+    snapshot = MetricsSnapshot()
+    if not snapshot_fn(ctypes.byref(snapshot)):
+        return None
+
+    stage_name = {
+        1: "L1",
+        2: "L2",
+        3: "L3",
+        4: "L4",
+        5: "L5",
+        6: "L6",
+        7: "L7",
+    }
+    layers: list[dict[str, Any]] = []
+    for idx in range(int(snapshot.len)):
+        layer = snapshot.layers[idx]
+        layers.append(
+            {
+                "stage": stage_name.get(int(layer.stage), f"UNKNOWN_{int(layer.stage)}"),
+                "continue": int(layer.continue_count),
+                "delay": int(layer.delay_count),
+                "drop": int(layer.drop_count),
+                "timeout": int(layer.timeout_count),
+                "error": int(layer.error_count),
+                "connection_error": int(layer.connection_error_count),
+                "reorder": int(layer.reorder_count),
+                "duplicate": int(layer.duplicate_count),
+                "nxdomain": int(layer.nxdomain_count),
+                "skipped": int(layer.skipped_count),
+            }
+        )
+
+    totals = {name: sum(item[name] for item in layers) for name in _METRICS_FIELDS}
+    return {"layers": layers, "totals": totals}
+
+
+def _capture_metrics_context() -> contextvars.Token[dict[str, Any] | None] | None:
+    snapshot = _read_fault_metrics_snapshot()
+    if snapshot is None:
+        return None
+    return _METRICS_CONTEXT_BASELINE.set(snapshot)
+
+
+def _restore_metrics_context(token: contextvars.Token[dict[str, Any] | None] | None) -> None:
+    if token is None:
+        return
+    _METRICS_CONTEXT_BASELINE.reset(token)
+
+
+def _get_metrics_context_baseline() -> dict[str, Any] | None:
+    return _METRICS_CONTEXT_BASELINE.get()
 
 
 def _build_direction_profile(
@@ -311,6 +414,7 @@ class FaultWrapper:
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         tid = threading.get_native_id()
         shm = get_shm_writer()
+        metrics_token = _capture_metrics_context()
 
         if self._latency_ms:
             shm.write_latency(tid, self._latency_ms)
@@ -428,18 +532,28 @@ class FaultWrapper:
                 return _run_sync_with_timeout(self._func, timeout_ms, args, kwargs)
             finally:
                 shm.clear(tid)
+                _restore_metrics_context(metrics_token)
 
         result = self._func(*args, **kwargs)
 
         if iscoroutine(result):
+            _restore_metrics_context(metrics_token)
             return self._run_async(result, shm, tid, timeout_ms)
 
         try:
             return result
         finally:
             shm.clear(tid)
+            _restore_metrics_context(metrics_token)
 
-    async def _run_async(self, result: Any, shm: Any, tid: int, timeout_ms: int | None) -> Any:
+    async def _run_async(
+        self,
+        result: Any,
+        shm: Any,
+        tid: int,
+        timeout_ms: int | None,
+    ) -> Any:
+        metrics_token = _capture_metrics_context()
         try:
             if timeout_ms and timeout_ms > 0:
                 try:
@@ -449,6 +563,7 @@ class FaultWrapper:
             return await result
         finally:
             shm.clear(tid)
+            _restore_metrics_context(metrics_token)
 
     def __repr__(self):
         return (

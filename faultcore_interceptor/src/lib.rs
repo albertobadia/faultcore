@@ -2,11 +2,11 @@ use faultcore_network::{
     Direction, LayerDecision, PendingDatagram,
     apply_connect_directive, apply_stream_directive, bind_fd_to_current_thread, clear_fd_binding,
     global_fault_osi_engine, global_interceptor_runtime,
-    init_runtime_shm, runtime_config_for_addr_or_fd, runtime_config_for_fd,
+    init_runtime_shm, reset_global_fault_osi_metrics, runtime_config_for_addr_or_fd, runtime_config_for_fd,
     runtime_dns_config_for_current_thread, set_errno_value, snapshot_recv_datagram,
     snapshot_recvfrom_datagram, stage_reorder_send, stage_reorder_sendto, try_handle_setpriority,
     uplink_duplicate_count_for_addr_or_fd, uplink_duplicate_count_for_fd,
-    write_pending_recv_result, write_pending_recvfrom_result,
+    write_pending_recv_result, write_pending_recvfrom_result, FaultOsiMetricsSnapshot,
 };
 use libc::{addrinfo, c_char, c_int, c_void, size_t, sockaddr, socklen_t, ssize_t};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -537,6 +537,25 @@ pub extern "C" fn faultcore_interceptor_is_active() -> bool {
     true
 }
 
+#[unsafe(no_mangle)]
+/// # Safety
+/// `out` must be a valid writable pointer to `FaultOsiMetricsSnapshot`.
+pub unsafe extern "C" fn faultcore_metrics_snapshot(out: *mut FaultOsiMetricsSnapshot) -> bool {
+    if out.is_null() {
+        return false;
+    }
+    let snapshot = faultcore_network::global_fault_osi_metrics_snapshot();
+    unsafe {
+        std::ptr::write(out, snapshot);
+    }
+    true
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn faultcore_metrics_reset() {
+    reset_global_fault_osi_metrics();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -604,5 +623,11 @@ mod tests {
             Some(libc::EAI_FAIL)
         );
         assert_eq!(global_interceptor_runtime().map_dns_decision_to_eai(&LayerDecision::DelayNs(1)), None);
+    }
+
+    #[test]
+    fn metrics_snapshot_null_pointer_returns_false() {
+        let ok = unsafe { faultcore_metrics_snapshot(std::ptr::null_mut()) };
+        assert!(!ok);
     }
 }

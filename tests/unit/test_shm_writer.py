@@ -322,3 +322,8 @@ class TestExports:
         from faultcore import is_interceptor_loaded
 
         assert callable(is_interceptor_loaded)
+
+    def test_get_fault_metrics_is_exported(self):
+        from faultcore import get_fault_metrics
+
+        assert callable(get_fault_metrics)

@@ -975,6 +975,104 @@ class TestPolicyRegistry:
                 )
                 mock_shm.clear.assert_called_once_with(905)
 
+    def test_register_policy_with_multiple_targets_keeps_stable_order_on_priority_tie(self):
+        faultcore.register_policy(
+            "multi_target_tie_policy",
+            latency_ms=10,
+            targets=[
+                {"target": "tcp://10.1.2.3:443", "priority": 100},
+                {"target": "tcp://10.1.2.4:443", "priority": 100},
+            ],
+        )
+
+        mock_shm = MagicMock()
+        mock_shm.write_latency = MagicMock()
+        mock_shm.write_targets = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=906):
+
+                @faultcore.apply_policy("multi_target_tie_policy")
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_latency.assert_called_once_with(906, 10)
+                mock_shm.write_targets.assert_called_once_with(
+                    906,
+                    [
+                        {
+                            "enabled": 1,
+                            "kind": 1,
+                            "ipv4": 167838211,
+                            "prefix_len": 32,
+                            "port": 443,
+                            "protocol": 1,
+                            "priority": 100,
+                        },
+                        {
+                            "enabled": 1,
+                            "kind": 1,
+                            "ipv4": 167838212,
+                            "prefix_len": 32,
+                            "port": 443,
+                            "protocol": 1,
+                            "priority": 100,
+                        },
+                    ],
+                )
+                mock_shm.clear.assert_called_once_with(906)
+
+    def test_register_policy_with_multiple_targets_mixed_entries_and_default_priority(self):
+        faultcore.register_policy(
+            "multi_target_mixed_policy",
+            latency_ms=10,
+            targets=[
+                "10.0.0.0/8",
+                {"target": "tcp://10.1.2.3:443", "priority": 200},
+            ],
+        )
+
+        mock_shm = MagicMock()
+        mock_shm.write_latency = MagicMock()
+        mock_shm.write_targets = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=907):
+
+                @faultcore.apply_policy("multi_target_mixed_policy")
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_latency.assert_called_once_with(907, 10)
+                mock_shm.write_targets.assert_called_once_with(
+                    907,
+                    [
+                        {
+                            "enabled": 1,
+                            "kind": 1,
+                            "ipv4": 167838211,
+                            "prefix_len": 32,
+                            "port": 443,
+                            "protocol": 1,
+                            "priority": 200,
+                        },
+                        {
+                            "enabled": 1,
+                            "kind": 2,
+                            "ipv4": 167772160,
+                            "prefix_len": 8,
+                            "port": 0,
+                            "protocol": 0,
+                            "priority": 100,
+                        },
+                    ],
+                )
+                mock_shm.clear.assert_called_once_with(907)
+
     def test_register_policy_with_schedule(self):
         faultcore.register_policy(
             "scheduled",

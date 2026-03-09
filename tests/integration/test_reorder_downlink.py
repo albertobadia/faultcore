@@ -61,6 +61,21 @@ def start_udp_push_sender(host: str, client_port: int) -> threading.Thread:
     return thread
 
 
+def start_udp_sequence_sender(host: str, client_port: int, count: int) -> threading.Thread:
+    def run() -> None:
+        sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            time.sleep(0.05)
+            for i in range(count):
+                sender.sendto(f"{i:08d}".encode(), (host, client_port))
+        finally:
+            sender.close()
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return thread
+
+
 @faultcore.packet_reorder(prob="100%", max_delay_ms=100, window=2)
 def recv_two_tcp(sock: socket.socket) -> tuple[bytes, bytes]:
     return sock.recv(8), sock.recv(8)
@@ -71,6 +86,15 @@ def recv_two_udp(sock: socket.socket) -> tuple[bytes, bytes]:
     first, _ = sock.recvfrom(64)
     second, _ = sock.recvfrom(64)
     return first, second
+
+
+@faultcore.packet_reorder(prob="100%", max_delay_ms=100, window=2)
+def recv_many_udp(sock: socket.socket, count: int) -> list[bytes]:
+    out: list[bytes] = []
+    for _ in range(count):
+        data, _ = sock.recvfrom(64)
+        out.append(data)
+    return out
 
 
 def run_tcp_case(host: str) -> None:
@@ -104,11 +128,39 @@ def run_udp_case(host: str) -> None:
         raise RuntimeError("udp recvfrom reorder failed: expected swapped order")
 
 
+def run_udp_stress_case(host: str, count: int) -> None:
+    if count < 2 or (count % 2) != 0:
+        raise ValueError("count must be an even integer >= 2")
+    client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    client.bind((host, 0))
+    client.settimeout(None)
+    try:
+        client_port = client.getsockname()[1]
+        _ = start_udp_sequence_sender(host, client_port, count)
+        out = recv_many_udp(client, count)
+    finally:
+        client.close()
+
+    if len(out) != count:
+        raise RuntimeError(f"udp stress recv mismatch: expected {count}, got {len(out)}")
+
+    for i in range(0, count, 2):
+        expected_a = f"{i + 1:08d}".encode()
+        expected_b = f"{i:08d}".encode()
+        if out[i] != expected_a or out[i + 1] != expected_b:
+            raise RuntimeError(
+                "udp stress reorder failed at pair "
+                f"{i}//{i + 1}: got {out[i]!r},{out[i + 1]!r} expected {expected_a!r},{expected_b!r}"
+            )
+    print(f"udp stress reorder: PASS (count={count})")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="FaultCore downlink reorder integration probe")
     parser.add_argument("--host", default="127.0.0.1", help="bind host for local test servers")
     parser.add_argument("--port", type=int, default=9000, help="unused, kept for integration runner compatibility")
-    parser.add_argument("--mode", choices=["tcp", "udp", "all"], default="all")
+    parser.add_argument("--mode", choices=["tcp", "udp", "stress", "all"], default="all")
+    parser.add_argument("--count", type=int, default=100, help="packet count for stress mode (must be even)")
     args = parser.parse_args()
 
     print(f"[{datetime.now().isoformat()}] reorder downlink integration mode={args.mode} host={args.host}")
@@ -120,6 +172,8 @@ def main() -> int:
             run_tcp_case(args.host)
         if args.mode in {"udp", "all"}:
             run_udp_case(args.host)
+        if args.mode in {"stress", "all"}:
+            run_udp_stress_case(args.host, args.count)
     except Exception as exc:  # noqa: BLE001
         print(f"ERROR: {exc}")
         return 1

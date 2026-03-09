@@ -425,3 +425,65 @@ fn err_kind_to_errno(kind: u64) -> i32 {
         _ => EIO,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pkt(data: &[u8]) -> PendingDatagram {
+        PendingDatagram::new(data.to_vec(), 0, Vec::new(), 0)
+    }
+
+    #[test]
+    fn enforce_reorder_window_flushes_oldest_over_limit() {
+        let runtime = InterceptorRuntime::new();
+        let mut pending = VecDeque::from([pkt(b"a"), pkt(b"b"), pkt(b"c")]);
+
+        let flushed = runtime.enforce_reorder_window(&mut pending, 2);
+
+        assert_eq!(flushed.len(), 1);
+        assert_eq!(flushed[0].data.as_ref(), b"a");
+        assert_eq!(pending.len(), 2);
+        assert_eq!(pending[0].data.as_ref(), b"b");
+        assert_eq!(pending[1].data.as_ref(), b"c");
+    }
+
+    #[test]
+    fn enforce_reorder_window_uses_minimum_one_when_zero() {
+        let runtime = InterceptorRuntime::new();
+        let mut pending = VecDeque::from([pkt(b"a"), pkt(b"b")]);
+
+        let flushed = runtime.enforce_reorder_window(&mut pending, 0);
+
+        assert_eq!(flushed.len(), 1);
+        assert_eq!(flushed[0].data.as_ref(), b"a");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].data.as_ref(), b"b");
+    }
+
+    #[test]
+    fn pop_reorder_after_success_only_pops_when_not_staged() {
+        let runtime = InterceptorRuntime::new();
+        let mut pending = VecDeque::from([pkt(b"a"), pkt(b"b")]);
+
+        assert!(runtime.pop_reorder_after_success(&mut pending, true).is_none());
+        assert_eq!(pending.len(), 2);
+
+        let popped = runtime.pop_reorder_after_success(&mut pending, false);
+        assert!(popped.is_some());
+        assert_eq!(popped.expect("popped").data.as_ref(), b"a");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].data.as_ref(), b"b");
+    }
+
+    #[test]
+    fn flush_expired_reorder_zero_delay_is_noop() {
+        let runtime = InterceptorRuntime::new();
+        let mut pending = VecDeque::from([pkt(b"a"), pkt(b"b")]);
+
+        let flushed = runtime.flush_expired_reorder(&mut pending, 0);
+
+        assert!(flushed.is_empty());
+        assert_eq!(pending.len(), 2);
+    }
+}

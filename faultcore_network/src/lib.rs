@@ -43,6 +43,7 @@ pub use layers::{
 
 static GLOBAL_ENGINE: OnceLock<ChaosEngine> = OnceLock::new();
 static GLOBAL_RUNTIME: OnceLock<InterceptorRuntime> = OnceLock::new();
+const FAULT_OSI_LAYER_COUNT: usize = 7;
 
 pub fn global_fault_osi_engine() -> &'static FaultOsiEngine {
     GLOBAL_ENGINE.get_or_init(ChaosEngine::new)
@@ -50,6 +51,80 @@ pub fn global_fault_osi_engine() -> &'static FaultOsiEngine {
 
 pub fn global_interceptor_runtime() -> &'static InterceptorRuntime {
     GLOBAL_RUNTIME.get_or_init(InterceptorRuntime::new)
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FaultOsiLayerMetricsSnapshot {
+    pub stage: u8,
+    pub reserved: [u8; 7],
+    pub continue_count: u64,
+    pub delay_count: u64,
+    pub drop_count: u64,
+    pub timeout_count: u64,
+    pub error_count: u64,
+    pub connection_error_count: u64,
+    pub reorder_count: u64,
+    pub duplicate_count: u64,
+    pub nxdomain_count: u64,
+    pub skipped_count: u64,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct FaultOsiMetricsSnapshot {
+    pub len: u64,
+    pub layers: [FaultOsiLayerMetricsSnapshot; FAULT_OSI_LAYER_COUNT],
+}
+
+impl Default for FaultOsiMetricsSnapshot {
+    fn default() -> Self {
+        Self {
+            len: 0,
+            layers: [FaultOsiLayerMetricsSnapshot::default(); FAULT_OSI_LAYER_COUNT],
+        }
+    }
+}
+
+fn stage_code(stage: LayerStage) -> u8 {
+    match stage {
+        LayerStage::L1 => 1,
+        LayerStage::L2 => 2,
+        LayerStage::L3 => 3,
+        LayerStage::L4 => 4,
+        LayerStage::L5 => 5,
+        LayerStage::L6 => 6,
+        LayerStage::L7 => 7,
+    }
+}
+
+pub fn global_fault_osi_metrics_snapshot() -> FaultOsiMetricsSnapshot {
+    let raw = global_fault_osi_engine().metrics_snapshot();
+    let mut out = FaultOsiMetricsSnapshot {
+        len: raw.len() as u64,
+        ..Default::default()
+    };
+    for (idx, (stage, counters)) in raw.iter().enumerate() {
+        out.layers[idx] = FaultOsiLayerMetricsSnapshot {
+            stage: stage_code(*stage),
+            reserved: [0; 7],
+            continue_count: counters.continue_count,
+            delay_count: counters.delay_count,
+            drop_count: counters.drop_count,
+            timeout_count: counters.timeout_count,
+            error_count: counters.error_count,
+            connection_error_count: counters.connection_error_count,
+            reorder_count: counters.reorder_count,
+            duplicate_count: counters.duplicate_count,
+            nxdomain_count: counters.nxdomain_count,
+            skipped_count: counters.skipped_count,
+        };
+    }
+    out
+}
+
+pub fn reset_global_fault_osi_metrics() {
+    global_fault_osi_engine().reset_metrics();
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -381,4 +456,17 @@ impl Config {
 
 fn scale_u64(value: u64, factor: f64) -> u64 {
     ((value as f64) * factor).round() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metrics_snapshot_contract_is_stable() {
+        let snapshot = global_fault_osi_metrics_snapshot();
+        assert_eq!(snapshot.len, 7);
+        assert_eq!(snapshot.layers[0].stage, 1);
+        assert_eq!(snapshot.layers[6].stage, 7);
+    }
 }
