@@ -128,6 +128,20 @@ fn maybe_stage_reorder_sendto(
     Some(l as ssize_t)
 }
 
+fn maybe_stage_reorder_send(
+    b: *const c_void,
+    l: size_t,
+    f: c_int,
+    pending: &mut std::collections::VecDeque<PendingDatagram>,
+) -> Option<ssize_t> {
+    if l == 0 || b.is_null() {
+        return None;
+    }
+    let data = unsafe { std::slice::from_raw_parts(b.cast::<u8>(), l).to_vec() };
+    INTERCEPTOR_RUNTIME.stage_reorder_datagram(pending, data, f, Vec::new(), 0);
+    Some(l as ssize_t)
+}
+
 fn send_pending_datagram(fd: c_int, pkt: &PendingDatagram) {
     let addr_ptr = if pkt.addr.is_empty() {
         std::ptr::null()
@@ -236,13 +250,28 @@ pub extern "C" fn send(s: c_int, b: *const c_void, l: size_t, f: c_int) -> ssize
     }
 
     initialize();
+    let mut pending = INTERCEPTOR_RUNTIME.take_reorder_pending(s);
+    let mut staged_reorder = false;
     let mut faults_applied = false;
     let result = if let Some(network_cfg) = runtime_config_for_fd(s) {
         faults_applied = true;
+        for pkt in INTERCEPTOR_RUNTIME.flush_expired_reorder(&mut pending, network_cfg.reorder_max_delay_ns) {
+            send_pending_datagram(s, &pkt);
+        }
         let decision = CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Uplink);
-        let directive = INTERCEPTOR_RUNTIME.map_stream_decision(s, decision, is_non_blocking(s));
+        let directive = INTERCEPTOR_RUNTIME.map_stream_decision(s, decision.clone(), is_non_blocking(s));
         if let Some(error) = apply_stream_directive(directive) {
             error as ssize_t
+        } else if matches!(decision, LayerDecision::StageReorder) {
+            staged_reorder = true;
+            let staged = maybe_stage_reorder_send(b, l, f, &mut pending).unwrap_or(l as ssize_t);
+            for pkt in INTERCEPTOR_RUNTIME.enforce_reorder_window(
+                &mut pending,
+                network_cfg.reorder_window as usize,
+            ) {
+                send_pending_datagram(s, &pkt);
+            }
+            staged
         } else {
             unsafe { (ORIG_SEND)(s, b, l, f) }
         }
@@ -252,10 +281,16 @@ pub extern "C" fn send(s: c_int, b: *const c_void, l: size_t, f: c_int) -> ssize
 
     if result > 0 {
         record_stream_bytes(s, result as u64);
-        if faults_applied {
+        if faults_applied && !staged_reorder {
             maybe_duplicate_send(s, b, result, f);
         }
+        if faults_applied
+            && let Some(pkt) = INTERCEPTOR_RUNTIME.pop_reorder_after_success(&mut pending, staged_reorder)
+        {
+            send_pending_datagram(s, &pkt);
+        }
     }
+    INTERCEPTOR_RUNTIME.put_reorder_pending(s, pending);
 
     exit_hook();
     result

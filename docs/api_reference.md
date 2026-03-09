@@ -124,7 +124,7 @@ Optional keyword fields:
 
 ### `packet_reorder(...)`
 
-Inject packet reordering (MVP on `sendto` path).
+Inject packet reordering on send paths (`send` and `sendto`).
 
 Optional keyword fields:
 - `prob`: reorder probability (same formats as `packet_loss(...)`, default `"100%"`)
