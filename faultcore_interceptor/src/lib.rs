@@ -200,6 +200,19 @@ unsafe fn write_pending_recvfrom_result(
 }
 
 /// # Safety
+/// `b` must point to a writable buffer of `l` bytes.
+unsafe fn write_pending_recv_result(pkt: &PendingDatagram, b: *mut c_void, l: size_t) -> ssize_t {
+    if b.is_null() || l == 0 {
+        return 0;
+    }
+    let to_copy = usize::min(l, pkt.data.len());
+    unsafe {
+        std::ptr::copy_nonoverlapping(pkt.data.as_ptr(), b.cast::<u8>(), to_copy);
+    }
+    to_copy as ssize_t
+}
+
+/// # Safety
 /// `b` must point to a readable buffer with at least `recv_len` bytes.
 /// `addr`/`addr_len` must be null together or a valid readable socket address pair.
 unsafe fn snapshot_recvfrom_datagram(
@@ -225,6 +238,20 @@ unsafe fn snapshot_recvfrom_datagram(
         (Vec::new(), 0)
     };
     Some(PendingDatagram::new(data, flags, addr_bytes, len_u32))
+}
+
+/// # Safety
+/// `b` must point to a readable buffer with at least `recv_len` bytes.
+unsafe fn snapshot_recv_datagram(
+    b: *mut c_void,
+    recv_len: ssize_t,
+    flags: c_int,
+) -> Option<PendingDatagram> {
+    if recv_len <= 0 || b.is_null() {
+        return None;
+    }
+    let data = unsafe { std::slice::from_raw_parts(b.cast::<u8>(), recv_len as usize).to_vec() };
+    Some(PendingDatagram::new(data, flags, Vec::new(), 0))
 }
 
 lazy_static::lazy_static! {
@@ -364,20 +391,44 @@ pub extern "C" fn send(s: c_int, b: *const c_void, l: size_t, f: c_int) -> ssize
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn recv(s: c_int, b: *mut c_void, l: size_t, f: c_int) -> ssize_t {
+/// # Safety
+/// `b` must point to a writable buffer of `l` bytes.
+pub unsafe extern "C" fn recv(s: c_int, b: *mut c_void, l: size_t, f: c_int) -> ssize_t {
     if !enter_hook() {
         return unsafe { (ORIG_RECV)(s, b, l, f) };
     }
 
     initialize();
+    let non_blocking = is_non_blocking(s);
+    let mut pending = INTERCEPTOR_RUNTIME.take_reorder_pending_recv(s);
     let result = if let Some(network_cfg) = runtime_config_for_fd(s) {
+        if non_blocking
+            && let Some(pkt) = pending.pop_front()
+        {
+            let out = unsafe { write_pending_recv_result(&pkt, b, l) };
+            INTERCEPTOR_RUNTIME.put_reorder_pending_recv(s, pending);
+            exit_hook();
+            return out;
+        }
+
         let decision =
             CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Downlink);
-        let directive = INTERCEPTOR_RUNTIME.map_stream_decision(s, decision, is_non_blocking(s));
+        let directive = INTERCEPTOR_RUNTIME.map_stream_decision(s, decision.clone(), non_blocking);
         if let Some(error) = apply_stream_directive(directive) {
             error as ssize_t
         } else {
-            unsafe { (ORIG_RECV)(s, b, l, f) }
+            let recv_result = unsafe { (ORIG_RECV)(s, b, l, f) };
+            if non_blocking
+                && matches!(decision, LayerDecision::StageReorder)
+                && recv_result > 0
+                && let Some(pkt) = unsafe { snapshot_recv_datagram(b, recv_result, f) }
+            {
+                pending.push_back(pkt);
+                set_errno(libc::EAGAIN);
+                -1
+            } else {
+                recv_result
+            }
         }
     } else {
         unsafe { (ORIG_RECV)(s, b, l, f) }
@@ -386,6 +437,7 @@ pub extern "C" fn recv(s: c_int, b: *mut c_void, l: size_t, f: c_int) -> ssize_t
     if result > 0 {
         record_stream_bytes(s, result as u64);
     }
+    INTERCEPTOR_RUNTIME.put_reorder_pending_recv(s, pending);
 
     exit_hook();
     result

@@ -124,13 +124,13 @@ Optional keyword fields:
 
 ### `packet_reorder(...)`
 
-Inject packet reordering on send paths (`send` and `sendto`).
+Inject packet reordering on stream paths.
 
 Current support matrix:
 - `send`: supported (staging + window/flush behavior)
 - `sendto`: supported (staging + window/flush behavior)
-- `recv`: not supported
-- `recvfrom`: not supported
+- `recv`: partially supported (non-blocking staging/replay with `EAGAIN`)
+- `recvfrom`: partially supported (non-blocking staging/replay with `EAGAIN`)
 
 Optional keyword fields:
 - `prob`: reorder probability (same formats as `packet_loss(...)`, default `"100%"`)

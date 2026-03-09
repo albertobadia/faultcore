@@ -73,8 +73,8 @@ This document describes the current `faultcore` architecture after the FaultOSI 
 
 - `send`: supported (`LayerDecision::StageReorder` + per-FD staging queue)
 - `sendto`: supported (`LayerDecision::StageReorder` + per-FD staging queue)
-- `recv`: not supported
-- `recvfrom`: not supported
+- `recv`: partially supported in non-blocking sockets (staging + replay on next call)
+- `recvfrom`: partially supported in non-blocking sockets (staging + replay on next call)
 
 ## Ownership Boundaries
 
