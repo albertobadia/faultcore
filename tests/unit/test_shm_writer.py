@@ -1,7 +1,10 @@
 import os
+import struct
+import uuid
 
 from faultcore.shm_writer import (
     CONFIG_SIZE,
+    FAULTCORE_MAGIC,
     MAX_FDS,
     MAX_TIDS,
     SHMWriter,
@@ -33,6 +36,29 @@ class TestSHMWriterGracefulDegradation:
         writer = SHMWriter()
         writer.write_latency(1234, 100)
         assert writer._mmap is None
+
+    def test_clear_resets_previous_fields_before_next_write(self):
+        name = f"faultcore_test_{uuid.uuid4().hex}"
+        fd = create_test_shm(name)
+        os.close(fd)
+        writer = SHMWriter(name)
+        tid = 4242
+        packet_loss_offset = 28
+
+        try:
+            writer.write_packet_loss(tid, 123_456)
+            writer.clear(tid)
+            writer.write_latency(tid, 5)
+
+            offset = writer._get_offset(tid)
+            magic = struct.unpack_from("<I", writer._mmap, offset)[0]
+            packet_loss_ppm = struct.unpack_from("<Q", writer._mmap, offset + packet_loss_offset)[0]
+
+            assert magic == FAULTCORE_MAGIC
+            assert packet_loss_ppm == 0
+        finally:
+            writer.close()
+            cleanup_test_shm(name)
 
 
 class TestDecoratorIntegration:

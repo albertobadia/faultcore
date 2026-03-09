@@ -303,7 +303,10 @@ class SHMWriter:
         offset = self._get_offset(tid)
 
         with self._lock:
-            struct.pack_into("<I", self._mmap, offset + _OFFSET_MAGIC, 0)
+            version = struct.unpack_from("<Q", self._mmap, offset + _OFFSET_VERSION)[0]
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_VERSION, version | 1)
+            self._mmap[offset : offset + CONFIG_SIZE] = b"\x00" * CONFIG_SIZE
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_VERSION, (version + 2) & ~1)
 
     def close(self) -> None:
         if self._mmap:

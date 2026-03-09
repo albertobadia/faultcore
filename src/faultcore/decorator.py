@@ -1,4 +1,5 @@
 import asyncio
+import contextvars
 import functools
 import ipaddress
 import json
@@ -14,7 +15,10 @@ from typing import Any
 from faultcore.shm_writer import get_shm_writer
 
 _POLICY_REGISTRY: dict[str, dict[str, Any]] = {}
-_THREAD_POLICY = threading.local()
+_THREAD_POLICY: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "faultcore_thread_policy",
+    default=None,
+)
 _POLICY_LOCK = threading.RLock()
 
 
@@ -1060,11 +1064,11 @@ def load_policies(path: str | Path) -> int:
 
 
 def set_thread_policy(policy_name: str | None) -> None:
-    _THREAD_POLICY.name = policy_name
+    _THREAD_POLICY.set(policy_name)
 
 
 def get_thread_policy() -> str | None:
-    return getattr(_THREAD_POLICY, "name", None)
+    return _THREAD_POLICY.get()
 
 
 def _run_sync_with_timeout(
@@ -1088,9 +1092,21 @@ def _run_sync_with_timeout(
             signal.setitimer(signal.ITIMER_REAL, *previous_timer)
             signal.signal(signal.SIGALRM, previous_handler)
 
-    started = time.perf_counter()
-    result = func(*args, **kwargs)
-    elapsed_ms = (time.perf_counter() - started) * 1000
-    if elapsed_ms > timeout_ms:
+    outcome: dict[str, Any] = {}
+    completed = threading.Event()
+
+    def run_target() -> None:
+        try:
+            outcome["result"] = func(*args, **kwargs)
+        except BaseException as exc:  # noqa: BLE001
+            outcome["error"] = exc
+        finally:
+            completed.set()
+
+    worker = threading.Thread(target=run_target, daemon=True)
+    worker.start()
+    if not completed.wait(timeout_ms / 1000):
         raise TimeoutError(f"Function execution exceeded {timeout_ms}ms")
-    return result
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome.get("result")

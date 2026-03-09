@@ -1141,6 +1141,32 @@ class TestTimeoutContract:
         with pytest.raises(TimeoutError):
             slow_operation()
 
+    def test_timeout_in_worker_thread_enforces_deadline_without_waiting_full_runtime(self):
+        @faultcore.timeout(5)
+        def slow_operation():
+            time.sleep(0.05)
+            return "done"
+
+        outcome: dict[str, object] = {}
+
+        def worker() -> None:
+            started = time.perf_counter()
+            try:
+                slow_operation()
+                outcome["raised"] = False
+            except TimeoutError:
+                outcome["raised"] = True
+            finally:
+                outcome["elapsed_ms"] = (time.perf_counter() - started) * 1000
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        thread.join(timeout=1)
+
+        assert thread.is_alive() is False
+        assert outcome["raised"] is True
+        assert float(outcome["elapsed_ms"]) < 30
+
 
 class TestTimeoutShmLifecycle:
     def test_sync_timeout_clears_shm_on_timeout_error(self):
@@ -1221,3 +1247,27 @@ class TestAsyncShmLifecycle:
                     assert result == "ok"
                 mock_shm.write_timeouts.assert_called_once_with(321, 100, 100)
                 mock_shm.clear.assert_called_once_with(321)
+
+    async def test_async_fault_context_is_isolated_per_task(self):
+        from faultcore.decorator import get_thread_policy
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+        observed: list[str | None] = []
+
+        async def holder() -> None:
+            async with faultcore.fault_context("inner"):
+                started.set()
+                await release.wait()
+
+        async def observer() -> None:
+            await started.wait()
+            observed.append(get_thread_policy())
+            release.set()
+
+        faultcore.set_thread_policy("outer")
+        try:
+            await asyncio.gather(holder(), observer())
+            assert observed == ["outer"]
+        finally:
+            faultcore.set_thread_policy(None)
