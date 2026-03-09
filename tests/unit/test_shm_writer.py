@@ -3,18 +3,15 @@ import struct
 import uuid
 
 from faultcore.shm_writer import (
-    CONFIG_SIZE,
     FAULTCORE_MAGIC,
-    MAX_FDS,
-    MAX_TIDS,
+    SHM_SIZE,
     SHMWriter,
 )
 
 
 def create_test_shm(name: str) -> int:
     fd = os.open(f"/dev/shm/{name}", os.O_CREAT | os.O_RDWR, mode=0o666)
-    size = (MAX_FDS + MAX_TIDS) * CONFIG_SIZE
-    os.ftruncate(fd, size)
+    os.ftruncate(fd, SHM_SIZE)
     return fd
 
 

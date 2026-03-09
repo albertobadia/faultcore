@@ -24,11 +24,11 @@ pub use setpriority_compat::{
 };
 pub use shm_runtime::{
     assign_rule_to_fd, clear_rule_for_fd, get_config_for_fd, get_config_for_tid, get_thread_id, is_shm_open,
-    try_open_shm, update_config_for_tid,
+    try_open_shm, update_config_for_tid, get_target_rules_for_tid_slot, get_tid_slot_for_fd,
 };
 pub use shm_contract::{
     FAULTCORE_MAGIC, FAULTCORE_SHM_SIZE, FaultcoreConfig, MAX_BANDWIDTH_BPS, MAX_FDS, MAX_LATENCY_NS,
-    MAX_POLICIES, MAX_TIDS, PolicyState,
+    MAX_POLICIES, MAX_TARGET_RULES_PER_TID, MAX_TIDS, PolicyState, TargetRule,
 };
 pub use socket_runtime::{endpoint_for_addr_or_fd, endpoint_for_fd, monotonic_now_ns};
 pub use layers::{

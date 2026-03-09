@@ -926,6 +926,55 @@ class TestPolicyRegistry:
                 )
                 mock_shm.clear.assert_called_once_with(895)
 
+    def test_register_policy_with_multiple_targets(self):
+        faultcore.register_policy(
+            "multi_target_policy",
+            latency_ms=10,
+            targets=[
+                {"target": "udp://10.0.0.0/8", "port": 53, "priority": 10},
+                {"target": "tcp://10.1.2.3:443", "priority": 200},
+            ],
+        )
+
+        mock_shm = MagicMock()
+        mock_shm.write_latency = MagicMock()
+        mock_shm.write_targets = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=905):
+
+                @faultcore.apply_policy("multi_target_policy")
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_latency.assert_called_once_with(905, 10)
+                mock_shm.write_targets.assert_called_once_with(
+                    905,
+                    [
+                        {
+                            "enabled": 1,
+                            "kind": 1,
+                            "ipv4": 167838211,
+                            "prefix_len": 32,
+                            "port": 443,
+                            "protocol": 1,
+                            "priority": 200,
+                        },
+                        {
+                            "enabled": 1,
+                            "kind": 2,
+                            "ipv4": 167772160,
+                            "prefix_len": 8,
+                            "port": 53,
+                            "protocol": 2,
+                            "priority": 10,
+                        },
+                    ],
+                )
+                mock_shm.clear.assert_called_once_with(905)
+
     def test_register_policy_with_schedule(self):
         faultcore.register_policy(
             "scheduled",
@@ -997,6 +1046,10 @@ class TestPolicyRegistry:
             faultcore.register_policy("bad17", target="tcp://bad_host:80")
         with pytest.raises(ValueError):
             faultcore.register_policy("bad18", schedule="invalid")
+        with pytest.raises(ValueError):
+            faultcore.register_policy("bad19", target="tcp://10.1.2.3:443", targets=["10.0.0.1:80"])
+        with pytest.raises(ValueError):
+            faultcore.register_policy("bad20", targets="invalid")
 
     def test_registry_introspection_and_unregister(self):
         clear_policies()

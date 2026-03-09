@@ -1,5 +1,8 @@
 use libc::{MAP_SHARED, O_RDWR, PROT_READ, PROT_WRITE, c_int, ftruncate, mmap, shm_open};
-use crate::{FAULTCORE_MAGIC, FAULTCORE_SHM_SIZE, FaultcoreConfig, MAX_FDS, MAX_TIDS};
+use crate::{
+    FAULTCORE_MAGIC, FAULTCORE_SHM_SIZE, FaultcoreConfig, MAX_FDS, MAX_POLICIES,
+    MAX_TARGET_RULES_PER_TID, MAX_TIDS, PolicyState, TargetRule,
+};
 use parking_lot::RwLock;
 use std::ptr;
 use std::sync::atomic::{AtomicU64, Ordering, fence};
@@ -10,6 +13,21 @@ pub fn get_thread_id() -> u64 {
 
 static SHM_POINTER: RwLock<usize> = RwLock::new(0);
 static SHM_OPEN: AtomicU64 = AtomicU64::new(0);
+const INVALID_TID_SLOT: u64 = u64::MAX;
+
+const CONFIG_REGION_SIZE: usize = (MAX_FDS + MAX_TIDS) * core::mem::size_of::<FaultcoreConfig>();
+const POLICY_REGION_OFFSET: usize = CONFIG_REGION_SIZE;
+const POLICY_REGION_SIZE: usize = MAX_POLICIES * core::mem::size_of::<PolicyState>();
+const TARGET_RULES_REGION_OFFSET: usize = POLICY_REGION_OFFSET + POLICY_REGION_SIZE;
+const TARGET_RULES_REGION_SIZE: usize =
+    MAX_TIDS * MAX_TARGET_RULES_PER_TID * core::mem::size_of::<TargetRule>();
+const FD_OWNER_REGION_OFFSET: usize = TARGET_RULES_REGION_OFFSET + TARGET_RULES_REGION_SIZE;
+
+#[inline]
+fn tid_slot(tid: usize) -> usize {
+    let hash = (tid ^ (tid >> 16)).wrapping_mul(0x45d9f3b) ^ (tid >> 16);
+    hash % MAX_TIDS
+}
 
 fn check_enabled() -> bool {
     !matches!(
@@ -82,8 +100,7 @@ pub(crate) unsafe fn get_config_ptr(
     unsafe {
         let array = ptr_val as *mut FaultcoreConfig;
         let idx = if is_tid {
-            let hash = (tid_or_fd ^ (tid_or_fd >> 16)).wrapping_mul(0x45d9f3b) ^ (tid_or_fd >> 16);
-            MAX_FDS + (hash % MAX_TIDS)
+            MAX_FDS + tid_slot(tid_or_fd)
         } else {
             if tid_or_fd >= MAX_FDS {
                 return None;
@@ -92,6 +109,57 @@ pub(crate) unsafe fn get_config_ptr(
         };
         let ptr = array.add(idx);
         Some(ptr)
+    }
+}
+
+unsafe fn get_target_rules_base_ptr() -> Option<*mut TargetRule> {
+    let ptr_val = *SHM_POINTER.read();
+    if ptr_val == 0 {
+        return None;
+    }
+    Some((ptr_val + TARGET_RULES_REGION_OFFSET) as *mut TargetRule)
+}
+
+unsafe fn get_fd_owner_base_ptr() -> Option<*mut u64> {
+    let ptr_val = *SHM_POINTER.read();
+    if ptr_val == 0 {
+        return None;
+    }
+    Some((ptr_val + FD_OWNER_REGION_OFFSET) as *mut u64)
+}
+
+pub fn get_tid_slot_for_fd(fd: c_int) -> Option<usize> {
+    if !is_shm_open() || fd < 0 {
+        try_open_shm();
+    }
+    if fd < 0 {
+        return None;
+    }
+    unsafe {
+        let owners = get_fd_owner_base_ptr()?;
+        let slot = ptr::read_unaligned(owners.add(fd as usize));
+        if slot == INVALID_TID_SLOT || slot >= MAX_TIDS as u64 {
+            return None;
+        }
+        Some(slot as usize)
+    }
+}
+
+pub fn get_target_rules_for_tid_slot(slot: usize) -> Option<[TargetRule; MAX_TARGET_RULES_PER_TID]> {
+    if !is_shm_open() {
+        try_open_shm();
+    }
+    if slot >= MAX_TIDS {
+        return None;
+    }
+    unsafe {
+        let base = get_target_rules_base_ptr()?;
+        let start = slot * MAX_TARGET_RULES_PER_TID;
+        let mut out = [TargetRule::default(); MAX_TARGET_RULES_PER_TID];
+        for (i, item) in out.iter_mut().enumerate().take(MAX_TARGET_RULES_PER_TID) {
+            *item = ptr::read_unaligned(base.add(start + i));
+        }
+        Some(out)
     }
 }
 
@@ -163,6 +231,9 @@ pub fn assign_rule_to_fd(fd: c_int, tid: usize) {
         return;
     }
     unsafe {
+        if let Some(owners) = get_fd_owner_base_ptr() {
+            ptr::write_unaligned(owners.add(fd as usize), tid_slot(tid) as u64);
+        }
         if let Some(tid_ptr) = get_config_ptr(tid, true) {
             let tid_cfg = tid_ptr.read();
             if tid_cfg.is_valid()
@@ -179,6 +250,9 @@ pub fn clear_rule_for_fd(fd: c_int) {
         return;
     }
     unsafe {
+        if let Some(owners) = get_fd_owner_base_ptr() {
+            ptr::write_unaligned(owners.add(fd as usize), INVALID_TID_SLOT);
+        }
         if let Some(fd_ptr) = get_config_ptr(fd as usize, false) {
             fd_ptr.write(FaultcoreConfig::default());
         }
@@ -315,12 +389,12 @@ mod tests {
 
     #[test]
     fn test_tid_collision() {
-        let mut table = vec![FaultcoreConfig::default(); MAX_FDS + MAX_TIDS];
+        let mut table = vec![0u64; FAULTCORE_SHM_SIZE.div_ceil(core::mem::size_of::<u64>())];
 
         let prev_ptr = *SHM_POINTER.read();
         let prev_open = SHM_OPEN.load(Ordering::SeqCst);
 
-        *SHM_POINTER.write() = table.as_mut_ptr() as usize;
+        *SHM_POINTER.write() = table.as_mut_ptr().cast::<u8>() as usize;
         SHM_OPEN.store(1, Ordering::SeqCst);
 
         let tid1 = 0;
@@ -343,12 +417,12 @@ mod tests {
 
     #[test]
     fn test_clear_rule_for_fd_resets_fd_slot() {
-        let mut table = vec![FaultcoreConfig::default(); MAX_FDS + MAX_TIDS];
+        let mut table = vec![0u64; FAULTCORE_SHM_SIZE.div_ceil(core::mem::size_of::<u64>())];
 
         let prev_ptr = *SHM_POINTER.read();
         let prev_open = SHM_OPEN.load(Ordering::SeqCst);
 
-        *SHM_POINTER.write() = table.as_mut_ptr() as usize;
+        *SHM_POINTER.write() = table.as_mut_ptr().cast::<u8>() as usize;
         SHM_OPEN.store(1, Ordering::SeqCst);
 
         let fd = 7usize;

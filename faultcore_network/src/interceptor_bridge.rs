@@ -1,9 +1,67 @@
 use libc::{c_int, sockaddr, socklen_t};
 
 use crate::{
-    Config, assign_rule_to_fd, clear_rule_for_fd, endpoint_for_addr_or_fd, endpoint_for_fd,
-    get_config_for_fd, get_config_for_tid, get_thread_id, monotonic_now_ns, try_open_shm,
+    Config, Endpoint, TargetRule, assign_rule_to_fd, clear_rule_for_fd, endpoint_for_addr_or_fd, endpoint_for_fd,
+    get_config_for_fd, get_config_for_tid, get_target_rules_for_tid_slot, get_thread_id,
+    get_tid_slot_for_fd, monotonic_now_ns, try_open_shm,
 };
+
+fn endpoint_matches_rule(endpoint: Endpoint, rule: &TargetRule) -> bool {
+    if rule.enabled == 0 || rule.kind == 0 {
+        return false;
+    }
+    if rule.protocol > 0 && rule.protocol != endpoint.protocol {
+        return false;
+    }
+    if rule.port > 0 && rule.port != u64::from(endpoint.port) {
+        return false;
+    }
+    match rule.kind {
+        1 => endpoint.ipv4 == rule.ipv4 as u32,
+        2 => {
+            if rule.prefix_len == 0 {
+                true
+            } else if rule.prefix_len >= 32 {
+                endpoint.ipv4 == rule.ipv4 as u32
+            } else {
+                let mask = u32::MAX << (32 - rule.prefix_len as u32);
+                (endpoint.ipv4 & mask) == ((rule.ipv4 as u32) & mask)
+            }
+        }
+        _ => false,
+    }
+}
+
+fn apply_multi_target_for_fd(mut cfg: Config, fd: c_int, endpoint: Option<Endpoint>) -> Option<Config> {
+    if cfg.target_enabled <= 1 {
+        return cfg.runtime_filtered(endpoint, monotonic_now_ns());
+    }
+    let endpoint = endpoint?;
+    let slot = get_tid_slot_for_fd(fd)?;
+    let rules = get_target_rules_for_tid_slot(slot)?;
+    let count = usize::min(cfg.target_enabled as usize, rules.len());
+    let mut selected_idx: Option<usize> = None;
+    let mut selected_priority: u64 = 0;
+
+    for (idx, rule) in rules.iter().take(count).enumerate() {
+        if !endpoint_matches_rule(endpoint, rule) {
+            continue;
+        }
+        if selected_idx.is_none() || rule.priority > selected_priority {
+            selected_idx = Some(idx);
+            selected_priority = rule.priority;
+        }
+    }
+    let selected = selected_idx?;
+    let rule = rules[selected];
+    cfg.target_enabled = 1;
+    cfg.target_kind = rule.kind;
+    cfg.target_ipv4 = rule.ipv4;
+    cfg.target_prefix_len = rule.prefix_len;
+    cfg.target_port = rule.port;
+    cfg.target_protocol = rule.protocol;
+    cfg.runtime_filtered(Some(endpoint), monotonic_now_ns())
+}
 
 pub fn init_runtime_shm() -> bool {
     try_open_shm()
@@ -23,7 +81,7 @@ pub fn clear_fd_binding(fd: c_int) {
 
 pub fn runtime_config_for_fd(fd: c_int) -> Option<Config> {
     let cfg = get_config_for_fd(fd)?.into_network_config();
-    cfg.runtime_filtered(endpoint_for_fd(fd), monotonic_now_ns())
+    apply_multi_target_for_fd(cfg, fd, endpoint_for_fd(fd))
 }
 
 /// # Safety
@@ -34,10 +92,7 @@ pub unsafe fn runtime_config_for_addr_or_fd(
     addr_len: socklen_t,
 ) -> Option<Config> {
     let cfg = get_config_for_fd(fd)?.into_network_config();
-    cfg.runtime_filtered(
-        unsafe { endpoint_for_addr_or_fd(fd, addr, addr_len) },
-        monotonic_now_ns(),
-    )
+    apply_multi_target_for_fd(cfg, fd, unsafe { endpoint_for_addr_or_fd(fd, addr, addr_len) })
 }
 
 pub fn runtime_dns_config_for_current_thread() -> Option<Config> {

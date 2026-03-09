@@ -4,10 +4,13 @@ pub const FAULTCORE_MAGIC: u32 = 0xFACC0DE;
 pub const MAX_FDS: usize = 131072;
 pub const MAX_TIDS: usize = 65536;
 pub const MAX_POLICIES: usize = 1024;
+pub const MAX_TARGET_RULES_PER_TID: usize = 8;
 pub const MAX_LATENCY_NS: u64 = 60_000_000_000;
 pub const MAX_BANDWIDTH_BPS: u64 = 100_000_000_000;
 pub const FAULTCORE_SHM_SIZE: usize = ((MAX_FDS + MAX_TIDS) * core::mem::size_of::<FaultcoreConfig>())
-    + (MAX_POLICIES * core::mem::size_of::<PolicyState>());
+    + (MAX_POLICIES * core::mem::size_of::<PolicyState>())
+    + (MAX_TIDS * MAX_TARGET_RULES_PER_TID * core::mem::size_of::<TargetRule>())
+    + (MAX_FDS * core::mem::size_of::<u64>());
 
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy, Default)]
@@ -72,6 +75,19 @@ pub struct PolicyState {
     pub total_failures: u64,
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TargetRule {
+    pub enabled: u64,
+    pub priority: u64,
+    pub kind: u64,
+    pub ipv4: u64,
+    pub prefix_len: u64,
+    pub port: u64,
+    pub protocol: u64,
+    pub reserved: u64,
+}
+
 impl FaultcoreConfig {
     pub fn is_valid(&self) -> bool {
         self.magic == FAULTCORE_MAGIC
@@ -102,7 +118,7 @@ impl FaultcoreConfig {
             && self.reorder_window <= 1_000_000
             && self.dns_delay_ns <= MAX_LATENCY_NS
             && self.dns_nxdomain_ppm <= 1_000_000
-            && self.target_enabled <= 1
+            && self.target_enabled <= MAX_TARGET_RULES_PER_TID as u64
             && self.target_kind <= 2
             && self.target_prefix_len <= 32
             && self.target_port <= 65_535
@@ -160,4 +176,3 @@ impl FaultcoreConfig {
         }
     }
 }
-

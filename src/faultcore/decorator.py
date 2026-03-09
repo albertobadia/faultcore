@@ -156,6 +156,7 @@ def _build_target_profile(
     cidr: str | None = None,
     port: int | None = None,
     protocol: str | None = None,
+    priority: int | None = None,
 ) -> dict[str, int]:
     parsed_protocol = _parse_target_protocol(protocol)
     parsed_host = host
@@ -185,6 +186,9 @@ def _build_target_profile(
 
     if parsed_port < 0 or parsed_port > 65535:
         raise ValueError("target port must be between 0 and 65535")
+    parsed_priority = 100 if priority is None else int(priority)
+    if parsed_priority < 0 or parsed_priority > 65535:
+        raise ValueError("target priority must be between 0 and 65535")
 
     if parsed_host and parsed_cidr:
         raise ValueError("target cannot define both host and cidr")
@@ -200,6 +204,7 @@ def _build_target_profile(
             "prefix_len": 32,
             "port": parsed_port,
             "protocol": parsed_protocol,
+            "priority": parsed_priority,
         }
 
     network = ipaddress.IPv4Network(parsed_cidr, strict=False)
@@ -210,6 +215,7 @@ def _build_target_profile(
         "prefix_len": int(network.prefixlen),
         "port": parsed_port,
         "protocol": parsed_protocol,
+        "priority": parsed_priority,
     }
 
 
@@ -271,6 +277,7 @@ class FaultWrapper:
         packet_reorder_profile: dict[str, int] | None = None,
         dns_profile: dict[str, int] | None = None,
         target_profile: dict[str, int] | None = None,
+        target_profiles: list[dict[str, int]] | None = None,
         schedule_profile: dict[str, int] | None = None,
     ):
         functools.update_wrapper(self, func)
@@ -290,6 +297,7 @@ class FaultWrapper:
         self._packet_reorder_profile = packet_reorder_profile or {}
         self._dns_profile = dns_profile or {}
         self._target_profile = target_profile or {}
+        self._target_profiles = target_profiles or []
         self._schedule_profile = schedule_profile or {}
 
     def __getattr__(self, name: str) -> Any:
@@ -390,7 +398,9 @@ class FaultWrapper:
                 nxdomain_ppm=self._dns_profile.get("nxdomain_ppm"),
             )
 
-        if self._target_profile:
+        if self._target_profiles:
+            shm.write_targets(tid, self._target_profiles)
+        elif self._target_profile:
             shm.write_target(
                 tid,
                 enabled=bool(self._target_profile.get("enabled", 0)),
@@ -822,6 +832,7 @@ def apply_policy(_key: str):
             packet_reorder_profile=policy.get("packet_reorder_profile"),
             dns_profile=policy.get("dns_profile"),
             target_profile=policy.get("target_profile"),
+            target_profiles=policy.get("target_profiles"),
             schedule_profile=policy.get("schedule_profile"),
         )
 
@@ -862,12 +873,15 @@ def register_policy(
     dns_timeout_ms: int | None = None,
     dns_nxdomain: str | int | float | None = None,
     target: str | dict[str, Any] | None = None,
+    targets: list[str | dict[str, Any]] | None = None,
     schedule: dict[str, Any] | None = None,
 ) -> None:
     if not name:
         raise ValueError("policy name must be non-empty")
 
     policy: dict[str, Any] = {}
+    if target is not None and targets is not None:
+        raise ValueError("target and targets are mutually exclusive")
     if latency_ms is not None:
         if int(latency_ms) < 0:
             raise ValueError("latency_ms must be >= 0")
@@ -974,6 +988,31 @@ def register_policy(
             )
         else:
             raise ValueError("target must be a string or mapping when provided")
+    if targets is not None:
+        if not isinstance(targets, list) or not targets:
+            raise ValueError("targets must be a non-empty list when provided")
+        built_rules: list[dict[str, int]] = []
+        for entry in targets:
+            if isinstance(entry, str):
+                built_rules.append(_build_target_profile(target=entry))
+            elif isinstance(entry, dict):
+                built_rules.append(
+                    _build_target_profile(
+                        target=entry.get("target"),
+                        host=entry.get("host"),
+                        cidr=entry.get("cidr"),
+                        port=entry.get("port"),
+                        protocol=entry.get("protocol"),
+                        priority=entry.get("priority"),
+                    )
+                )
+            else:
+                raise ValueError("each targets entry must be a string or mapping")
+        policy["target_profiles"] = sorted(
+            built_rules,
+            key=lambda profile: profile.get("priority", 100),
+            reverse=True,
+        )
     if schedule is not None:
         if not isinstance(schedule, dict):
             raise ValueError("schedule must be a mapping when provided")
@@ -1057,6 +1096,7 @@ def load_policies(path: str | Path) -> int:
             dns_timeout_ms=cfg.get("dns_timeout_ms"),
             dns_nxdomain=cfg.get("dns_nxdomain"),
             target=cfg.get("target"),
+            targets=cfg.get("targets"),
             schedule=cfg.get("schedule"),
         )
         loaded += 1

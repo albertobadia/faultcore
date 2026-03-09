@@ -6,7 +6,22 @@ import threading
 FAULTCORE_MAGIC = 0xFACC0DE
 MAX_FDS = 131072
 MAX_TIDS = 65536
+MAX_POLICIES = 1024
+MAX_TARGET_RULES_PER_TID = 8
 CONFIG_SIZE = 376
+POLICY_STATE_SIZE = 56
+TARGET_RULE_SIZE = 64
+SHM_SIZE = (
+    ((MAX_FDS + MAX_TIDS) * CONFIG_SIZE)
+    + (MAX_POLICIES * POLICY_STATE_SIZE)
+    + (MAX_TIDS * MAX_TARGET_RULES_PER_TID * TARGET_RULE_SIZE)
+    + (MAX_FDS * 8)
+)
+
+_CONFIG_REGION_SIZE = (MAX_FDS + MAX_TIDS) * CONFIG_SIZE
+_POLICY_REGION_OFFSET = _CONFIG_REGION_SIZE
+_POLICY_REGION_SIZE = MAX_POLICIES * POLICY_STATE_SIZE
+_TARGET_RULES_REGION_OFFSET = _POLICY_REGION_OFFSET + _POLICY_REGION_SIZE
 
 _OFFSET_MAGIC = 0
 _OFFSET_VERSION = 4
@@ -76,9 +91,16 @@ class SHMWriter:
         return self._mmap is not None
 
     def _get_offset(self, tid: int) -> int:
-        hash_val = (tid ^ (tid >> 16)) * 0x45D9F3B ^ (tid >> 16)
-        idx = MAX_FDS + (hash_val % MAX_TIDS)
+        idx = MAX_FDS + self._tid_slot(tid)
         return idx * CONFIG_SIZE
+
+    def _tid_slot(self, tid: int) -> int:
+        hash_val = (tid ^ (tid >> 16)) * 0x45D9F3B ^ (tid >> 16)
+        return hash_val % MAX_TIDS
+
+    def _target_rules_offset(self, tid: int) -> int:
+        slot = self._tid_slot(tid)
+        return _TARGET_RULES_REGION_OFFSET + (slot * MAX_TARGET_RULES_PER_TID * TARGET_RULE_SIZE)
 
     def _write_versioned(self, tid: int, writer) -> None:
         if not self._is_available():
@@ -272,6 +294,38 @@ class SHMWriter:
 
         self._write_versioned(tid, writer)
 
+    def write_targets(self, tid: int, rules: list[dict[str, int]]) -> None:
+        if not self._is_available():
+            return
+        if len(rules) > MAX_TARGET_RULES_PER_TID:
+            raise ValueError(f"targets supports up to {MAX_TARGET_RULES_PER_TID} rules")
+
+        target_rules_offset = self._target_rules_offset(tid)
+
+        def writer(offset: int) -> None:
+            self._mmap[target_rules_offset : target_rules_offset + (MAX_TARGET_RULES_PER_TID * TARGET_RULE_SIZE)] = (
+                b"\x00" * (MAX_TARGET_RULES_PER_TID * TARGET_RULE_SIZE)
+            )
+            for idx, rule in enumerate(rules):
+                base = target_rules_offset + (idx * TARGET_RULE_SIZE)
+                struct.pack_into("<Q", self._mmap, base + 0, 1 if rule.get("enabled", 0) else 0)
+                struct.pack_into("<Q", self._mmap, base + 8, int(rule.get("priority", 100)))
+                struct.pack_into("<Q", self._mmap, base + 16, int(rule.get("kind", 0)))
+                struct.pack_into("<Q", self._mmap, base + 24, int(rule.get("ipv4", 0)))
+                struct.pack_into("<Q", self._mmap, base + 32, int(rule.get("prefix_len", 0)))
+                struct.pack_into("<Q", self._mmap, base + 40, int(rule.get("port", 0)))
+                struct.pack_into("<Q", self._mmap, base + 48, int(rule.get("protocol", 0)))
+                struct.pack_into("<Q", self._mmap, base + 56, 0)
+
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_ENABLED, len(rules))
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_KIND, 0)
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_IPV4, 0)
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_PREFIX_LEN, 0)
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_PORT, 0)
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_PROTOCOL, 0)
+
+        self._write_versioned(tid, writer)
+
     def write_schedule(
         self,
         tid: int,
@@ -306,6 +360,10 @@ class SHMWriter:
             version = struct.unpack_from("<Q", self._mmap, offset + _OFFSET_VERSION)[0]
             struct.pack_into("<Q", self._mmap, offset + _OFFSET_VERSION, version | 1)
             self._mmap[offset : offset + CONFIG_SIZE] = b"\x00" * CONFIG_SIZE
+            target_rules_offset = self._target_rules_offset(tid)
+            self._mmap[target_rules_offset : target_rules_offset + (MAX_TARGET_RULES_PER_TID * TARGET_RULE_SIZE)] = (
+                b"\x00" * (MAX_TARGET_RULES_PER_TID * TARGET_RULE_SIZE)
+            )
             struct.pack_into("<Q", self._mmap, offset + _OFFSET_VERSION, (version + 2) & ~1)
 
     def close(self) -> None:
