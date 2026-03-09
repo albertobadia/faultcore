@@ -126,6 +126,12 @@ Optional keyword fields:
 
 Inject packet reordering on send paths (`send` and `sendto`).
 
+Current support matrix:
+- `send`: supported (staging + window/flush behavior)
+- `sendto`: supported (staging + window/flush behavior)
+- `recv`: not supported
+- `recvfrom`: not supported
+
 Optional keyword fields:
 - `prob`: reorder probability (same formats as `packet_loss(...)`, default `"100%"`)
 - `max_delay_ms`: max staging delay before forced flush, must be `>= 0` (default `0`)

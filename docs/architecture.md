@@ -69,6 +69,13 @@ This document describes the current `faultcore` architecture after the FaultOSI 
 - Reorder and duplicate are post-routing stream behaviors, handled outside main pipeline.
 - DNS path evaluates resolver layer behavior and skips non-DNS effects by layer applicability.
 
+### Reorder Matrix
+
+- `send`: supported (`LayerDecision::StageReorder` + per-FD staging queue)
+- `sendto`: supported (`LayerDecision::StageReorder` + per-FD staging queue)
+- `recv`: not supported
+- `recvfrom`: not supported
+
 ## Ownership Boundaries
 
 - Business/network fault behavior belongs to `faultcore_network`.
@@ -84,4 +91,3 @@ This document describes the current `faultcore` architecture after the FaultOSI 
   - `docs/shm_protocol.md`
 - New network fault behavior should be implemented as a layer concern first, then mapped through `LayerDecision`.
 - Interceptor should not gain new policy interpretation logic.
-

@@ -151,6 +151,41 @@ class SHMWriter:
         struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_PORT, 0)
         struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_PROTOCOL, 0)
 
+    def _rule_int(self, rule: dict[str, int], key: str, default: int, idx: int) -> int:
+        try:
+            return int(rule.get(key, default))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"targets[{idx}].{key} must be an integer") from exc
+
+    def _validate_target_rule(self, rule: dict[str, int], idx: int) -> None:
+        enabled = self._rule_int(rule, "enabled", 0, idx)
+        if enabled not in (0, 1):
+            raise ValueError(f"targets[{idx}].enabled must be 0 or 1")
+
+        priority = self._rule_int(rule, "priority", 100, idx)
+        if priority < 0 or priority > 0xFFFFFFFFFFFFFFFF:
+            raise ValueError(f"targets[{idx}].priority must be between 0 and 18446744073709551615")
+
+        kind = self._rule_int(rule, "kind", 0, idx)
+        if kind not in (0, 1, 2):
+            raise ValueError(f"targets[{idx}].kind must be one of 0, 1, 2")
+
+        prefix_len = self._rule_int(rule, "prefix_len", 0, idx)
+        if prefix_len < 0 or prefix_len > 32:
+            raise ValueError(f"targets[{idx}].prefix_len must be between 0 and 32")
+
+        port = self._rule_int(rule, "port", 0, idx)
+        if port < 0 or port > 65535:
+            raise ValueError(f"targets[{idx}].port must be between 0 and 65535")
+
+        protocol = self._rule_int(rule, "protocol", 0, idx)
+        if protocol not in (0, 1, 2):
+            raise ValueError(f"targets[{idx}].protocol must be one of 0, 1, 2")
+
+        ipv4 = self._rule_int(rule, "ipv4", 0, idx)
+        if ipv4 < 0 or ipv4 > 0xFFFFFFFF:
+            raise ValueError(f"targets[{idx}].ipv4 must be a valid u32 value")
+
     def write_latency(self, tid: int, latency_ms: int) -> None:
         def writer(offset: int) -> None:
             struct.pack_into("<Q", self._mmap, offset + _OFFSET_LATENCY_NS, latency_ms * 1_000_000)
@@ -335,6 +370,10 @@ class SHMWriter:
             return
         if len(rules) > MAX_TARGET_RULES_PER_TID:
             raise ValueError(f"targets supports up to {MAX_TARGET_RULES_PER_TID} rules")
+        for idx, rule in enumerate(rules):
+            if not isinstance(rule, dict):
+                raise ValueError(f"targets[{idx}] must be a mapping")
+            self._validate_target_rule(rule, idx)
 
         tid_slot = self._tid_slot(tid)
         target_rules_offset = self._target_rules_offset_for_slot(tid_slot)

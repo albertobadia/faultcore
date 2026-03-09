@@ -2,6 +2,8 @@ import os
 import struct
 import uuid
 
+import pytest
+
 from faultcore.shm_writer import (
     FAULTCORE_MAGIC,
     SHM_SIZE,
@@ -78,6 +80,106 @@ class TestDecoratorIntegration:
 
         result = test_func()
         assert result == "result"
+
+
+class TestTargetRulesValidation:
+    @pytest.mark.parametrize(
+        ("rule", "expected"),
+        [
+            (
+                {"enabled": 2, "kind": 1, "ipv4": 0x7F000001, "prefix_len": 32, "port": 80, "protocol": 1},
+                "enabled",
+            ),
+            (
+                {
+                    "enabled": 1,
+                    "priority": -1,
+                    "kind": 1,
+                    "ipv4": 0x7F000001,
+                    "prefix_len": 32,
+                    "port": 80,
+                    "protocol": 1,
+                },
+                "priority",
+            ),
+            ({"enabled": 1, "kind": 3, "ipv4": 0x7F000001, "prefix_len": 32, "port": 80, "protocol": 1}, "kind"),
+            (
+                {"enabled": 1, "kind": 1, "ipv4": 0x7F000001, "prefix_len": 33, "port": 80, "protocol": 1},
+                "prefix_len",
+            ),
+            (
+                {"enabled": 1, "kind": 1, "ipv4": 0x7F000001, "prefix_len": 32, "port": 70000, "protocol": 1},
+                "port",
+            ),
+            (
+                {"enabled": 1, "kind": 1, "ipv4": 0x7F000001, "prefix_len": 32, "port": 80, "protocol": 9},
+                "protocol",
+            ),
+            (
+                {"enabled": 1, "kind": 1, "ipv4": 0x1_0000_0000, "prefix_len": 32, "port": 80, "protocol": 1},
+                "ipv4",
+            ),
+        ],
+    )
+    def test_write_targets_rejects_invalid_rule_fields(self, rule, expected):
+        name = f"faultcore_test_{uuid.uuid4().hex}"
+        fd = create_test_shm(name)
+        os.close(fd)
+        writer = SHMWriter(name)
+
+        try:
+            with pytest.raises(ValueError, match=expected):
+                writer.write_targets(4242, [rule])
+        finally:
+            writer.close()
+            cleanup_test_shm(name)
+
+    def test_write_targets_accepts_valid_single_rule(self):
+        name = f"faultcore_test_{uuid.uuid4().hex}"
+        fd = create_test_shm(name)
+        os.close(fd)
+        writer = SHMWriter(name)
+
+        try:
+            rule = {"enabled": 1, "kind": 1, "ipv4": 0x7F000001, "prefix_len": 32, "port": 9000, "protocol": 1}
+            writer.write_targets(4242, [rule])
+        finally:
+            writer.close()
+            cleanup_test_shm(name)
+
+    def test_write_targets_rejects_non_mapping_rule(self):
+        name = f"faultcore_test_{uuid.uuid4().hex}"
+        fd = create_test_shm(name)
+        os.close(fd)
+        writer = SHMWriter(name)
+
+        try:
+            with pytest.raises(ValueError, match="must be a mapping"):
+                writer.write_targets(4242, [123])  # type: ignore[list-item]
+        finally:
+            writer.close()
+            cleanup_test_shm(name)
+
+    def test_write_targets_rejects_non_integer_fields(self):
+        name = f"faultcore_test_{uuid.uuid4().hex}"
+        fd = create_test_shm(name)
+        os.close(fd)
+        writer = SHMWriter(name)
+
+        try:
+            bad_rule = {
+                "enabled": 1,
+                "kind": "tcp",
+                "ipv4": 0x7F000001,
+                "prefix_len": 32,
+                "port": 9000,
+                "protocol": 1,
+            }
+            with pytest.raises(ValueError, match="kind must be an integer"):
+                writer.write_targets(4242, [bad_rule])  # type: ignore[list-item]
+        finally:
+            writer.close()
+            cleanup_test_shm(name)
 
 
 class TestExports:

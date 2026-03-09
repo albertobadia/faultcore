@@ -199,4 +199,102 @@ mod tests {
         }];
         assert!(select_best_target_rule(endpoint, &rules, rules.len()).is_none());
     }
+
+    #[test]
+    fn select_rule_skips_disabled_entries() {
+        let endpoint = Endpoint {
+            ipv4: 0x0A010203,
+            port: 443,
+            protocol: 1,
+        };
+        let rules = [
+            TargetRule {
+                enabled: 0,
+                priority: 1_000,
+                kind: 1,
+                ipv4: endpoint.ipv4 as u64,
+                prefix_len: 32,
+                port: endpoint.port as u64,
+                protocol: endpoint.protocol,
+                reserved: 0,
+            },
+            TargetRule {
+                enabled: 1,
+                priority: 100,
+                kind: 1,
+                ipv4: endpoint.ipv4 as u64,
+                prefix_len: 32,
+                port: endpoint.port as u64,
+                protocol: endpoint.protocol,
+                reserved: 0,
+            },
+        ];
+        let selected = select_best_target_rule(endpoint, &rules, rules.len()).expect("must select");
+        assert_eq!(selected.priority, 100);
+    }
+
+    #[test]
+    fn select_rule_respects_protocol_and_port_filters() {
+        let endpoint = Endpoint {
+            ipv4: 0x0A010203,
+            port: 53,
+            protocol: 2,
+        };
+        let rules = [
+            TargetRule {
+                enabled: 1,
+                priority: 50,
+                kind: 1,
+                ipv4: endpoint.ipv4 as u64,
+                prefix_len: 32,
+                port: 443,
+                protocol: endpoint.protocol,
+                reserved: 0,
+            },
+            TargetRule {
+                enabled: 1,
+                priority: 60,
+                kind: 1,
+                ipv4: endpoint.ipv4 as u64,
+                prefix_len: 32,
+                port: endpoint.port as u64,
+                protocol: 1,
+                reserved: 0,
+            },
+            TargetRule {
+                enabled: 1,
+                priority: 70,
+                kind: 1,
+                ipv4: endpoint.ipv4 as u64,
+                prefix_len: 32,
+                port: endpoint.port as u64,
+                protocol: endpoint.protocol,
+                reserved: 0,
+            },
+        ];
+        let selected = select_best_target_rule(endpoint, &rules, rules.len()).expect("must select");
+        assert_eq!(selected.priority, 70);
+    }
+
+    #[test]
+    fn select_rule_cidr_zero_prefix_matches_any_ipv4() {
+        let endpoint = Endpoint {
+            ipv4: 0xC0A8010A,
+            port: 8080,
+            protocol: 1,
+        };
+        let rules = [TargetRule {
+            enabled: 1,
+            priority: 10,
+            kind: 2,
+            ipv4: 0,
+            prefix_len: 0,
+            port: 0,
+            protocol: 0,
+            reserved: 0,
+        }];
+        let selected = select_best_target_rule(endpoint, &rules, rules.len()).expect("must select");
+        assert_eq!(selected.kind, 2);
+        assert_eq!(selected.prefix_len, 0);
+    }
 }
