@@ -32,18 +32,16 @@ fn endpoint_matches_rule(endpoint: Endpoint, rule: &TargetRule) -> bool {
     }
 }
 
-fn apply_multi_target_for_fd(mut cfg: Config, fd: c_int, endpoint: Option<Endpoint>) -> Option<Config> {
-    if cfg.target_enabled <= 1 {
-        return cfg.runtime_filtered(endpoint, monotonic_now_ns());
-    }
-    let endpoint = endpoint?;
-    let slot = get_tid_slot_for_fd(fd)?;
-    let rules = get_target_rules_for_tid_slot(slot)?;
-    let count = usize::min(cfg.target_enabled as usize, rules.len());
+fn select_best_target_rule(
+    endpoint: Endpoint,
+    rules: &[TargetRule],
+    count: usize,
+) -> Option<TargetRule> {
     let mut selected_idx: Option<usize> = None;
     let mut selected_priority: u64 = 0;
+    let limit = usize::min(count, rules.len());
 
-    for (idx, rule) in rules.iter().take(count).enumerate() {
+    for (idx, rule) in rules.iter().take(limit).enumerate() {
         if !endpoint_matches_rule(endpoint, rule) {
             continue;
         }
@@ -52,8 +50,18 @@ fn apply_multi_target_for_fd(mut cfg: Config, fd: c_int, endpoint: Option<Endpoi
             selected_priority = rule.priority;
         }
     }
-    let selected = selected_idx?;
-    let rule = rules[selected];
+    selected_idx.map(|idx| rules[idx])
+}
+
+fn apply_multi_target_for_fd(mut cfg: Config, fd: c_int, endpoint: Option<Endpoint>) -> Option<Config> {
+    if cfg.target_enabled <= 1 {
+        return cfg.runtime_filtered(endpoint, monotonic_now_ns());
+    }
+    let endpoint = endpoint?;
+    let slot = get_tid_slot_for_fd(fd)?;
+    let rules = get_target_rules_for_tid_slot(slot)?;
+    let count = usize::min(cfg.target_enabled as usize, rules.len());
+    let rule = select_best_target_rule(endpoint, &rules, count)?;
     cfg.target_enabled = 1;
     cfg.target_kind = rule.kind;
     cfg.target_ipv4 = rule.ipv4;
@@ -99,4 +107,96 @@ pub fn runtime_dns_config_for_current_thread() -> Option<Config> {
     let tid = get_thread_id();
     let cfg = get_config_for_tid(tid)?.into_network_config();
     cfg.runtime_filtered(None, monotonic_now_ns())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn select_rule_prefers_higher_priority() {
+        let endpoint = Endpoint {
+            ipv4: 0x0A010203,
+            port: 443,
+            protocol: 1,
+        };
+        let rules = [
+            TargetRule {
+                enabled: 1,
+                priority: 10,
+                kind: 1,
+                ipv4: endpoint.ipv4 as u64,
+                prefix_len: 32,
+                port: endpoint.port as u64,
+                protocol: endpoint.protocol,
+                reserved: 0,
+            },
+            TargetRule {
+                enabled: 1,
+                priority: 200,
+                kind: 1,
+                ipv4: endpoint.ipv4 as u64,
+                prefix_len: 32,
+                port: endpoint.port as u64,
+                protocol: endpoint.protocol,
+                reserved: 0,
+            },
+        ];
+        let selected = select_best_target_rule(endpoint, &rules, rules.len()).expect("must select");
+        assert_eq!(selected.priority, 200);
+    }
+
+    #[test]
+    fn select_rule_keeps_first_on_priority_tie() {
+        let endpoint = Endpoint {
+            ipv4: 0x0A010203,
+            port: 53,
+            protocol: 2,
+        };
+        let rules = [
+            TargetRule {
+                enabled: 1,
+                priority: 100,
+                kind: 2,
+                ipv4: 0x0A000000,
+                prefix_len: 8,
+                port: endpoint.port as u64,
+                protocol: endpoint.protocol,
+                reserved: 0,
+            },
+            TargetRule {
+                enabled: 1,
+                priority: 100,
+                kind: 2,
+                ipv4: 0x0A010000,
+                prefix_len: 16,
+                port: endpoint.port as u64,
+                protocol: endpoint.protocol,
+                reserved: 0,
+            },
+        ];
+        let selected = select_best_target_rule(endpoint, &rules, rules.len()).expect("must select");
+        assert_eq!(selected.ipv4, 0x0A000000);
+        assert_eq!(selected.prefix_len, 8);
+    }
+
+    #[test]
+    fn select_rule_returns_none_when_no_match() {
+        let endpoint = Endpoint {
+            ipv4: 0xC0A80101,
+            port: 80,
+            protocol: 1,
+        };
+        let rules = [TargetRule {
+            enabled: 1,
+            priority: 100,
+            kind: 1,
+            ipv4: 0x0A000001,
+            prefix_len: 32,
+            port: endpoint.port as u64,
+            protocol: endpoint.protocol,
+            reserved: 0,
+        }];
+        assert!(select_best_target_rule(endpoint, &rules, rules.len()).is_none());
+    }
 }

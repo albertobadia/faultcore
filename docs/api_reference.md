@@ -231,6 +231,7 @@ register_policy(
     dns_timeout_ms: int | None = None,
     dns_nxdomain: str | int | float | None = None,
     target: str | dict[str, Any] | None = None,
+    targets: list[str | dict[str, Any]] | None = None,
     schedule: dict[str, Any] | None = None,
 ) -> None
 ```
@@ -243,6 +244,10 @@ Notes:
 - `target` accepts:
   - string format: `"tcp://10.1.2.3:443"`, `"10.1.2.3:443"`, `"10.0.0.0/8"`;
   - mapping format with keys: `target`, `host`, `cidr`, `port`, `protocol`.
+- `targets` accepts a non-empty list of target rules (string or mapping):
+  - mapping supports: `target`, `host`, `cidr`, `port`, `protocol`, `priority`.
+  - precedence: higher `priority` wins; same `priority` keeps registration order.
+- `target` and `targets` are mutually exclusive.
 - `schedule` mapping accepts:
   - `{"kind": "spike", "every_s": ..., "duration_s": ...}`
   - `{"kind": "flapping", "on_s": ..., "off_s": ...}`

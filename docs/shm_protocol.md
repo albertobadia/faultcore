@@ -10,7 +10,9 @@ This document defines the shared binary contract between:
 - Type: POSIX SHM (`/dev/shm/...`)
 - Size:
   - FD table + TID hash table: `(MAX_FDS + MAX_TIDS) * CONFIG_SIZE`
-  - The Rust SHM runtime also reserves a region for `PolicyState`.
+  - Policy state region: `MAX_POLICIES * sizeof(PolicyState)`
+  - Target rules region: `MAX_TIDS * MAX_TARGET_RULES_PER_TID * sizeof(TargetRule)`
+  - FD owner region (`fd -> tid_slot`): `MAX_FDS * sizeof(u64)`
 
 ## FaultcoreConfig (376 bytes)
 - Endianness: little-endian
@@ -72,6 +74,27 @@ Constants:
 - `CONFIG_SIZE = 376`
 - `MAX_FDS = 131072`
 - `MAX_TIDS = 65536`
+- `MAX_TARGET_RULES_PER_TID = 8`
+
+## Target Rules Region
+
+`TargetRule` is a fixed 64-byte row stored in a per-TID-slot table:
+
+| Field | Type | Notes |
+|---|---|---|
+| `enabled` | `u64` | `0/1` |
+| `priority` | `u64` | Higher wins |
+| `kind` | `u64` | `1=host`, `2=cidr` |
+| `ipv4` | `u64` | IPv4 address (lower 32 bits) |
+| `prefix_len` | `u64` | CIDR prefix (`0..32`) |
+| `port` | `u64` | `0` means any |
+| `protocol` | `u64` | `0=any`, `1=tcp`, `2=udp` |
+| `reserved` | `u64` | reserved |
+
+Selection semantics for `targets[]`:
+- consider first `target_enabled` rules;
+- choose matching rule with greatest `priority`;
+- ties are resolved by first rule in registration order.
 
 ## Write/Read Consistency
 - Python uses optimistic versioning:
