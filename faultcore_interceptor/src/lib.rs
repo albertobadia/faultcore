@@ -1,8 +1,12 @@
 use faultcore_network::{
-    Direction, FaultOsiEngine, InterceptorRuntime, LayerDecision, PendingDatagram,
+    Direction, LayerDecision, PendingDatagram,
     apply_connect_directive, apply_stream_directive, bind_fd_to_current_thread, clear_fd_binding,
+    global_fault_osi_engine, global_interceptor_runtime,
     init_runtime_shm, runtime_config_for_addr_or_fd, runtime_config_for_fd,
-    runtime_dns_config_for_current_thread, try_handle_setpriority,
+    runtime_dns_config_for_current_thread, set_errno_value, snapshot_recv_datagram,
+    snapshot_recvfrom_datagram, stage_reorder_send, stage_reorder_sendto, try_handle_setpriority,
+    uplink_duplicate_count_for_addr_or_fd, uplink_duplicate_count_for_fd,
+    write_pending_recv_result, write_pending_recvfrom_result,
 };
 use libc::{addrinfo, c_char, c_int, c_void, size_t, sockaddr, socklen_t, ssize_t};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -46,9 +50,6 @@ lazy_static::lazy_static! {
     pub static ref ORIG_SENDTO: SendToFn = unsafe { get_original_fn("sendto") };
     pub static ref ORIG_RECVFROM: RecvFromFn = unsafe { get_original_fn("recvfrom") };
     pub static ref ORIG_GETADDRINFO: GetAddrInfoFn = unsafe { get_original_fn("getaddrinfo") };
-
-    pub static ref CHAOS_ENGINE: FaultOsiEngine = FaultOsiEngine::new();
-    pub static ref INTERCEPTOR_RUNTIME: InterceptorRuntime = InterceptorRuntime::new();
 }
 
 unsafe fn get_original_fn<T>(name: &str) -> T {
@@ -61,20 +62,14 @@ unsafe fn get_original_fn<T>(name: &str) -> T {
 }
 
 fn record_stream_bytes(fd: c_int, bytes: u64) {
-    CHAOS_ENGINE.record_stream_bytes(fd, bytes);
+    global_fault_osi_engine().record_stream_bytes(fd, bytes);
 }
 
 fn maybe_duplicate_send(fd: c_int, b: *const c_void, sent: ssize_t, f: c_int) {
     if sent <= 0 {
         return;
     }
-    let Some(network_cfg) = runtime_config_for_fd(fd) else {
-        return;
-    };
-    let count = match CHAOS_ENGINE.evaluate_stream_post(&network_cfg, Direction::Uplink) {
-        LayerDecision::Duplicate(n) => n,
-        _ => 0,
-    };
+    let count = uplink_duplicate_count_for_fd(global_fault_osi_engine(), fd);
     for _ in 0..count {
         unsafe {
             let _ = (ORIG_SEND)(fd, b, sent as size_t, f);
@@ -93,53 +88,13 @@ fn maybe_duplicate_sendto(
     if sent <= 0 {
         return;
     }
-    let Some(network_cfg) = (unsafe { runtime_config_for_addr_or_fd(fd, addr, addr_len) }) else {
-        return;
-    };
-    let count = match CHAOS_ENGINE.evaluate_stream_post(&network_cfg, Direction::Uplink) {
-        LayerDecision::Duplicate(n) => n,
-        _ => 0,
-    };
+    let count =
+        unsafe { uplink_duplicate_count_for_addr_or_fd(global_fault_osi_engine(), fd, addr, addr_len) };
     for _ in 0..count {
         unsafe {
             let _ = (ORIG_SENDTO)(fd, b, sent as size_t, f, addr, addr_len);
         }
     }
-}
-
-fn maybe_stage_reorder_sendto(
-    b: *const c_void,
-    l: size_t,
-    f: c_int,
-    addr: *const sockaddr,
-    addr_len: socklen_t,
-    pending: &mut std::collections::VecDeque<PendingDatagram>,
-) -> Option<ssize_t> {
-    if l == 0 || b.is_null() {
-        return None;
-    }
-    let data = unsafe { std::slice::from_raw_parts(b.cast::<u8>(), l).to_vec() };
-    let addr_bytes = if !addr.is_null() && addr_len > 0 {
-        unsafe { std::slice::from_raw_parts(addr.cast::<u8>(), addr_len as usize).to_vec() }
-    } else {
-        Vec::new()
-    };
-    INTERCEPTOR_RUNTIME.stage_reorder_datagram(pending, data, f, addr_bytes, addr_len);
-    Some(l as ssize_t)
-}
-
-fn maybe_stage_reorder_send(
-    b: *const c_void,
-    l: size_t,
-    f: c_int,
-    pending: &mut std::collections::VecDeque<PendingDatagram>,
-) -> Option<ssize_t> {
-    if l == 0 || b.is_null() {
-        return None;
-    }
-    let data = unsafe { std::slice::from_raw_parts(b.cast::<u8>(), l).to_vec() };
-    INTERCEPTOR_RUNTIME.stage_reorder_datagram(pending, data, f, Vec::new(), 0);
-    Some(l as ssize_t)
 }
 
 fn send_pending_datagram(fd: c_int, pkt: &PendingDatagram) {
@@ -158,100 +113,6 @@ fn send_pending_datagram(fd: c_int, pkt: &PendingDatagram) {
             pkt.addr_len as socklen_t,
         );
     }
-}
-
-fn set_errno(val: i32) {
-    unsafe {
-        *libc::__errno_location() = val;
-    }
-}
-
-/// # Safety
-/// `b` must point to a writable buffer of `l` bytes.
-/// `addr`/`addr_len` must be null together or a valid writable socket address pair.
-unsafe fn write_pending_recvfrom_result(
-    pkt: &PendingDatagram,
-    b: *mut c_void,
-    l: size_t,
-    addr: *mut sockaddr,
-    addr_len: *mut socklen_t,
-) -> ssize_t {
-    if b.is_null() || l == 0 {
-        return 0;
-    }
-    let to_copy = usize::min(l, pkt.data.len());
-    unsafe {
-        std::ptr::copy_nonoverlapping(pkt.data.as_ptr(), b.cast::<u8>(), to_copy);
-    }
-    if !addr.is_null() && !addr_len.is_null() {
-        let capacity = unsafe { *addr_len as usize };
-        let available = usize::min(pkt.addr.len(), pkt.addr_len as usize);
-        let copy_addr = usize::min(capacity, available);
-        if copy_addr > 0 {
-            unsafe {
-                std::ptr::copy_nonoverlapping(pkt.addr.as_ptr(), addr.cast::<u8>(), copy_addr);
-            }
-        }
-        unsafe {
-            *addr_len = pkt.addr_len as socklen_t;
-        }
-    }
-    to_copy as ssize_t
-}
-
-/// # Safety
-/// `b` must point to a writable buffer of `l` bytes.
-unsafe fn write_pending_recv_result(pkt: &PendingDatagram, b: *mut c_void, l: size_t) -> ssize_t {
-    if b.is_null() || l == 0 {
-        return 0;
-    }
-    let to_copy = usize::min(l, pkt.data.len());
-    unsafe {
-        std::ptr::copy_nonoverlapping(pkt.data.as_ptr(), b.cast::<u8>(), to_copy);
-    }
-    to_copy as ssize_t
-}
-
-/// # Safety
-/// `b` must point to a readable buffer with at least `recv_len` bytes.
-/// `addr`/`addr_len` must be null together or a valid readable socket address pair.
-unsafe fn snapshot_recvfrom_datagram(
-    b: *mut c_void,
-    recv_len: ssize_t,
-    flags: c_int,
-    addr: *mut sockaddr,
-    addr_len: *mut socklen_t,
-) -> Option<PendingDatagram> {
-    if recv_len <= 0 || b.is_null() {
-        return None;
-    }
-    let data = unsafe { std::slice::from_raw_parts(b.cast::<u8>(), recv_len as usize).to_vec() };
-    let (addr_bytes, len_u32) = if !addr.is_null() && !addr_len.is_null() {
-        let len = unsafe { *addr_len as usize };
-        if len == 0 {
-            (Vec::new(), 0)
-        } else {
-            let bytes = unsafe { std::slice::from_raw_parts(addr.cast::<u8>(), len).to_vec() };
-            (bytes, len as u32)
-        }
-    } else {
-        (Vec::new(), 0)
-    };
-    Some(PendingDatagram::new(data, flags, addr_bytes, len_u32))
-}
-
-/// # Safety
-/// `b` must point to a readable buffer with at least `recv_len` bytes.
-unsafe fn snapshot_recv_datagram(
-    b: *mut c_void,
-    recv_len: ssize_t,
-    flags: c_int,
-) -> Option<PendingDatagram> {
-    if recv_len <= 0 || b.is_null() {
-        return None;
-    }
-    let data = unsafe { std::slice::from_raw_parts(b.cast::<u8>(), recv_len as usize).to_vec() };
-    Some(PendingDatagram::new(data, flags, Vec::new(), 0))
 }
 
 lazy_static::lazy_static! {
@@ -328,8 +189,8 @@ pub extern "C" fn close(fd: c_int) -> c_int {
     }
 
     initialize();
-    CHAOS_ENGINE.clear_fd_state(fd);
-    INTERCEPTOR_RUNTIME.clear_fd_state(fd);
+    global_fault_osi_engine().clear_fd_state(fd);
+    global_interceptor_runtime().clear_fd_state(fd);
     clear_fd_binding(fd);
 
     let result = unsafe { (ORIG_CLOSE)(fd) };
@@ -338,28 +199,30 @@ pub extern "C" fn close(fd: c_int) -> c_int {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn send(s: c_int, b: *const c_void, l: size_t, f: c_int) -> ssize_t {
+/// # Safety
+/// `b` must point to a readable buffer of `l` bytes.
+pub unsafe extern "C" fn send(s: c_int, b: *const c_void, l: size_t, f: c_int) -> ssize_t {
     if !enter_hook() {
         return unsafe { (ORIG_SEND)(s, b, l, f) };
     }
 
     initialize();
-    let mut pending = INTERCEPTOR_RUNTIME.take_reorder_pending(s);
+    let mut pending = global_interceptor_runtime().take_reorder_pending(s);
     let mut staged_reorder = false;
     let mut faults_applied = false;
     let result = if let Some(network_cfg) = runtime_config_for_fd(s) {
         faults_applied = true;
-        for pkt in INTERCEPTOR_RUNTIME.flush_expired_reorder(&mut pending, network_cfg.reorder_max_delay_ns) {
+        for pkt in global_interceptor_runtime().flush_expired_reorder(&mut pending, network_cfg.reorder_max_delay_ns) {
             send_pending_datagram(s, &pkt);
         }
-        let decision = CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Uplink);
-        let directive = INTERCEPTOR_RUNTIME.map_stream_decision(s, decision.clone(), is_non_blocking(s));
+        let decision = global_fault_osi_engine().evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Uplink);
+        let directive = global_interceptor_runtime().map_stream_decision(s, decision.clone(), is_non_blocking(s));
         if let Some(error) = apply_stream_directive(directive) {
             error as ssize_t
         } else if matches!(decision, LayerDecision::StageReorder) {
             staged_reorder = true;
-            let staged = maybe_stage_reorder_send(b, l, f, &mut pending).unwrap_or(l as ssize_t);
-            for pkt in INTERCEPTOR_RUNTIME.enforce_reorder_window(
+            let staged = unsafe { stage_reorder_send(&mut pending, b, l, f) }.unwrap_or(l as ssize_t);
+            for pkt in global_interceptor_runtime().enforce_reorder_window(
                 &mut pending,
                 network_cfg.reorder_window as usize,
             ) {
@@ -379,12 +242,12 @@ pub extern "C" fn send(s: c_int, b: *const c_void, l: size_t, f: c_int) -> ssize
             maybe_duplicate_send(s, b, result, f);
         }
         if faults_applied
-            && let Some(pkt) = INTERCEPTOR_RUNTIME.pop_reorder_after_success(&mut pending, staged_reorder)
+            && let Some(pkt) = global_interceptor_runtime().pop_reorder_after_success(&mut pending, staged_reorder)
         {
             send_pending_datagram(s, &pkt);
         }
     }
-    INTERCEPTOR_RUNTIME.put_reorder_pending(s, pending);
+    global_interceptor_runtime().put_reorder_pending(s, pending);
 
     exit_hook();
     result
@@ -400,22 +263,38 @@ pub unsafe extern "C" fn recv(s: c_int, b: *mut c_void, l: size_t, f: c_int) -> 
 
     initialize();
     let non_blocking = is_non_blocking(s);
-    let mut pending = INTERCEPTOR_RUNTIME.take_reorder_pending_recv(s);
+    let mut pending = global_interceptor_runtime().take_reorder_pending_recv(s);
     let result = if let Some(network_cfg) = runtime_config_for_fd(s) {
-        if non_blocking
-            && let Some(pkt) = pending.pop_front()
+        if let Some(pkt) = pending.pop_front()
         {
             let out = unsafe { write_pending_recv_result(&pkt, b, l) };
-            INTERCEPTOR_RUNTIME.put_reorder_pending_recv(s, pending);
+            global_interceptor_runtime().put_reorder_pending_recv(s, pending);
             exit_hook();
             return out;
         }
 
         let decision =
-            CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Downlink);
-        let directive = INTERCEPTOR_RUNTIME.map_stream_decision(s, decision.clone(), non_blocking);
+            global_fault_osi_engine().evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Downlink);
+        let directive = global_interceptor_runtime().map_stream_decision(s, decision.clone(), non_blocking);
         if let Some(error) = apply_stream_directive(directive) {
             error as ssize_t
+        } else if !non_blocking && matches!(decision, LayerDecision::StageReorder) {
+            let first_recv = unsafe { (ORIG_RECV)(s, b, l, f) };
+            if first_recv <= 0 {
+                first_recv
+            } else if let Some(pkt) = unsafe { snapshot_recv_datagram(b, first_recv, f) } {
+                pending.push_back(pkt);
+                let second_recv = unsafe { (ORIG_RECV)(s, b, l, f) };
+                if second_recv > 0 {
+                    second_recv
+                } else if let Some(staged) = pending.pop_front() {
+                    unsafe { write_pending_recv_result(&staged, b, l) }
+                } else {
+                    second_recv
+                }
+            } else {
+                first_recv
+            }
         } else {
             let recv_result = unsafe { (ORIG_RECV)(s, b, l, f) };
             if non_blocking
@@ -424,7 +303,7 @@ pub unsafe extern "C" fn recv(s: c_int, b: *mut c_void, l: size_t, f: c_int) -> 
                 && let Some(pkt) = unsafe { snapshot_recv_datagram(b, recv_result, f) }
             {
                 pending.push_back(pkt);
-                set_errno(libc::EAGAIN);
+                set_errno_value(libc::EAGAIN);
                 -1
             } else {
                 recv_result
@@ -437,7 +316,7 @@ pub unsafe extern "C" fn recv(s: c_int, b: *mut c_void, l: size_t, f: c_int) -> 
     if result > 0 {
         record_stream_bytes(s, result as u64);
     }
-    INTERCEPTOR_RUNTIME.put_reorder_pending_recv(s, pending);
+    global_interceptor_runtime().put_reorder_pending_recv(s, pending);
 
     exit_hook();
     result
@@ -455,8 +334,8 @@ pub unsafe extern "C" fn connect(s: c_int, a: *const sockaddr, l: socklen_t) -> 
     bind_fd_to_current_thread(s);
 
     let result = if let Some(network_cfg) = unsafe { runtime_config_for_addr_or_fd(s, a, l) } {
-        let decision = CHAOS_ENGINE.evaluate_connect(s, &network_cfg);
-        let directive = INTERCEPTOR_RUNTIME.map_connect_decision(decision);
+        let decision = global_fault_osi_engine().evaluate_connect(s, &network_cfg);
+        let directive = global_interceptor_runtime().map_connect_decision(decision);
         if let Some(error) = apply_connect_directive(directive) {
             error
         } else {
@@ -487,23 +366,23 @@ pub unsafe extern "C" fn sendto(
     }
 
     initialize();
-    let mut pending = INTERCEPTOR_RUNTIME.take_reorder_pending(s);
+    let mut pending = global_interceptor_runtime().take_reorder_pending(s);
     let mut staged_reorder = false;
     let mut faults_applied = false;
     let result = if let Some(network_cfg) = unsafe { runtime_config_for_addr_or_fd(s, addr, addr_len) } {
         faults_applied = true;
-        for pkt in INTERCEPTOR_RUNTIME.flush_expired_reorder(&mut pending, network_cfg.reorder_max_delay_ns) {
+        for pkt in global_interceptor_runtime().flush_expired_reorder(&mut pending, network_cfg.reorder_max_delay_ns) {
             send_pending_datagram(s, &pkt);
         }
-        let decision = CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Uplink);
-        let directive = INTERCEPTOR_RUNTIME.map_stream_decision(s, decision.clone(), is_non_blocking(s));
+        let decision = global_fault_osi_engine().evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Uplink);
+        let directive = global_interceptor_runtime().map_stream_decision(s, decision.clone(), is_non_blocking(s));
         if let Some(error) = apply_stream_directive(directive) {
             error as ssize_t
         } else if matches!(decision, LayerDecision::StageReorder) {
             staged_reorder = true;
-            let staged =
-                maybe_stage_reorder_sendto(b, l, f, addr, addr_len, &mut pending).unwrap_or(l as ssize_t);
-            for pkt in INTERCEPTOR_RUNTIME.enforce_reorder_window(
+            let staged = unsafe { stage_reorder_sendto(&mut pending, b, l, f, addr, addr_len) }
+                .unwrap_or(l as ssize_t);
+            for pkt in global_interceptor_runtime().enforce_reorder_window(
                 &mut pending,
                 network_cfg.reorder_window as usize,
             ) {
@@ -523,12 +402,12 @@ pub unsafe extern "C" fn sendto(
             maybe_duplicate_sendto(s, b, result, f, addr, addr_len);
         }
         if faults_applied
-            && let Some(pkt) = INTERCEPTOR_RUNTIME.pop_reorder_after_success(&mut pending, staged_reorder)
+            && let Some(pkt) = global_interceptor_runtime().pop_reorder_after_success(&mut pending, staged_reorder)
         {
             send_pending_datagram(s, &pkt);
         }
     }
-    INTERCEPTOR_RUNTIME.put_reorder_pending(s, pending);
+    global_interceptor_runtime().put_reorder_pending(s, pending);
 
     exit_hook();
     result
@@ -552,21 +431,37 @@ pub unsafe extern "C" fn recvfrom(
 
     initialize();
     let non_blocking = is_non_blocking(s);
-    let mut pending = INTERCEPTOR_RUNTIME.take_reorder_pending_recv(s);
+    let mut pending = global_interceptor_runtime().take_reorder_pending_recv(s);
     let result = if let Some(network_cfg) = runtime_config_for_fd(s) {
-        if non_blocking
-            && let Some(pkt) = pending.pop_front()
+        if let Some(pkt) = pending.pop_front()
         {
             let out = unsafe { write_pending_recvfrom_result(&pkt, b, l, addr, addr_len) };
-            INTERCEPTOR_RUNTIME.put_reorder_pending_recv(s, pending);
+            global_interceptor_runtime().put_reorder_pending_recv(s, pending);
             exit_hook();
             return out;
         }
 
-        let decision = CHAOS_ENGINE.evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Downlink);
-        let directive = INTERCEPTOR_RUNTIME.map_stream_decision(s, decision.clone(), non_blocking);
+        let decision = global_fault_osi_engine().evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Downlink);
+        let directive = global_interceptor_runtime().map_stream_decision(s, decision.clone(), non_blocking);
         if let Some(error) = apply_stream_directive(directive) {
             error as ssize_t
+        } else if !non_blocking && matches!(decision, LayerDecision::StageReorder) {
+            let first_recv = unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) };
+            if first_recv <= 0 {
+                first_recv
+            } else if let Some(pkt) = unsafe { snapshot_recvfrom_datagram(b, first_recv, f, addr, addr_len) } {
+                pending.push_back(pkt);
+                let second_recv = unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) };
+                if second_recv > 0 {
+                    second_recv
+                } else if let Some(staged) = pending.pop_front() {
+                    unsafe { write_pending_recvfrom_result(&staged, b, l, addr, addr_len) }
+                } else {
+                    second_recv
+                }
+            } else {
+                first_recv
+            }
         } else {
             let recv_result = unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) };
             if non_blocking
@@ -575,7 +470,7 @@ pub unsafe extern "C" fn recvfrom(
                 && let Some(pkt) = unsafe { snapshot_recvfrom_datagram(b, recv_result, f, addr, addr_len) }
             {
                 pending.push_back(pkt);
-                set_errno(libc::EAGAIN);
+                set_errno_value(libc::EAGAIN);
                 -1
             } else {
                 recv_result
@@ -588,7 +483,7 @@ pub unsafe extern "C" fn recvfrom(
     if result > 0 {
         record_stream_bytes(s, result as u64);
     }
-    INTERCEPTOR_RUNTIME.put_reorder_pending_recv(s, pending);
+    global_interceptor_runtime().put_reorder_pending_recv(s, pending);
 
     exit_hook();
     result
@@ -607,13 +502,13 @@ pub extern "C" fn getaddrinfo(
 
     initialize();
     if let Some(network_cfg) = runtime_dns_config_for_current_thread() {
-        let decision = CHAOS_ENGINE.evaluate_dns_lookup(&network_cfg);
+        let decision = global_fault_osi_engine().evaluate_dns_lookup(&network_cfg);
         if let LayerDecision::DelayNs(ns) = &decision {
             std::thread::sleep(std::time::Duration::from_nanos(*ns));
         } else if let LayerDecision::TimeoutMs(ms) = &decision {
             std::thread::sleep(std::time::Duration::from_millis(*ms));
         }
-        if let Some(eai) = INTERCEPTOR_RUNTIME.map_dns_decision_to_eai(&decision) {
+        if let Some(eai) = global_interceptor_runtime().map_dns_decision_to_eai(&decision) {
             exit_hook();
             return eai;
         }
@@ -648,7 +543,7 @@ mod tests {
 
     #[test]
     fn connect_timeout_maps_to_etimedout() {
-        let directive = INTERCEPTOR_RUNTIME.map_connect_decision(LayerDecision::TimeoutMs(10));
+        let directive = global_interceptor_runtime().map_connect_decision(LayerDecision::TimeoutMs(10));
         assert_eq!(
             directive,
             faultcore_network::ConnectDirective::ReturnErrno {
@@ -660,7 +555,7 @@ mod tests {
 
     #[test]
     fn connect_error_kind_maps_to_errno() {
-        let directive = INTERCEPTOR_RUNTIME.map_connect_decision(LayerDecision::ConnectionErrorKind(1));
+        let directive = global_interceptor_runtime().map_connect_decision(LayerDecision::ConnectionErrorKind(1));
         assert_eq!(
             directive,
             faultcore_network::ConnectDirective::ReturnErrno {
@@ -672,13 +567,13 @@ mod tests {
 
     #[test]
     fn stream_drop_maps_to_zero() {
-        let directive = INTERCEPTOR_RUNTIME.map_stream_decision(1, LayerDecision::Drop, false);
+        let directive = global_interceptor_runtime().map_stream_decision(1, LayerDecision::Drop, false);
         assert_eq!(directive, faultcore_network::StreamDirective::ReturnValue(0));
     }
 
     #[test]
     fn stream_timeout_maps_to_etimedout() {
-        let directive = INTERCEPTOR_RUNTIME.map_stream_decision(1, LayerDecision::TimeoutMs(50), false);
+        let directive = global_interceptor_runtime().map_stream_decision(1, LayerDecision::TimeoutMs(50), false);
         assert_eq!(
             directive,
             faultcore_network::StreamDirective::ReturnErrno {
@@ -690,24 +585,24 @@ mod tests {
 
     #[test]
     fn stream_stage_reorder_is_non_terminal() {
-        let directive = INTERCEPTOR_RUNTIME.map_stream_decision(1, LayerDecision::StageReorder, false);
+        let directive = global_interceptor_runtime().map_stream_decision(1, LayerDecision::StageReorder, false);
         assert_eq!(directive, faultcore_network::StreamDirective::Continue);
     }
 
     #[test]
     fn dns_mapping_contract_is_stable() {
         assert_eq!(
-            INTERCEPTOR_RUNTIME.map_dns_decision_to_eai(&LayerDecision::TimeoutMs(1)),
+            global_interceptor_runtime().map_dns_decision_to_eai(&LayerDecision::TimeoutMs(1)),
             Some(libc::EAI_AGAIN)
         );
         assert_eq!(
-            INTERCEPTOR_RUNTIME.map_dns_decision_to_eai(&LayerDecision::NxDomain),
+            global_interceptor_runtime().map_dns_decision_to_eai(&LayerDecision::NxDomain),
             Some(libc::EAI_NONAME)
         );
         assert_eq!(
-            INTERCEPTOR_RUNTIME.map_dns_decision_to_eai(&LayerDecision::ConnectionErrorKind(1)),
+            global_interceptor_runtime().map_dns_decision_to_eai(&LayerDecision::ConnectionErrorKind(1)),
             Some(libc::EAI_FAIL)
         );
-        assert_eq!(INTERCEPTOR_RUNTIME.map_dns_decision_to_eai(&LayerDecision::DelayNs(1)), None);
+        assert_eq!(global_interceptor_runtime().map_dns_decision_to_eai(&LayerDecision::DelayNs(1)), None);
     }
 }

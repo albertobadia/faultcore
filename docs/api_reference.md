@@ -129,8 +129,8 @@ Inject packet reordering on stream paths.
 Current support matrix:
 - `send`: supported (staging + window/flush behavior)
 - `sendto`: supported (staging + window/flush behavior)
-- `recv`: partially supported (non-blocking staging/replay with `EAGAIN`)
-- `recvfrom`: partially supported (non-blocking staging/replay with `EAGAIN`)
+- `recv`: supported (blocking: stage-first then return next chunk; non-blocking: staging/replay with `EAGAIN`)
+- `recvfrom`: supported (blocking: stage-first then return next datagram; non-blocking: staging/replay with `EAGAIN`)
 
 Optional keyword fields:
 - `prob`: reorder probability (same formats as `packet_loss(...)`, default `"100%"`)

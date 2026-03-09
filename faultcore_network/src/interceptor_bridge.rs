@@ -1,9 +1,9 @@
 use libc::{c_int, sockaddr, socklen_t};
 
 use crate::{
-    Config, Endpoint, TargetRule, assign_rule_to_fd, clear_rule_for_fd, endpoint_for_addr_or_fd, endpoint_for_fd,
-    get_config_for_fd, get_config_for_tid, get_target_rules_for_tid_slot, get_thread_id,
-    get_tid_slot_for_fd, monotonic_now_ns, try_open_shm,
+    Config, Direction, Endpoint, FaultOsiEngine, LayerDecision, TargetRule, assign_rule_to_fd,
+    clear_rule_for_fd, endpoint_for_addr_or_fd, endpoint_for_fd, get_config_for_fd, get_config_for_tid,
+    get_target_rules_for_tid_slot, get_thread_id, get_tid_slot_for_fd, monotonic_now_ns, try_open_shm,
 };
 
 fn endpoint_matches_rule(endpoint: Endpoint, rule: &TargetRule) -> bool {
@@ -107,6 +107,33 @@ pub fn runtime_dns_config_for_current_thread() -> Option<Config> {
     let tid = get_thread_id();
     let cfg = get_config_for_tid(tid)?.into_network_config();
     cfg.runtime_filtered(None, monotonic_now_ns())
+}
+
+pub fn uplink_duplicate_count_for_fd(engine: &FaultOsiEngine, fd: c_int) -> u64 {
+    let Some(network_cfg) = runtime_config_for_fd(fd) else {
+        return 0;
+    };
+    match engine.evaluate_stream_post(&network_cfg, Direction::Uplink) {
+        LayerDecision::Duplicate(n) => n,
+        _ => 0,
+    }
+}
+
+/// # Safety
+/// `addr` must be null or point to a valid socket address buffer of at least `addr_len` bytes.
+pub unsafe fn uplink_duplicate_count_for_addr_or_fd(
+    engine: &FaultOsiEngine,
+    fd: c_int,
+    addr: *const sockaddr,
+    addr_len: socklen_t,
+) -> u64 {
+    let Some(network_cfg) = (unsafe { runtime_config_for_addr_or_fd(fd, addr, addr_len) }) else {
+        return 0;
+    };
+    match engine.evaluate_stream_post(&network_cfg, Direction::Uplink) {
+        LayerDecision::Duplicate(n) => n,
+        _ => 0,
+    }
 }
 
 #[cfg(test)]

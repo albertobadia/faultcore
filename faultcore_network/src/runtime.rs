@@ -2,7 +2,10 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use libc::{EAGAIN, EAI_AGAIN, EAI_FAIL, EAI_NONAME, ECONNREFUSED, ECONNRESET, EIO, ENETUNREACH, ETIMEDOUT};
+use libc::{
+    EAGAIN, EAI_AGAIN, EAI_FAIL, EAI_NONAME, ECONNREFUSED, ECONNRESET, EIO, ENETUNREACH,
+    ETIMEDOUT, c_void, sockaddr, socklen_t, ssize_t,
+};
 use parking_lot::Mutex;
 
 use crate::LayerDecision;
@@ -53,6 +56,138 @@ fn set_errno(val: i32) {
     unsafe {
         *libc::__errno_location() = val;
     }
+}
+
+pub fn set_errno_value(val: i32) {
+    set_errno(val);
+}
+
+/// # Safety
+/// `b` must point to a readable buffer of `l` bytes.
+pub unsafe fn stage_reorder_send(
+    pending: &mut VecDeque<PendingDatagram>,
+    b: *const c_void,
+    l: usize,
+    flags: i32,
+) -> Option<ssize_t> {
+    if l == 0 || b.is_null() {
+        return None;
+    }
+    let data = unsafe { std::slice::from_raw_parts(b.cast::<u8>(), l).to_vec() };
+    pending.push_back(PendingDatagram::new(data, flags, Vec::new(), 0));
+    Some(l as ssize_t)
+}
+
+/// # Safety
+/// `b` must point to a readable buffer of `l` bytes.
+/// `addr` must be null or point to a readable socket address with `addr_len` bytes.
+pub unsafe fn stage_reorder_sendto(
+    pending: &mut VecDeque<PendingDatagram>,
+    b: *const c_void,
+    l: usize,
+    flags: i32,
+    addr: *const sockaddr,
+    addr_len: socklen_t,
+) -> Option<ssize_t> {
+    if l == 0 || b.is_null() {
+        return None;
+    }
+    let data = unsafe { std::slice::from_raw_parts(b.cast::<u8>(), l).to_vec() };
+    let addr_bytes = if !addr.is_null() && addr_len > 0 {
+        unsafe { std::slice::from_raw_parts(addr.cast::<u8>(), addr_len as usize).to_vec() }
+    } else {
+        Vec::new()
+    };
+    pending.push_back(PendingDatagram::new(data, flags, addr_bytes, addr_len));
+    Some(l as ssize_t)
+}
+
+/// # Safety
+/// `b` must point to a writable buffer of `l` bytes.
+pub unsafe fn write_pending_recv_result(pkt: &PendingDatagram, b: *mut c_void, l: usize) -> ssize_t {
+    if b.is_null() || l == 0 {
+        return 0;
+    }
+    let to_copy = usize::min(l, pkt.data.len());
+    unsafe {
+        std::ptr::copy_nonoverlapping(pkt.data.as_ptr(), b.cast::<u8>(), to_copy);
+    }
+    to_copy as ssize_t
+}
+
+/// # Safety
+/// `b` must point to a writable buffer of `l` bytes.
+/// `addr`/`addr_len` must be null together or a valid writable socket address pair.
+pub unsafe fn write_pending_recvfrom_result(
+    pkt: &PendingDatagram,
+    b: *mut c_void,
+    l: usize,
+    addr: *mut sockaddr,
+    addr_len: *mut socklen_t,
+) -> ssize_t {
+    if b.is_null() || l == 0 {
+        return 0;
+    }
+    let to_copy = usize::min(l, pkt.data.len());
+    unsafe {
+        std::ptr::copy_nonoverlapping(pkt.data.as_ptr(), b.cast::<u8>(), to_copy);
+    }
+    if !addr.is_null() && !addr_len.is_null() {
+        let capacity = unsafe { *addr_len as usize };
+        let available = usize::min(pkt.addr.len(), pkt.addr_len as usize);
+        let copy_addr = usize::min(capacity, available);
+        if copy_addr > 0 {
+            unsafe {
+                std::ptr::copy_nonoverlapping(pkt.addr.as_ptr(), addr.cast::<u8>(), copy_addr);
+            }
+        }
+        unsafe {
+            *addr_len = pkt.addr_len as socklen_t;
+        }
+    }
+    to_copy as ssize_t
+}
+
+/// # Safety
+/// `b` must point to a readable buffer with at least `recv_len` bytes.
+pub unsafe fn snapshot_recv_datagram(
+    b: *mut c_void,
+    recv_len: ssize_t,
+    flags: i32,
+) -> Option<PendingDatagram> {
+    if recv_len <= 0 || b.is_null() {
+        return None;
+    }
+    let data = unsafe { std::slice::from_raw_parts(b.cast::<u8>(), recv_len as usize).to_vec() };
+    Some(PendingDatagram::new(data, flags, Vec::new(), 0))
+}
+
+/// # Safety
+/// `b` must point to a readable buffer with at least `recv_len` bytes.
+/// `addr`/`addr_len` must be null together or a valid readable socket address pair.
+pub unsafe fn snapshot_recvfrom_datagram(
+    b: *mut c_void,
+    recv_len: ssize_t,
+    flags: i32,
+    addr: *mut sockaddr,
+    addr_len: *mut socklen_t,
+) -> Option<PendingDatagram> {
+    if recv_len <= 0 || b.is_null() {
+        return None;
+    }
+    let data = unsafe { std::slice::from_raw_parts(b.cast::<u8>(), recv_len as usize).to_vec() };
+    let (addr_bytes, len_u32) = if !addr.is_null() && !addr_len.is_null() {
+        let len = unsafe { *addr_len as usize };
+        if len == 0 {
+            (Vec::new(), 0)
+        } else {
+            let bytes = unsafe { std::slice::from_raw_parts(addr.cast::<u8>(), len).to_vec() };
+            (bytes, len as u32)
+        }
+    } else {
+        (Vec::new(), 0)
+    };
+    Some(PendingDatagram::new(data, flags, addr_bytes, len_u32))
 }
 
 pub fn apply_connect_directive(directive: ConnectDirective) -> Option<i32> {
@@ -145,17 +280,6 @@ impl InterceptorRuntime {
             return;
         }
         self.reorder_pending_recv_by_fd.lock().insert(fd, pending);
-    }
-
-    pub fn stage_reorder_datagram(
-        &self,
-        pending: &mut VecDeque<PendingDatagram>,
-        data: Vec<u8>,
-        flags: i32,
-        addr: Vec<u8>,
-        addr_len: u32,
-    ) {
-        pending.push_back(PendingDatagram::new(data, flags, addr, addr_len));
     }
 
     pub fn flush_expired_reorder(

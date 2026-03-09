@@ -6,17 +6,21 @@ pub mod setpriority_compat;
 pub mod shm_runtime;
 pub mod shm_contract;
 pub mod socket_runtime;
+use std::sync::OnceLock;
 
 pub use chaos_engine::{ChaosEngine, DecisionCounters};
 pub type FaultOsiEngine = ChaosEngine;
 pub type FaultOsiDecisionCounters = DecisionCounters;
 pub use interceptor_bridge::{
     bind_fd_to_current_thread, clear_fd_binding, init_runtime_shm, runtime_config_for_addr_or_fd,
-    runtime_config_for_fd, runtime_dns_config_for_current_thread,
+    runtime_config_for_fd, runtime_dns_config_for_current_thread, uplink_duplicate_count_for_addr_or_fd,
+    uplink_duplicate_count_for_fd,
 };
 pub use runtime::{
     ConnectDirective, InterceptorRuntime, PendingDatagram, StreamDirective, apply_connect_directive,
-    apply_stream_directive,
+    apply_stream_directive, set_errno_value, snapshot_recv_datagram, snapshot_recvfrom_datagram,
+    stage_reorder_send, stage_reorder_sendto, write_pending_recv_result,
+    write_pending_recvfrom_result,
 };
 pub use setpriority_compat::{
     FAULTCORE_SETPRIORITY_BANDWIDTH, FAULTCORE_SETPRIORITY_LATENCY, FAULTCORE_SETPRIORITY_TIMEOUT,
@@ -35,6 +39,17 @@ pub use layers::{
     Direction, L1Chaos, L2QoS, L3Routing, L4Transport, L5Session, L6Presentation, L7Resolver, Layer,
     LayerDecision, LayerStage, Operation, PacketContext,
 };
+
+static GLOBAL_ENGINE: OnceLock<ChaosEngine> = OnceLock::new();
+static GLOBAL_RUNTIME: OnceLock<InterceptorRuntime> = OnceLock::new();
+
+pub fn global_fault_osi_engine() -> &'static FaultOsiEngine {
+    GLOBAL_ENGINE.get_or_init(ChaosEngine::new)
+}
+
+pub fn global_interceptor_runtime() -> &'static InterceptorRuntime {
+    GLOBAL_RUNTIME.get_or_init(InterceptorRuntime::new)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Endpoint {
