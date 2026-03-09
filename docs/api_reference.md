@@ -302,6 +302,43 @@ Best-effort check for active interceptor:
 
 Search common build paths for `libfaultcore_interceptor.so`.
 
+### `get_fault_metrics(*, reset: bool = False, scope: str = "global") -> dict[str, Any]`
+
+Read runtime fault decision counters from the interceptor/network engine.
+
+Parameters:
+- `scope`:
+  - `"global"`: snapshot of process-wide counters.
+  - `"context"`: delta against the current `contextvars` baseline.
+- `reset`:
+  - when `True`, resets global runtime counters after reading.
+
+Returns:
+- `{"layers": [...], "totals": {...}}`
+- each layer has:
+  - `stage`: `"L1"`..`"L7"`
+  - `continue`, `delay`, `drop`, `timeout`, `error`,
+    `connection_error`, `reorder`, `duplicate`, `nxdomain`, `skipped`
+
+Important semantics:
+- `scope="context"` requires an active baseline:
+  - inside `fault_context(...)`, or
+  - inside a decorated function (`@faultcore.*`) while it is executing.
+- without active baseline, `scope="context"` raises `RuntimeError`.
+- counters are engine-level decisions, not per-function IDs.
+
+Example:
+
+```python
+import faultcore
+
+with faultcore.fault_context("my_policy"):
+    before = faultcore.get_fault_metrics(scope="context")
+    # perform network operations here
+    after = faultcore.get_fault_metrics(scope="context")
+    print(after["totals"])
+```
+
 ## Sync/Async SHM Lifecycle
 
 - Decorators write fields keyed by native thread id.

@@ -308,6 +308,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_faultcore_config_is_valid() {
@@ -421,6 +424,7 @@ mod tests {
 
     #[test]
     fn test_tid_collision() {
+        let _guard = TEST_LOCK.lock().expect("test lock poisoned");
         let mut table = vec![0u64; FAULTCORE_SHM_SIZE.div_ceil(core::mem::size_of::<u64>())];
 
         let prev_ptr = *SHM_POINTER.read();
@@ -449,6 +453,7 @@ mod tests {
 
     #[test]
     fn test_clear_rule_for_fd_resets_fd_slot() {
+        let _guard = TEST_LOCK.lock().expect("test lock poisoned");
         let mut table = vec![0u64; FAULTCORE_SHM_SIZE.div_ceil(core::mem::size_of::<u64>())];
 
         let prev_ptr = *SHM_POINTER.read();
@@ -621,6 +626,7 @@ mod tests {
 
     #[test]
     fn test_get_config_for_tid_slot_reads_tid_region() {
+        let _guard = TEST_LOCK.lock().expect("test lock poisoned");
         let mut table = vec![0u64; FAULTCORE_SHM_SIZE.div_ceil(core::mem::size_of::<u64>())];
 
         let prev_ptr = *SHM_POINTER.read();

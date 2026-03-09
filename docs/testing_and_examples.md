@@ -58,6 +58,8 @@ Some examples expect local servers:
 - `examples/08_bandwidth_throttle.py`
 - `examples/09_network_timeout.py`
 - `examples/10_target_priority.py`
+- `examples/11_fault_metrics.py`
+- `examples/12_perf_baseline.py`
 
 ## Notes on Rate Semantics
 
