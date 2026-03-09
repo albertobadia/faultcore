@@ -85,6 +85,42 @@ def run_no_match_case(host: str, port: int) -> float:
     return avg
 
 
+def run_protocol_mismatch_case(host: str, port: int) -> float:
+    faultcore.register_policy(
+        "targets_protocol_mismatch",
+        latency_ms=180,
+        targets=[{"target": f"{host}:{port}", "protocol": "udp", "priority": 200}],
+    )
+
+    @faultcore.apply_policy("targets_protocol_mismatch")
+    def call(message: str) -> str:
+        return tcp_echo(host, port, message)
+
+    avg = measure_ms(call, count=3)
+    print(f"protocol-mismatch avg latency: {avg:.2f}ms")
+    if avg > 80:
+        raise RuntimeError(f"expected protocol-mismatch latency <= 80ms, got {avg:.2f}ms")
+    return avg
+
+
+def run_port_mismatch_case(host: str, port: int) -> float:
+    faultcore.register_policy(
+        "targets_port_mismatch",
+        latency_ms=180,
+        targets=[{"target": host, "port": port + 1, "priority": 200}],
+    )
+
+    @faultcore.apply_policy("targets_port_mismatch")
+    def call(message: str) -> str:
+        return tcp_echo(host, port, message)
+
+    avg = measure_ms(call, count=3)
+    print(f"port-mismatch avg latency: {avg:.2f}ms")
+    if avg > 80:
+        raise RuntimeError(f"expected port-mismatch latency <= 80ms, got {avg:.2f}ms")
+    return avg
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="FaultCore targets[] integration probe")
     parser.add_argument("--host", default="127.0.0.1", help="echo server host")
@@ -101,6 +137,8 @@ def main() -> int:
             run_match_case(args.host, args.port)
         if args.mode in {"no-match", "all"}:
             run_no_match_case(args.host, args.port)
+            run_protocol_mismatch_case(args.host, args.port)
+            run_port_mismatch_case(args.host, args.port)
     except Exception as exc:  # noqa: BLE001
         print(f"ERROR: {exc}")
         return 1

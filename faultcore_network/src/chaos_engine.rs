@@ -288,13 +288,9 @@ impl ChaosEngine {
             return decision;
         }
 
-        if matches!(direction, Direction::Uplink) {
-            let decision = self.l1.reorder_decision(&effective);
-            self.metrics[Self::stage_index(LayerStage::L1)].record_decision(&decision);
-            decision
-        } else {
-            LayerDecision::Continue
-        }
+        let decision = self.l1.reorder_decision(&effective);
+        self.metrics[Self::stage_index(LayerStage::L1)].record_decision(&decision);
+        decision
     }
 
     pub fn evaluate_stream_post(&self, config: &Config, direction: Direction) -> LayerDecision {

@@ -31,6 +31,7 @@ impl PendingDatagram {
 pub struct InterceptorRuntime {
     latency_start_by_fd: Mutex<HashMap<i32, Instant>>,
     reorder_pending_by_fd: Mutex<HashMap<i32, VecDeque<PendingDatagram>>>,
+    reorder_pending_recv_by_fd: Mutex<HashMap<i32, VecDeque<PendingDatagram>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,12 +93,14 @@ impl InterceptorRuntime {
         Self {
             latency_start_by_fd: Mutex::new(HashMap::new()),
             reorder_pending_by_fd: Mutex::new(HashMap::new()),
+            reorder_pending_recv_by_fd: Mutex::new(HashMap::new()),
         }
     }
 
     pub fn clear_fd_state(&self, fd: i32) {
         self.latency_start_by_fd.lock().remove(&fd);
         self.reorder_pending_by_fd.lock().remove(&fd);
+        self.reorder_pending_recv_by_fd.lock().remove(&fd);
     }
 
     pub fn nonblocking_delay_pending(&self, fd: i32, latency_ns: u64) -> bool {
@@ -128,6 +131,20 @@ impl InterceptorRuntime {
             return;
         }
         self.reorder_pending_by_fd.lock().insert(fd, pending);
+    }
+
+    pub fn take_reorder_pending_recv(&self, fd: i32) -> VecDeque<PendingDatagram> {
+        self.reorder_pending_recv_by_fd
+            .lock()
+            .remove(&fd)
+            .unwrap_or_default()
+    }
+
+    pub fn put_reorder_pending_recv(&self, fd: i32, pending: VecDeque<PendingDatagram>) {
+        if pending.is_empty() {
+            return;
+        }
+        self.reorder_pending_recv_by_fd.lock().insert(fd, pending);
     }
 
     pub fn stage_reorder_datagram(
