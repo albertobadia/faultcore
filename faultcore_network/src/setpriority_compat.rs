@@ -1,24 +1,31 @@
 use libc::c_int;
 
-use crate::{FAULTCORE_MAGIC, get_thread_id, update_config_for_tid};
+use crate::{get_thread_id, update_config_for_tid, FAULTCORE_MAGIC};
 
 pub const FAULTCORE_SETPRIORITY_LATENCY: c_int = 0xFA;
 pub const FAULTCORE_SETPRIORITY_BANDWIDTH: c_int = 0xFB;
 pub const FAULTCORE_SETPRIORITY_TIMEOUT: c_int = 0xFC;
 
-pub fn try_handle_setpriority(which: c_int, who: c_int, prio: c_int) -> bool {
-    let is_faultcore = matches!(
-        which,
-        FAULTCORE_SETPRIORITY_LATENCY
-            | FAULTCORE_SETPRIORITY_BANDWIDTH
-            | FAULTCORE_SETPRIORITY_TIMEOUT
-    );
-    if !is_faultcore {
-        return false;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetpriorityCompatOutcome {
+    NotHandled,
+    Handled,
+    FaultcoreError { errno: c_int },
+}
+
+pub fn handle_setpriority_compat(which: c_int, who: c_int, prio: c_int) -> SetpriorityCompatOutcome {
+    if !is_faultcore_mode(which) {
+        return SetpriorityCompatOutcome::NotHandled;
+    }
+
+    if !is_valid_faultcore_args(which, who, prio) {
+        return SetpriorityCompatOutcome::FaultcoreError {
+            errno: libc::EINVAL,
+        };
     }
 
     let tid = get_thread_id() as usize;
-    let _ = update_config_for_tid(tid, |config| {
+    if update_config_for_tid(tid, |config| {
         match which {
             FAULTCORE_SETPRIORITY_LATENCY => {
                 config.latency_ns = (who as u64) * 1_000_000;
@@ -38,7 +45,118 @@ pub fn try_handle_setpriority(which: c_int, who: c_int, prio: c_int) -> bool {
             _ => {}
         }
         config.magic = FAULTCORE_MAGIC;
-    });
-    true
+    }) {
+        SetpriorityCompatOutcome::Handled
+    } else {
+        SetpriorityCompatOutcome::FaultcoreError { errno: libc::EIO }
+    }
 }
 
+pub fn try_handle_setpriority(which: c_int, who: c_int, prio: c_int) -> bool {
+    matches!(
+        handle_setpriority_compat(which, who, prio),
+        SetpriorityCompatOutcome::Handled
+    )
+}
+
+fn is_faultcore_mode(which: c_int) -> bool {
+    matches!(
+        which,
+        FAULTCORE_SETPRIORITY_LATENCY
+            | FAULTCORE_SETPRIORITY_BANDWIDTH
+            | FAULTCORE_SETPRIORITY_TIMEOUT
+    )
+}
+
+fn is_valid_faultcore_args(which: c_int, who: c_int, prio: c_int) -> bool {
+    match which {
+        FAULTCORE_SETPRIORITY_LATENCY => who >= 0 && prio >= 0,
+        FAULTCORE_SETPRIORITY_BANDWIDTH => prio >= 0,
+        FAULTCORE_SETPRIORITY_TIMEOUT => who >= -1 && prio >= -1,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_faultcore_modes_are_not_handled() {
+        let non_faultcore_which: c_int = 0;
+        assert_eq!(
+            handle_setpriority_compat(non_faultcore_which, 0, 0),
+            SetpriorityCompatOutcome::NotHandled
+        );
+    }
+
+    #[test]
+    fn latency_mode_rejects_negative_values_with_einval() {
+        assert_eq!(
+            handle_setpriority_compat(FAULTCORE_SETPRIORITY_LATENCY, -1, 1),
+            SetpriorityCompatOutcome::FaultcoreError {
+                errno: libc::EINVAL
+            }
+        );
+        assert_eq!(
+            handle_setpriority_compat(FAULTCORE_SETPRIORITY_LATENCY, 1, -1),
+            SetpriorityCompatOutcome::FaultcoreError {
+                errno: libc::EINVAL
+            }
+        );
+    }
+
+    #[test]
+    fn bandwidth_mode_rejects_negative_priority_with_einval() {
+        assert_eq!(
+            handle_setpriority_compat(FAULTCORE_SETPRIORITY_BANDWIDTH, 0, -5),
+            SetpriorityCompatOutcome::FaultcoreError {
+                errno: libc::EINVAL
+            }
+        );
+    }
+
+    #[test]
+    fn timeout_mode_rejects_values_below_negative_one_with_einval() {
+        assert_eq!(
+            handle_setpriority_compat(FAULTCORE_SETPRIORITY_TIMEOUT, -2, -1),
+            SetpriorityCompatOutcome::FaultcoreError {
+                errno: libc::EINVAL
+            }
+        );
+        assert_eq!(
+            handle_setpriority_compat(FAULTCORE_SETPRIORITY_TIMEOUT, -1, -2),
+            SetpriorityCompatOutcome::FaultcoreError {
+                errno: libc::EINVAL
+            }
+        );
+    }
+
+    #[test]
+    fn returns_faultcore_error_when_shm_update_fails() {
+        assert_eq!(
+            handle_setpriority_compat(FAULTCORE_SETPRIORITY_LATENCY, 5, 1000),
+            SetpriorityCompatOutcome::FaultcoreError { errno: libc::EIO }
+        );
+    }
+
+    #[test]
+    fn bool_wrapper_is_true_only_for_successful_handling() {
+        let non_faultcore_which: c_int = 0;
+        assert!(!try_handle_setpriority(
+            FAULTCORE_SETPRIORITY_BANDWIDTH,
+            0,
+            -5
+        ));
+        assert!(!try_handle_setpriority(
+            FAULTCORE_SETPRIORITY_LATENCY,
+            5,
+            1000
+        ));
+        assert!(!try_handle_setpriority(
+            non_faultcore_which,
+            0,
+            0
+        ));
+    }
+}

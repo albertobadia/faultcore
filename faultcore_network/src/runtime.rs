@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use libc::{
-    EAGAIN, EAI_AGAIN, EAI_FAIL, EAI_NONAME, ECONNREFUSED, ECONNRESET, EIO, ENETUNREACH,
-    ETIMEDOUT, c_void, sockaddr, socklen_t, ssize_t,
+    c_void, sockaddr, socklen_t, ssize_t, EAGAIN, EAI_AGAIN, EAI_FAIL, EAI_NONAME, ECONNREFUSED,
+    ECONNRESET, EIO, ENETUNREACH, ETIMEDOUT,
 };
 use parking_lot::Mutex;
 
@@ -33,8 +33,8 @@ impl PendingDatagram {
 
 pub struct InterceptorRuntime {
     latency_start_by_fd: Mutex<HashMap<i32, Instant>>,
-    reorder_pending_by_fd: Mutex<HashMap<i32, VecDeque<PendingDatagram>>>,
-    reorder_pending_recv_by_fd: Mutex<HashMap<i32, VecDeque<PendingDatagram>>>,
+    reorder_pending_by_fd: Mutex<HashMap<i32, Arc<Mutex<VecDeque<PendingDatagram>>>>>,
+    reorder_pending_recv_by_fd: Mutex<HashMap<i32, Arc<Mutex<VecDeque<PendingDatagram>>>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,7 +104,11 @@ pub unsafe fn stage_reorder_sendto(
 
 /// # Safety
 /// `b` must point to a writable buffer of `l` bytes.
-pub unsafe fn write_pending_recv_result(pkt: &PendingDatagram, b: *mut c_void, l: usize) -> ssize_t {
+pub unsafe fn write_pending_recv_result(
+    pkt: &PendingDatagram,
+    b: *mut c_void,
+    l: usize,
+) -> ssize_t {
     if b.is_null() || l == 0 {
         return 0;
     }
@@ -255,31 +259,89 @@ impl InterceptorRuntime {
     }
 
     pub fn take_reorder_pending(&self, fd: i32) -> VecDeque<PendingDatagram> {
-        self.reorder_pending_by_fd
-            .lock()
-            .remove(&fd)
-            .unwrap_or_default()
+        self.with_reorder_pending(fd, std::mem::take)
     }
 
     pub fn put_reorder_pending(&self, fd: i32, pending: VecDeque<PendingDatagram>) {
         if pending.is_empty() {
             return;
         }
-        self.reorder_pending_by_fd.lock().insert(fd, pending);
+        let mut incoming = pending;
+        self.with_reorder_pending(fd, |queue| {
+            queue.append(&mut incoming);
+        });
     }
 
     pub fn take_reorder_pending_recv(&self, fd: i32) -> VecDeque<PendingDatagram> {
-        self.reorder_pending_recv_by_fd
-            .lock()
-            .remove(&fd)
-            .unwrap_or_default()
+        self.with_reorder_pending_recv(fd, std::mem::take)
     }
 
     pub fn put_reorder_pending_recv(&self, fd: i32, pending: VecDeque<PendingDatagram>) {
         if pending.is_empty() {
             return;
         }
-        self.reorder_pending_recv_by_fd.lock().insert(fd, pending);
+        let mut incoming = pending;
+        self.with_reorder_pending_recv(fd, |queue| {
+            queue.append(&mut incoming);
+        });
+    }
+
+    pub fn with_reorder_pending<F, R>(&self, fd: i32, op: F) -> R
+    where
+        F: FnOnce(&mut VecDeque<PendingDatagram>) -> R,
+    {
+        let queue = {
+            let mut map = self.reorder_pending_by_fd.lock();
+            map.entry(fd)
+                .or_insert_with(|| Arc::new(Mutex::new(VecDeque::new())))
+                .clone()
+        };
+
+        let mut guard = queue.lock();
+        let out = op(&mut guard);
+        let cleanup = guard.is_empty();
+        drop(guard);
+
+        if cleanup {
+            let mut map = self.reorder_pending_by_fd.lock();
+            if map
+                .get(&fd)
+                .is_some_and(|current| Arc::ptr_eq(current, &queue))
+            {
+                map.remove(&fd);
+            }
+        }
+
+        out
+    }
+
+    pub fn with_reorder_pending_recv<F, R>(&self, fd: i32, op: F) -> R
+    where
+        F: FnOnce(&mut VecDeque<PendingDatagram>) -> R,
+    {
+        let queue = {
+            let mut map = self.reorder_pending_recv_by_fd.lock();
+            map.entry(fd)
+                .or_insert_with(|| Arc::new(Mutex::new(VecDeque::new())))
+                .clone()
+        };
+
+        let mut guard = queue.lock();
+        let out = op(&mut guard);
+        let cleanup = guard.is_empty();
+        drop(guard);
+
+        if cleanup {
+            let mut map = self.reorder_pending_recv_by_fd.lock();
+            if map
+                .get(&fd)
+                .is_some_and(|current| Arc::ptr_eq(current, &queue))
+            {
+                map.remove(&fd);
+            }
+        }
+
+        out
     }
 
     pub fn flush_expired_reorder(
@@ -368,7 +430,10 @@ impl InterceptorRuntime {
             LayerDecision::Continue | LayerDecision::StageReorder | LayerDecision::Duplicate(_) => {
                 StreamDirective::Continue
             }
-            LayerDecision::Drop => StreamDirective::ReturnValue(0),
+            LayerDecision::Drop => StreamDirective::ReturnErrno {
+                errno: EIO,
+                ret: -1,
+            },
             LayerDecision::DelayNs(latency_ns) => {
                 if is_non_blocking && self.nonblocking_delay_pending(fd, latency_ns) {
                     return StreamDirective::ReturnErrno {
@@ -466,7 +531,9 @@ mod tests {
         let runtime = InterceptorRuntime::new();
         let mut pending = VecDeque::from([pkt(b"a"), pkt(b"b")]);
 
-        assert!(runtime.pop_reorder_after_success(&mut pending, true).is_none());
+        assert!(runtime
+            .pop_reorder_after_success(&mut pending, true)
+            .is_none());
         assert_eq!(pending.len(), 2);
 
         let popped = runtime.pop_reorder_after_success(&mut pending, false);
@@ -485,5 +552,32 @@ mod tests {
 
         assert!(flushed.is_empty());
         assert_eq!(pending.len(), 2);
+    }
+
+    #[test]
+    fn with_reorder_pending_is_atomic_per_fd_under_concurrency() {
+        let runtime = Arc::new(InterceptorRuntime::new());
+        let fd = 11;
+        let threads = 8;
+        let per_thread = 200;
+
+        let mut joins = Vec::new();
+        for _ in 0..threads {
+            let runtime = Arc::clone(&runtime);
+            joins.push(std::thread::spawn(move || {
+                for _ in 0..per_thread {
+                    runtime.with_reorder_pending(fd, |pending| {
+                        pending.push_back(PendingDatagram::new(vec![1], 0, Vec::new(), 0));
+                    });
+                }
+            }));
+        }
+
+        for handle in joins {
+            handle.join().expect("thread should complete");
+        }
+
+        let total = runtime.with_reorder_pending(fd, |pending| pending.len());
+        assert_eq!(total, (threads * per_thread) as usize);
     }
 }

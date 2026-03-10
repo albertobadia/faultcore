@@ -115,11 +115,11 @@ Selection semantics for `targets[]`:
 - ties are resolved by first rule in registration order.
 
 ## Write/Read Consistency
-- Python uses optimistic versioning:
-  - marks `version` as odd during write;
-  - writes `magic` + payload;
-  - publishes `version` as even when done.
-- Rust validates stable reads using a double-read of `version` plus fences.
+- All SHM writers (Python and Rust) use the same optimistic versioning publish model:
+  - mark `version` as odd during write;
+  - write `magic` + payload;
+  - publish `version` as even when done.
+- Rust readers validate stable reads using a double-read of `version` plus fences.
 
 ### Consistency Sequence Diagram
 

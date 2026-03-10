@@ -1,10 +1,12 @@
 use faultcore_network::{
     Direction, LayerDecision, PendingDatagram,
+    SetpriorityCompatOutcome,
     apply_connect_directive, apply_stream_directive, bind_fd_to_current_thread, clear_fd_binding,
     global_fault_osi_engine, global_interceptor_runtime,
+    handle_setpriority_compat,
     init_runtime_shm, reset_global_fault_osi_metrics, runtime_config_for_addr_or_fd, runtime_config_for_fd,
     runtime_dns_config_for_current_thread, set_errno_value, snapshot_recv_datagram,
-    snapshot_recvfrom_datagram, stage_reorder_send, stage_reorder_sendto, try_handle_setpriority,
+    snapshot_recvfrom_datagram, stage_reorder_send, stage_reorder_sendto,
     uplink_duplicate_count_for_addr_or_fd, uplink_duplicate_count_for_fd,
     write_pending_recv_result, write_pending_recvfrom_result, FaultOsiMetricsSnapshot,
 };
@@ -207,47 +209,53 @@ pub unsafe extern "C" fn send(s: c_int, b: *const c_void, l: size_t, f: c_int) -
     }
 
     initialize();
-    let mut pending = global_interceptor_runtime().take_reorder_pending(s);
-    let mut staged_reorder = false;
-    let mut faults_applied = false;
-    let result = if let Some(network_cfg) = runtime_config_for_fd(s) {
-        faults_applied = true;
-        for pkt in global_interceptor_runtime().flush_expired_reorder(&mut pending, network_cfg.reorder_max_delay_ns) {
-            send_pending_datagram(s, &pkt);
-        }
-        let decision = global_fault_osi_engine().evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Uplink);
-        let directive = global_interceptor_runtime().map_stream_decision(s, decision.clone(), is_non_blocking(s));
-        if let Some(error) = apply_stream_directive(directive) {
-            error as ssize_t
-        } else if matches!(decision, LayerDecision::StageReorder) {
-            staged_reorder = true;
-            let staged = unsafe { stage_reorder_send(&mut pending, b, l, f) }.unwrap_or(l as ssize_t);
-            for pkt in global_interceptor_runtime().enforce_reorder_window(
-                &mut pending,
-                network_cfg.reorder_window as usize,
-            ) {
+    let result = global_interceptor_runtime().with_reorder_pending(s, |pending| {
+        let mut staged_reorder = false;
+        let mut faults_applied = false;
+        let result = if let Some(network_cfg) = runtime_config_for_fd(s) {
+            faults_applied = true;
+            for pkt in
+                global_interceptor_runtime().flush_expired_reorder(pending, network_cfg.reorder_max_delay_ns)
+            {
                 send_pending_datagram(s, &pkt);
             }
-            staged
+            let decision =
+                global_fault_osi_engine().evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Uplink);
+            let directive =
+                global_interceptor_runtime().map_stream_decision(s, decision.clone(), is_non_blocking(s));
+            if let Some(error) = apply_stream_directive(directive) {
+                error as ssize_t
+            } else if matches!(decision, LayerDecision::StageReorder) {
+                staged_reorder = true;
+                let staged = unsafe { stage_reorder_send(pending, b, l, f) }.unwrap_or(l as ssize_t);
+                for pkt in global_interceptor_runtime()
+                    .enforce_reorder_window(pending, network_cfg.reorder_window as usize)
+                {
+                    send_pending_datagram(s, &pkt);
+                }
+                staged
+            } else {
+                unsafe { (ORIG_SEND)(s, b, l, f) }
+            }
         } else {
             unsafe { (ORIG_SEND)(s, b, l, f) }
-        }
-    } else {
-        unsafe { (ORIG_SEND)(s, b, l, f) }
-    };
+        };
 
-    if result > 0 {
-        record_stream_bytes(s, result as u64);
-        if faults_applied && !staged_reorder {
-            maybe_duplicate_send(s, b, result, f);
+        if result > 0 {
+            record_stream_bytes(s, result as u64);
+            if faults_applied && !staged_reorder {
+                maybe_duplicate_send(s, b, result, f);
+            }
+            if faults_applied
+                && let Some(pkt) =
+                    global_interceptor_runtime().pop_reorder_after_success(pending, staged_reorder)
+            {
+                send_pending_datagram(s, &pkt);
+            }
         }
-        if faults_applied
-            && let Some(pkt) = global_interceptor_runtime().pop_reorder_after_success(&mut pending, staged_reorder)
-        {
-            send_pending_datagram(s, &pkt);
-        }
-    }
-    global_interceptor_runtime().put_reorder_pending(s, pending);
+
+        result
+    });
 
     exit_hook();
     result
@@ -263,60 +271,58 @@ pub unsafe extern "C" fn recv(s: c_int, b: *mut c_void, l: size_t, f: c_int) -> 
 
     initialize();
     let non_blocking = is_non_blocking(s);
-    let mut pending = global_interceptor_runtime().take_reorder_pending_recv(s);
-    let result = if let Some(network_cfg) = runtime_config_for_fd(s) {
-        if let Some(pkt) = pending.pop_front()
-        {
-            let out = unsafe { write_pending_recv_result(&pkt, b, l) };
-            global_interceptor_runtime().put_reorder_pending_recv(s, pending);
-            exit_hook();
-            return out;
-        }
+    let (result, should_record) = global_interceptor_runtime().with_reorder_pending_recv(s, |pending| {
+        if let Some(network_cfg) = runtime_config_for_fd(s) {
+            if let Some(pkt) = pending.pop_front() {
+                let out = unsafe { write_pending_recv_result(&pkt, b, l) };
+                return (out, false);
+            }
 
-        let decision =
-            global_fault_osi_engine().evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Downlink);
-        let directive = global_interceptor_runtime().map_stream_decision(s, decision.clone(), non_blocking);
-        if let Some(error) = apply_stream_directive(directive) {
-            error as ssize_t
-        } else if !non_blocking && matches!(decision, LayerDecision::StageReorder) {
-            let first_recv = unsafe { (ORIG_RECV)(s, b, l, f) };
-            if first_recv <= 0 {
-                first_recv
-            } else if let Some(pkt) = unsafe { snapshot_recv_datagram(b, first_recv, f) } {
-                pending.push_back(pkt);
-                let second_recv = unsafe { (ORIG_RECV)(s, b, l, f) };
-                if second_recv > 0 {
-                    second_recv
-                } else if let Some(staged) = pending.pop_front() {
-                    unsafe { write_pending_recv_result(&staged, b, l) }
+            let decision =
+                global_fault_osi_engine().evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Downlink);
+            let directive = global_interceptor_runtime().map_stream_decision(s, decision.clone(), non_blocking);
+            let out = if let Some(error) = apply_stream_directive(directive) {
+                error as ssize_t
+            } else if !non_blocking && matches!(decision, LayerDecision::StageReorder) {
+                let first_recv = unsafe { (ORIG_RECV)(s, b, l, f) };
+                if first_recv <= 0 {
+                    first_recv
+                } else if let Some(pkt) = unsafe { snapshot_recv_datagram(b, first_recv, f) } {
+                    pending.push_back(pkt);
+                    let second_recv = unsafe { (ORIG_RECV)(s, b, l, f) };
+                    if second_recv > 0 {
+                        second_recv
+                    } else if let Some(staged) = pending.pop_front() {
+                        unsafe { write_pending_recv_result(&staged, b, l) }
+                    } else {
+                        second_recv
+                    }
                 } else {
-                    second_recv
+                    first_recv
                 }
             } else {
-                first_recv
-            }
+                let recv_result = unsafe { (ORIG_RECV)(s, b, l, f) };
+                if non_blocking
+                    && matches!(decision, LayerDecision::StageReorder)
+                    && recv_result > 0
+                    && let Some(pkt) = unsafe { snapshot_recv_datagram(b, recv_result, f) }
+                {
+                    pending.push_back(pkt);
+                    set_errno_value(libc::EAGAIN);
+                    -1
+                } else {
+                    recv_result
+                }
+            };
+            (out, true)
         } else {
-            let recv_result = unsafe { (ORIG_RECV)(s, b, l, f) };
-            if non_blocking
-                && matches!(decision, LayerDecision::StageReorder)
-                && recv_result > 0
-                && let Some(pkt) = unsafe { snapshot_recv_datagram(b, recv_result, f) }
-            {
-                pending.push_back(pkt);
-                set_errno_value(libc::EAGAIN);
-                -1
-            } else {
-                recv_result
-            }
+            (unsafe { (ORIG_RECV)(s, b, l, f) }, true)
         }
-    } else {
-        unsafe { (ORIG_RECV)(s, b, l, f) }
-    };
+    });
 
-    if result > 0 {
+    if should_record && result > 0 {
         record_stream_bytes(s, result as u64);
     }
-    global_interceptor_runtime().put_reorder_pending_recv(s, pending);
 
     exit_hook();
     result
@@ -366,48 +372,54 @@ pub unsafe extern "C" fn sendto(
     }
 
     initialize();
-    let mut pending = global_interceptor_runtime().take_reorder_pending(s);
-    let mut staged_reorder = false;
-    let mut faults_applied = false;
-    let result = if let Some(network_cfg) = unsafe { runtime_config_for_addr_or_fd(s, addr, addr_len) } {
-        faults_applied = true;
-        for pkt in global_interceptor_runtime().flush_expired_reorder(&mut pending, network_cfg.reorder_max_delay_ns) {
-            send_pending_datagram(s, &pkt);
-        }
-        let decision = global_fault_osi_engine().evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Uplink);
-        let directive = global_interceptor_runtime().map_stream_decision(s, decision.clone(), is_non_blocking(s));
-        if let Some(error) = apply_stream_directive(directive) {
-            error as ssize_t
-        } else if matches!(decision, LayerDecision::StageReorder) {
-            staged_reorder = true;
-            let staged = unsafe { stage_reorder_sendto(&mut pending, b, l, f, addr, addr_len) }
-                .unwrap_or(l as ssize_t);
-            for pkt in global_interceptor_runtime().enforce_reorder_window(
-                &mut pending,
-                network_cfg.reorder_window as usize,
-            ) {
+    let result = global_interceptor_runtime().with_reorder_pending(s, |pending| {
+        let mut staged_reorder = false;
+        let mut faults_applied = false;
+        let result = if let Some(network_cfg) = unsafe { runtime_config_for_addr_or_fd(s, addr, addr_len) } {
+            faults_applied = true;
+            for pkt in
+                global_interceptor_runtime().flush_expired_reorder(pending, network_cfg.reorder_max_delay_ns)
+            {
                 send_pending_datagram(s, &pkt);
             }
-            staged
+            let decision =
+                global_fault_osi_engine().evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Uplink);
+            let directive =
+                global_interceptor_runtime().map_stream_decision(s, decision.clone(), is_non_blocking(s));
+            if let Some(error) = apply_stream_directive(directive) {
+                error as ssize_t
+            } else if matches!(decision, LayerDecision::StageReorder) {
+                staged_reorder = true;
+                let staged = unsafe { stage_reorder_sendto(pending, b, l, f, addr, addr_len) }
+                    .unwrap_or(l as ssize_t);
+                for pkt in global_interceptor_runtime()
+                    .enforce_reorder_window(pending, network_cfg.reorder_window as usize)
+                {
+                    send_pending_datagram(s, &pkt);
+                }
+                staged
+            } else {
+                unsafe { (ORIG_SENDTO)(s, b, l, f, addr, addr_len) }
+            }
         } else {
             unsafe { (ORIG_SENDTO)(s, b, l, f, addr, addr_len) }
-        }
-    } else {
-        unsafe { (ORIG_SENDTO)(s, b, l, f, addr, addr_len) }
-    };
+        };
 
-    if result > 0 {
-        record_stream_bytes(s, result as u64);
-        if faults_applied && !staged_reorder {
-            maybe_duplicate_sendto(s, b, result, f, addr, addr_len);
+        if result > 0 {
+            record_stream_bytes(s, result as u64);
+            if faults_applied && !staged_reorder {
+                maybe_duplicate_sendto(s, b, result, f, addr, addr_len);
+            }
+            if faults_applied
+                && let Some(pkt) =
+                    global_interceptor_runtime().pop_reorder_after_success(pending, staged_reorder)
+            {
+                send_pending_datagram(s, &pkt);
+            }
         }
-        if faults_applied
-            && let Some(pkt) = global_interceptor_runtime().pop_reorder_after_success(&mut pending, staged_reorder)
-        {
-            send_pending_datagram(s, &pkt);
-        }
-    }
-    global_interceptor_runtime().put_reorder_pending(s, pending);
+
+        result
+    });
 
     exit_hook();
     result
@@ -431,59 +443,58 @@ pub unsafe extern "C" fn recvfrom(
 
     initialize();
     let non_blocking = is_non_blocking(s);
-    let mut pending = global_interceptor_runtime().take_reorder_pending_recv(s);
-    let result = if let Some(network_cfg) = runtime_config_for_fd(s) {
-        if let Some(pkt) = pending.pop_front()
-        {
-            let out = unsafe { write_pending_recvfrom_result(&pkt, b, l, addr, addr_len) };
-            global_interceptor_runtime().put_reorder_pending_recv(s, pending);
-            exit_hook();
-            return out;
-        }
+    let (result, should_record) = global_interceptor_runtime().with_reorder_pending_recv(s, |pending| {
+        if let Some(network_cfg) = runtime_config_for_fd(s) {
+            if let Some(pkt) = pending.pop_front() {
+                let out = unsafe { write_pending_recvfrom_result(&pkt, b, l, addr, addr_len) };
+                return (out, false);
+            }
 
-        let decision = global_fault_osi_engine().evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Downlink);
-        let directive = global_interceptor_runtime().map_stream_decision(s, decision.clone(), non_blocking);
-        if let Some(error) = apply_stream_directive(directive) {
-            error as ssize_t
-        } else if !non_blocking && matches!(decision, LayerDecision::StageReorder) {
-            let first_recv = unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) };
-            if first_recv <= 0 {
-                first_recv
-            } else if let Some(pkt) = unsafe { snapshot_recvfrom_datagram(b, first_recv, f, addr, addr_len) } {
-                pending.push_back(pkt);
-                let second_recv = unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) };
-                if second_recv > 0 {
-                    second_recv
-                } else if let Some(staged) = pending.pop_front() {
-                    unsafe { write_pending_recvfrom_result(&staged, b, l, addr, addr_len) }
+            let decision =
+                global_fault_osi_engine().evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Downlink);
+            let directive = global_interceptor_runtime().map_stream_decision(s, decision.clone(), non_blocking);
+            let out = if let Some(error) = apply_stream_directive(directive) {
+                error as ssize_t
+            } else if !non_blocking && matches!(decision, LayerDecision::StageReorder) {
+                let first_recv = unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) };
+                if first_recv <= 0 {
+                    first_recv
+                } else if let Some(pkt) = unsafe { snapshot_recvfrom_datagram(b, first_recv, f, addr, addr_len) } {
+                    pending.push_back(pkt);
+                    let second_recv = unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) };
+                    if second_recv > 0 {
+                        second_recv
+                    } else if let Some(staged) = pending.pop_front() {
+                        unsafe { write_pending_recvfrom_result(&staged, b, l, addr, addr_len) }
+                    } else {
+                        second_recv
+                    }
                 } else {
-                    second_recv
+                    first_recv
                 }
             } else {
-                first_recv
-            }
+                let recv_result = unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) };
+                if non_blocking
+                    && matches!(decision, LayerDecision::StageReorder)
+                    && recv_result > 0
+                    && let Some(pkt) = unsafe { snapshot_recvfrom_datagram(b, recv_result, f, addr, addr_len) }
+                {
+                    pending.push_back(pkt);
+                    set_errno_value(libc::EAGAIN);
+                    -1
+                } else {
+                    recv_result
+                }
+            };
+            (out, true)
         } else {
-            let recv_result = unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) };
-            if non_blocking
-                && matches!(decision, LayerDecision::StageReorder)
-                && recv_result > 0
-                && let Some(pkt) = unsafe { snapshot_recvfrom_datagram(b, recv_result, f, addr, addr_len) }
-            {
-                pending.push_back(pkt);
-                set_errno_value(libc::EAGAIN);
-                -1
-            } else {
-                recv_result
-            }
+            (unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) }, true)
         }
-    } else {
-        unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) }
-    };
+    });
 
-    if result > 0 {
+    if should_record && result > 0 {
         record_stream_bytes(s, result as u64);
     }
-    global_interceptor_runtime().put_reorder_pending_recv(s, pending);
 
     exit_hook();
     result
@@ -521,8 +532,13 @@ pub extern "C" fn getaddrinfo(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn setpriority(which: c_int, who: c_int, prio: c_int) -> c_int {
-    if try_handle_setpriority(which, who, prio) {
-        return 0;
+    match handle_setpriority_compat(which, who, prio) {
+        SetpriorityCompatOutcome::Handled => return 0,
+        SetpriorityCompatOutcome::FaultcoreError { errno } => {
+            set_errno_value(errno);
+            return -1;
+        }
+        SetpriorityCompatOutcome::NotHandled => {}
     }
 
     unsafe {
@@ -589,9 +605,24 @@ mod tests {
     }
 
     #[test]
-    fn stream_drop_maps_to_zero() {
+    fn stream_drop_maps_to_errno() {
         let directive = global_interceptor_runtime().map_stream_decision(1, LayerDecision::Drop, false);
-        assert_eq!(directive, faultcore_network::StreamDirective::ReturnValue(0));
+        assert_eq!(
+            directive,
+            faultcore_network::StreamDirective::ReturnErrno {
+                errno: libc::EIO,
+                ret: -1,
+            }
+        );
+    }
+
+    #[test]
+    fn stream_drop_must_not_look_like_successful_zero_byte_io() {
+        let directive = global_interceptor_runtime().map_stream_decision(1, LayerDecision::Drop, false);
+        assert!(
+            !matches!(directive, faultcore_network::StreamDirective::ReturnValue(0)),
+            "drop for stream I/O should not be mapped as a successful zero-byte operation"
+        );
     }
 
     #[test]
@@ -643,5 +674,16 @@ mod tests {
             .nth(1)
             .expect("setpriority hook must exist");
         assert!(setpriority_block.contains("is_null"));
+    }
+
+    #[test]
+    fn setpriority_faultcore_failure_must_return_errno_without_libc_fallback() {
+        let src = include_str!("lib.rs");
+        let setpriority_block = src
+            .split("pub extern \"C\" fn setpriority")
+            .nth(1)
+            .expect("setpriority hook must exist");
+        assert!(setpriority_block.contains("SetpriorityCompatOutcome::FaultcoreError"));
+        assert!(setpriority_block.contains("set_errno_value(errno)"));
     }
 }

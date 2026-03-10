@@ -24,7 +24,7 @@ pub use runtime::{
 };
 pub use setpriority_compat::{
     FAULTCORE_SETPRIORITY_BANDWIDTH, FAULTCORE_SETPRIORITY_LATENCY, FAULTCORE_SETPRIORITY_TIMEOUT,
-    try_handle_setpriority,
+    SetpriorityCompatOutcome, handle_setpriority_compat, try_handle_setpriority,
 };
 pub use shm_runtime::{
     assign_rule_to_fd, clear_rule_for_fd, get_config_for_fd, get_config_for_tid, get_config_for_tid_slot,

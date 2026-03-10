@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import threading
 import time
 from unittest.mock import MagicMock, patch
@@ -100,6 +101,23 @@ class TestLatencyDecorator:
             return "ok"
 
         assert my_function.__name__ == "my_function"
+
+    def test_latency_write_failure_still_clears_shm(self):
+        mock_shm = MagicMock()
+        mock_shm.write_latency = MagicMock(side_effect=RuntimeError("write failed"))
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=4242):
+
+                @faultcore.latency(10)
+                def my_func():
+                    return "ok"
+
+                with pytest.raises(RuntimeError, match="write failed"):
+                    my_func()
+
+                mock_shm.clear.assert_called_once_with(4242)
 
 
 class TestJitterDecorator:
@@ -604,6 +622,10 @@ class TestTargetDecorators:
                     protocol=1,
                 )
                 mock_shm.clear.assert_called_once_with(977)
+
+    def test_for_target_ipv6_reports_explicit_ipv4_only_error(self):
+        with pytest.raises(ValueError, match=r"(?i)ipv4"):
+            faultcore.for_target("tcp://[::1]:443")
 
 
 class TestTemporalProfiles:
@@ -1162,6 +1184,24 @@ class TestPolicyRegistry:
         assert faultcore.unregister_policy("a_policy") is False
         assert faultcore.list_policies() == ["b_policy"]
 
+    def test_get_policy_returns_deep_copy_for_nested_profiles(self):
+        clear_policies()
+        faultcore.register_policy(
+            "deep_copy_policy",
+            uplink={"latency_ms": 7},
+            targets=[{"target": "tcp://10.1.2.3:443", "priority": 100}],
+        )
+
+        policy = faultcore.get_policy("deep_copy_policy")
+        assert policy is not None
+        policy["uplink_profile"]["latency_ms"] = 999
+        policy["target_profiles"][0]["port"] = 1
+
+        fresh = faultcore.get_policy("deep_copy_policy")
+        assert fresh is not None
+        assert fresh["uplink_profile"]["latency_ms"] == 7
+        assert fresh["target_profiles"][0]["port"] == 443
+
     def test_registry_thread_safety_under_parallel_updates(self):
         clear_policies()
 
@@ -1344,6 +1384,59 @@ class TestTimeoutContract:
 
         time.sleep(0.07)
         assert side_effect.is_set() is False
+
+    def test_timeout_worker_thread_does_not_rely_on_fork(self):
+        @faultcore.timeout(50)
+        def fast_operation():
+            return "ok"
+
+        outcome: dict[str, object] = {}
+
+        def worker() -> None:
+            with patch("faultcore.decorator.os.fork", side_effect=AssertionError("fork used")):
+                try:
+                    outcome["result"] = fast_operation()
+                    outcome["error"] = None
+                except Exception as exc:  # noqa: BLE001
+                    outcome["error"] = exc
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        thread.join(timeout=1)
+
+        assert thread.is_alive() is False
+        assert outcome["error"] is None
+        assert outcome["result"] == "ok"
+
+    def test_timeout_worker_thread_handles_partial_pipe_writes(self):
+        @faultcore.timeout(100)
+        def produce_large_payload():
+            return "x" * 200_000
+
+        original_write = os.write
+
+        def short_write(fd: int, payload: bytes) -> int:
+            if len(payload) > 32:
+                return original_write(fd, payload[:32])
+            return original_write(fd, payload)
+
+        outcome: dict[str, object] = {}
+
+        def worker() -> None:
+            with patch("faultcore.decorator.os.write", side_effect=short_write):
+                try:
+                    outcome["result"] = produce_large_payload()
+                    outcome["error"] = None
+                except Exception as exc:  # noqa: BLE001
+                    outcome["error"] = exc
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        thread.join(timeout=1)
+
+        assert thread.is_alive() is False
+        assert outcome["error"] is None
+        assert len(outcome["result"]) == 200_000
 
 
 class TestTimeoutShmLifecycle:

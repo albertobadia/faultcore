@@ -1,11 +1,11 @@
-use libc::{MAP_SHARED, O_RDWR, PROT_READ, PROT_WRITE, c_int, ftruncate, mmap, shm_open};
 use crate::{
-    FAULTCORE_MAGIC, FAULTCORE_SHM_SIZE, FaultcoreConfig, MAX_FDS, MAX_POLICIES,
-    MAX_TARGET_RULES_PER_TID, MAX_TIDS, PolicyState, TargetRule,
+    FaultcoreConfig, PolicyState, TargetRule, FAULTCORE_MAGIC, FAULTCORE_SHM_SIZE, MAX_FDS,
+    MAX_POLICIES, MAX_TARGET_RULES_PER_TID, MAX_TIDS,
 };
+use libc::{c_int, ftruncate, mmap, shm_open, MAP_SHARED, O_RDWR, PROT_READ, PROT_WRITE};
 use parking_lot::RwLock;
 use std::ptr;
-use std::sync::atomic::{AtomicU64, Ordering, fence};
+use std::sync::atomic::{fence, AtomicU64, Ordering};
 
 pub fn get_thread_id() -> u64 {
     unsafe { libc::syscall(libc::SYS_gettid) as u64 }
@@ -149,7 +149,9 @@ pub fn get_tid_slot_for_tid(tid: u64) -> usize {
     tid_slot(tid as usize)
 }
 
-pub fn get_target_rules_for_tid_slot(slot: usize) -> Option<[TargetRule; MAX_TARGET_RULES_PER_TID]> {
+pub fn get_target_rules_for_tid_slot(
+    slot: usize,
+) -> Option<[TargetRule; MAX_TARGET_RULES_PER_TID]> {
     if !is_shm_open() {
         try_open_shm();
     }
@@ -286,9 +288,32 @@ pub fn clear_rule_for_fd(fd: c_int) {
             ptr::write_unaligned(owners.add(fd as usize), INVALID_TID_SLOT);
         }
         if let Some(fd_ptr) = get_config_ptr(fd as usize, false) {
-            fd_ptr.write(FaultcoreConfig::default());
+            write_config_with_versioned_publish(fd_ptr, |config| {
+                *config = FaultcoreConfig::default();
+            });
         }
     }
+}
+
+unsafe fn write_config_with_versioned_publish<F>(config_ptr: *mut FaultcoreConfig, mutate: F)
+where
+    F: FnOnce(&mut FaultcoreConfig),
+{
+    let version_ptr = unsafe { config_ptr.cast::<u8>().add(4) as *mut u64 };
+    let start_version = unsafe { ptr::read_unaligned(version_ptr as *const u64) } | 1;
+
+    unsafe { ptr::write_unaligned(version_ptr, start_version) };
+    fence(Ordering::SeqCst);
+
+    let mut config = unsafe { ptr::read_unaligned(config_ptr) };
+    mutate(&mut config);
+    config.version = start_version;
+
+    unsafe { ptr::write_unaligned(config_ptr, config) };
+    fence(Ordering::SeqCst);
+
+    let published_version = (start_version.wrapping_add(1)) & !1;
+    unsafe { ptr::write_unaligned(version_ptr, published_version) };
 }
 
 pub fn update_config_for_tid<F>(tid: usize, mutate: F) -> bool
@@ -296,10 +321,12 @@ where
     F: FnOnce(&mut FaultcoreConfig),
 {
     if let Some(config_ptr) = unsafe { get_config_ptr(tid, true) } {
-        let mut config = unsafe { config_ptr.read() };
-        mutate(&mut config);
-        config.magic = FAULTCORE_MAGIC;
-        unsafe { config_ptr.write(config) };
+        unsafe {
+            write_config_with_versioned_publish(config_ptr, |config| {
+                mutate(config);
+                config.magic = FAULTCORE_MAGIC;
+            });
+        }
         return true;
     }
     false
@@ -424,7 +451,9 @@ mod tests {
 
     #[test]
     fn test_tid_collision() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut table = vec![0u64; FAULTCORE_SHM_SIZE.div_ceil(core::mem::size_of::<u64>())];
 
         let prev_ptr = *SHM_POINTER.read();
@@ -453,7 +482,9 @@ mod tests {
 
     #[test]
     fn test_clear_rule_for_fd_resets_fd_slot() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut table = vec![0u64; FAULTCORE_SHM_SIZE.div_ceil(core::mem::size_of::<u64>())];
 
         let prev_ptr = *SHM_POINTER.read();
@@ -571,7 +602,7 @@ mod tests {
             let schedule_started_monotonic_ns = ptr::read_unaligned(base.add(364) as *const u64);
             let reserved = ptr::read_unaligned(base.add(372) as *const u32);
             assert_eq!(magic, 0);
-            assert_eq!(version, 0);
+            assert_eq!(version % 2, 0);
             assert_eq!(latency_ns, 0);
             assert_eq!(jitter_ns, 0);
             assert_eq!(packet_loss_ppm, 0);
@@ -626,7 +657,9 @@ mod tests {
 
     #[test]
     fn test_get_config_for_tid_slot_reads_tid_region() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut table = vec![0u64; FAULTCORE_SHM_SIZE.div_ceil(core::mem::size_of::<u64>())];
 
         let prev_ptr = *SHM_POINTER.read();
@@ -639,13 +672,16 @@ mod tests {
         unsafe {
             let base = *SHM_POINTER.read() as *mut FaultcoreConfig;
             let ptr = base.add(MAX_FDS + slot);
-            ptr::write_unaligned(ptr, FaultcoreConfig {
-                magic: FAULTCORE_MAGIC,
-                version: 2,
-                reorder_prob_ppm: 1_000_000,
-                reorder_window: 2,
-                ..Default::default()
-            });
+            ptr::write_unaligned(
+                ptr,
+                FaultcoreConfig {
+                    magic: FAULTCORE_MAGIC,
+                    version: 2,
+                    reorder_prob_ppm: 1_000_000,
+                    reorder_window: 2,
+                    ..Default::default()
+                },
+            );
         }
 
         let cfg = get_config_for_tid_slot(slot).expect("tid slot config should be readable");
@@ -660,7 +696,9 @@ mod tests {
 
     #[test]
     fn test_assign_rule_to_fd_ignores_out_of_range_fd() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut table = vec![0u64; FAULTCORE_SHM_SIZE.div_ceil(core::mem::size_of::<u64>()) + 1];
 
         let prev_ptr = *SHM_POINTER.read();
@@ -682,7 +720,9 @@ mod tests {
 
     #[test]
     fn test_clear_rule_for_fd_ignores_out_of_range_fd() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut table = vec![0u64; FAULTCORE_SHM_SIZE.div_ceil(core::mem::size_of::<u64>()) + 1];
 
         let prev_ptr = *SHM_POINTER.read();
@@ -704,7 +744,9 @@ mod tests {
 
     #[test]
     fn test_get_tid_slot_for_fd_out_of_range_returns_none() {
-        let _guard = TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut table = vec![0u64; FAULTCORE_SHM_SIZE.div_ceil(core::mem::size_of::<u64>()) + 1];
 
         let prev_ptr = *SHM_POINTER.read();
