@@ -45,6 +45,8 @@ def run_sync_with_timeout(
     if pid == 0:
         os_module.close(read_fd)
         os_module.close(signal_read_fd)
+        # Handshake: notify parent that function execution is about to start.
+        os_module.write(signal_write_fd, b"S")
         kind: str
         value: Any
         try:
@@ -54,8 +56,8 @@ def run_sync_with_timeout(
             value = exc
             kind = "error"
         try:
-            # Notify parent immediately when user code finishes, before serialization/write costs.
-            os_module.write(signal_write_fd, b"\x01")
+            # Notify parent when user code finishes, before serialization/write costs.
+            os_module.write(signal_write_fd, b"D")
             os_module.close(signal_write_fd)
             payload = pickle_module.dumps((kind, value), protocol=pickle_module.HIGHEST_PROTOCOL)
             offset = 0
@@ -71,9 +73,31 @@ def run_sync_with_timeout(
 
     os_module.close(write_fd)
     os_module.close(signal_write_fd)
-    startup_grace_ms = min(10, max(2, timeout_ms // 5))
-    timeout_s = (timeout_ms + startup_grace_ms) / 1000
-    ready, _, _ = select_module.select([signal_read_fd], [], [], timeout_s)
+    # Allow bounded startup time for thread/process scheduling before timing user execution.
+    startup_timeout_ms = min(50, max(10, timeout_ms // 2))
+    startup_ready, _, _ = select_module.select([signal_read_fd], [], [], startup_timeout_ms / 1000)
+    if not startup_ready:
+        try:
+            os_module.kill(pid, signal_module.SIGKILL)
+        except ProcessLookupError:
+            pass
+        os_module.waitpid(pid, 0)
+        os_module.close(signal_read_fd)
+        os_module.close(read_fd)
+        raise TimeoutError(f"Function execution exceeded {timeout_ms}ms")
+
+    started = os_module.read(signal_read_fd, 1)
+    if started != b"S":
+        try:
+            os_module.kill(pid, signal_module.SIGKILL)
+        except ProcessLookupError:
+            pass
+        os_module.waitpid(pid, 0)
+        os_module.close(signal_read_fd)
+        os_module.close(read_fd)
+        raise RuntimeError("Worker process failed before execution handshake")
+
+    ready, _, _ = select_module.select([signal_read_fd], [], [], timeout_ms / 1000)
     if not ready:
         try:
             os_module.kill(pid, signal_module.SIGKILL)
@@ -83,7 +107,18 @@ def run_sync_with_timeout(
         os_module.close(signal_read_fd)
         os_module.close(read_fd)
         raise TimeoutError(f"Function execution exceeded {timeout_ms}ms")
-    os_module.read(signal_read_fd, 1)
+
+    finished = os_module.read(signal_read_fd, 1)
+    if finished != b"D":
+        try:
+            os_module.kill(pid, signal_module.SIGKILL)
+        except ProcessLookupError:
+            pass
+        os_module.waitpid(pid, 0)
+        os_module.close(signal_read_fd)
+        os_module.close(read_fd)
+        raise RuntimeError("Worker process failed before completion handshake")
+
     os_module.close(signal_read_fd)
 
     data = b""

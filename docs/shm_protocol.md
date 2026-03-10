@@ -39,7 +39,7 @@ Diagram focus: top-level SHM memory regions consumed by writer/runtime.
 | Field | Offset | Size | Type |
 |---|---:|---:|---|
 | `magic` | 0 | 4 | `u32` |
-| `version` | 4 | 8 | `u64` |
+| `version` | 4 | 8 | `u64` (legacy, reservado; no usado para consistencia) |
 | `latency_ns` | 12 | 8 | `u64` |
 | `jitter_ns` | 20 | 8 | `u64` |
 | `packet_loss_ppm` | 28 | 8 | `u64` |
@@ -76,7 +76,7 @@ Diagram focus: top-level SHM memory regions consumed by writer/runtime.
 | `dns_nxdomain_ppm` | 276 | 8 | `u64` |
 | `target_enabled` | 284 | 8 | `u64` |
 | `target_kind` | 292 | 8 | `u64` |
-| `target_ipv4` | 300 | 8 | `u64` |
+| `target_ipv4` | 300 | 8 | `u64` (legacy de compat; matching operativo usa `target_address_family` + `target_addr`) |
 | `target_prefix_len` | 308 | 8 | `u64` |
 | `target_port` | 316 | 8 | `u64` |
 | `target_protocol` | 324 | 8 | `u64` |
@@ -89,8 +89,8 @@ Diagram focus: top-level SHM memory regions consumed by writer/runtime.
 | `ruleset_generation` | 376 | 8 | `u64` |
 | `target_address_family` | 384 | 8 | `u64` |
 | `target_addr` | 392 | 16 | `[u8;16]` |
-| `target_hostname` | 408 | 32 | `[u8;32]` |
-| `target_sni` | 440 | 32 | `[u8;32]` |
+| `target_hostname` | 408 | 32 | `[u8;32]` (tamaño final del ciclo vNext) |
+| `target_sni` | 440 | 32 | `[u8;32]` (tamaño final del ciclo vNext) |
 
 Constants:
 - `FAULTCORE_MAGIC = 0xFACC0DE`
@@ -115,8 +115,8 @@ Constants:
 | `reserved` | `u64` | reserved |
 | `address_family` | `u64` | `0=unset`, `1=ipv4`, `2=ipv6` |
 | `addr` | `[u8;16]` | unified IP bytes (network order) |
-| `hostname` | `[u8;32]` | normalized hostname buffer (NUL padded) |
-| `sni` | `[u8;32]` | normalized SNI buffer (NUL padded) |
+| `hostname` | `[u8;32]` | normalized hostname buffer (NUL padded, tamaño final vNext) |
+| `sni` | `[u8;32]` | normalized SNI buffer (NUL padded, tamaño final vNext) |
 
 Selection semantics for `targets[]`:
 - consider first `target_enabled` rules;
@@ -124,11 +124,11 @@ Selection semantics for `targets[]`:
 - ties are resolved by first rule in registration order.
 
 ## Write/Read Consistency
-- All SHM writers (Python and Rust) use the same optimistic versioning publish model:
-  - mark `version` as odd during write;
+- All SHM writers (Python and Rust) use `ruleset_generation` as the optimistic publish marker:
+  - mark `ruleset_generation` as odd during write;
   - write `magic` + payload;
-  - publish `version` as even when done.
-- Rust readers validate stable reads using a double-read of `version` plus fences.
+  - publish `ruleset_generation` as even when done.
+- Rust readers validate stable reads using a double-read of `ruleset_generation` plus fences.
 
 ### Consistency Sequence Diagram
 
@@ -138,13 +138,13 @@ sequenceDiagram
     participant SHM as SHM row
     participant Rs as Rust reader
 
-    Py->>SHM: set version = odd
+    Py->>SHM: set ruleset_generation = odd
     Py->>SHM: write magic + payload
-    Py->>SHM: set version = even
+    Py->>SHM: set ruleset_generation = even
 
-    Rs->>SHM: read version_before
+    Rs->>SHM: read generation_before
     Rs->>SHM: read payload
-    Rs->>SHM: read version_after
+    Rs->>SHM: read generation_after
     alt stable even snapshot
         Rs-->>Rs: accept row
     else changed or odd
@@ -152,7 +152,7 @@ sequenceDiagram
     end
 ```
 
-Diagram focus: odd/even publish protocol and reader stability check.
+Diagram focus: odd/even publish protocol over `ruleset_generation` and reader stability check.
 
 ## Compatibility Rule
 Any change in offsets/size must:

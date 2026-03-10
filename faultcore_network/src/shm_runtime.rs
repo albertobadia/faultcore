@@ -25,6 +25,7 @@ const TARGET_RULES_REGION_OFFSET: usize = POLICY_REGION_OFFSET + POLICY_REGION_S
 const TARGET_RULES_REGION_SIZE: usize =
     MAX_TIDS * MAX_TARGET_RULES_PER_TID * core::mem::size_of::<TargetRule>();
 const FD_OWNER_REGION_OFFSET: usize = TARGET_RULES_REGION_OFFSET + TARGET_RULES_REGION_SIZE;
+const OFFSET_RULESET_GENERATION: usize = 376;
 
 #[inline]
 fn tid_slot(tid: usize) -> usize {
@@ -211,24 +212,7 @@ pub fn get_config_for_fd(fd: c_int) -> Option<FaultcoreConfig> {
 
     unsafe {
         if let Some(config_ptr) = get_config_ptr(fd as usize, false) {
-            for _ in 0..10 {
-                let version_ptr = config_ptr.cast::<u8>().add(4);
-                let v1 = ptr::read_unaligned(version_ptr as *const u64);
-                if !v1.is_multiple_of(2) {
-                    continue;
-                }
-                fence(Ordering::SeqCst);
-                let config = config_ptr.read();
-                fence(Ordering::SeqCst);
-                let v2 = ptr::read_unaligned(version_ptr as *const u64);
-                if v1 != v2 {
-                    continue;
-                }
-                if config.is_valid() {
-                    return Some(config);
-                }
-                break;
-            }
+            return read_stable_config(config_ptr);
         }
     }
     None
@@ -241,24 +225,7 @@ pub fn get_config_for_tid(tid: u64) -> Option<FaultcoreConfig> {
 
     unsafe {
         if let Some(config_ptr) = get_config_ptr(tid as usize, true) {
-            for _ in 0..10 {
-                let version_ptr = config_ptr.cast::<u8>().add(4);
-                let v1 = ptr::read_unaligned(version_ptr as *const u64);
-                if !v1.is_multiple_of(2) {
-                    continue;
-                }
-                fence(Ordering::SeqCst);
-                let config = config_ptr.read();
-                fence(Ordering::SeqCst);
-                let v2 = ptr::read_unaligned(version_ptr as *const u64);
-                if v1 != v2 {
-                    continue;
-                }
-                if config.is_valid() {
-                    return Some(config);
-                }
-                break;
-            }
+            return read_stable_config(config_ptr);
         }
     }
     None
@@ -278,26 +245,8 @@ pub fn get_config_for_tid_slot(slot: usize) -> Option<FaultcoreConfig> {
             return None;
         }
         let config_ptr = (ptr_val as *mut FaultcoreConfig).add(MAX_FDS + slot);
-        for _ in 0..10 {
-            let version_ptr = config_ptr.cast::<u8>().add(4);
-            let v1 = ptr::read_unaligned(version_ptr as *const u64);
-            if !v1.is_multiple_of(2) {
-                continue;
-            }
-            fence(Ordering::SeqCst);
-            let config = ptr::read_unaligned(config_ptr);
-            fence(Ordering::SeqCst);
-            let v2 = ptr::read_unaligned(version_ptr as *const u64);
-            if v1 != v2 {
-                continue;
-            }
-            if config.is_valid() {
-                return Some(config);
-            }
-            break;
-        }
+        read_stable_config(config_ptr)
     }
-    None
 }
 
 pub fn assign_rule_to_fd(fd: c_int, tid: usize) {
@@ -320,7 +269,7 @@ pub fn clear_rule_for_fd(fd: c_int) {
             ptr::write_unaligned(owners.add(fd as usize), INVALID_TID_SLOT);
         }
         if let Some(fd_ptr) = get_config_ptr(fd as usize, false) {
-            write_config_with_versioned_publish(fd_ptr, |config| {
+            write_config_with_generation_publish(fd_ptr, |config| {
                 *config = FaultcoreConfig::default();
             });
         }
@@ -339,25 +288,52 @@ pub fn clone_rule_for_fd(src_fd: c_int, dst_fd: c_int) {
     }
 }
 
-unsafe fn write_config_with_versioned_publish<F>(config_ptr: *mut FaultcoreConfig, mutate: F)
+unsafe fn read_stable_config(config_ptr: *mut FaultcoreConfig) -> Option<FaultcoreConfig> {
+    for _ in 0..10 {
+        let generation_ptr = unsafe {
+            config_ptr
+                .cast::<u8>()
+                .add(OFFSET_RULESET_GENERATION) as *const u64
+        };
+        let g1 = unsafe { ptr::read_unaligned(generation_ptr) };
+        if !g1.is_multiple_of(2) {
+            continue;
+        }
+        fence(Ordering::SeqCst);
+        let config = unsafe { ptr::read_unaligned(config_ptr) };
+        fence(Ordering::SeqCst);
+        let g2 = unsafe { ptr::read_unaligned(generation_ptr) };
+        if g1 != g2 {
+            continue;
+        }
+        if config.is_valid() {
+            return Some(config);
+        }
+        break;
+    }
+    None
+}
+
+unsafe fn write_config_with_generation_publish<F>(config_ptr: *mut FaultcoreConfig, mutate: F)
 where
     F: FnOnce(&mut FaultcoreConfig),
 {
-    let version_ptr = unsafe { config_ptr.cast::<u8>().add(4) as *mut u64 };
-    let start_version = unsafe { ptr::read_unaligned(version_ptr as *const u64) } | 1;
+    let generation_ptr =
+        unsafe { config_ptr.cast::<u8>().add(OFFSET_RULESET_GENERATION) as *mut u64 };
+    let start_generation = unsafe { ptr::read_unaligned(generation_ptr as *const u64) } | 1;
 
-    unsafe { ptr::write_unaligned(version_ptr, start_version) };
+    unsafe { ptr::write_unaligned(generation_ptr, start_generation) };
     fence(Ordering::SeqCst);
 
     let mut config = unsafe { ptr::read_unaligned(config_ptr) };
     mutate(&mut config);
-    config.version = start_version;
+    config.ruleset_generation = start_generation;
 
     unsafe { ptr::write_unaligned(config_ptr, config) };
     fence(Ordering::SeqCst);
 
-    let published_version = (start_version.wrapping_add(1)) & !1;
-    unsafe { ptr::write_unaligned(version_ptr, published_version) };
+    let published_generation = (start_generation.wrapping_add(1)) & !1;
+    unsafe { ptr::write_unaligned(generation_ptr, published_generation) };
 }
 
 pub fn update_config_for_tid<F>(tid: usize, mutate: F) -> bool
@@ -366,7 +342,7 @@ where
 {
     if let Some(config_ptr) = unsafe { get_config_ptr(tid, true) } {
         unsafe {
-            write_config_with_versioned_publish(config_ptr, |config| {
+            write_config_with_generation_publish(config_ptr, |config| {
                 mutate(config);
                 config.magic = FAULTCORE_MAGIC;
             });
@@ -617,7 +593,7 @@ mod tests {
             let ptr = get_config_ptr(fd, false).expect("fd pointer should exist");
             let base = ptr as *const u8;
             let magic = ptr::read_unaligned(base as *const u32);
-            let version = ptr::read_unaligned(base.add(4) as *const u64);
+            let ruleset_generation = ptr::read_unaligned(base.add(376) as *const u64);
             let latency_ns = ptr::read_unaligned(base.add(12) as *const u64);
             let jitter_ns = ptr::read_unaligned(base.add(20) as *const u64);
             let packet_loss_ppm = ptr::read_unaligned(base.add(28) as *const u64);
@@ -665,7 +641,7 @@ mod tests {
             let schedule_started_monotonic_ns = ptr::read_unaligned(base.add(364) as *const u64);
             let reserved = ptr::read_unaligned(base.add(372) as *const u32);
             assert_eq!(magic, 0);
-            assert_eq!(version % 2, 0);
+            assert_eq!(ruleset_generation % 2, 0);
             assert_eq!(latency_ns, 0);
             assert_eq!(jitter_ns, 0);
             assert_eq!(packet_loss_ppm, 0);

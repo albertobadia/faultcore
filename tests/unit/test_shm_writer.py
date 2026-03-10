@@ -139,10 +139,18 @@ class TestTargetRulesValidation:
         fd = create_test_shm(name)
         os.close(fd)
         writer = SHMWriter(name)
+        tid = 4242
 
         try:
             rule = {"enabled": 1, "kind": 1, "ipv4": 0x7F000001, "prefix_len": 32, "port": 9000, "protocol": 1}
-            writer.write_targets(4242, [rule])
+            writer.write_targets(tid, [rule])
+
+            cfg_offset = writer._get_offset(tid)
+            target_addr_family = struct.unpack_from("<Q", writer._mmap, cfg_offset + 384)[0]
+            target_addr = bytes(writer._mmap[cfg_offset + 392 : cfg_offset + 408])
+            assert target_addr_family == 1
+            assert target_addr[:4] == bytes([127, 0, 0, 1])
+            assert target_addr[4:] == b"\x00" * 12
         finally:
             writer.close()
             cleanup_test_shm(name)

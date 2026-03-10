@@ -20,30 +20,16 @@ fn endpoint_matches_rule(endpoint: Endpoint, rule: &TargetRule) -> bool {
         return false;
     }
     let family = rule.address_family;
+    if family == 0 {
+        return false;
+    }
     match rule.kind {
-        1 => {
-            if family == 0 {
-                endpoint.ipv4 == rule.ipv4 as u32
-            } else {
-                endpoint.address_family == family && endpoint.addr == rule.addr
-            }
-        }
+        1 => endpoint.address_family == family && endpoint.addr == rule.addr,
         2 => {
-            if family == 0 {
-                if rule.prefix_len == 0 {
-                    true
-                } else if rule.prefix_len >= 32 {
-                    endpoint.ipv4 == rule.ipv4 as u32
-                } else {
-                    let mask = u32::MAX << (32 - rule.prefix_len as u32);
-                    (endpoint.ipv4 & mask) == ((rule.ipv4 as u32) & mask)
-                }
-            } else {
-                let max_prefix = if family == 1 { 32 } else { 128 };
-                let bounded_prefix = usize::min(rule.prefix_len as usize, max_prefix);
-                endpoint.address_family == family
-                    && prefix_match(&endpoint.addr, &rule.addr, bounded_prefix)
-            }
+            let max_prefix = if family == 1 { 32 } else { 128 };
+            let bounded_prefix = usize::min(rule.prefix_len as usize, max_prefix);
+            endpoint.address_family == family
+                && prefix_match(&endpoint.addr, &rule.addr, bounded_prefix)
         }
         _ => false,
     }
@@ -130,7 +116,6 @@ where
         let rule = select_best_target_rule(endpoint, &rules, count)?;
         cfg.target_enabled = 1;
         cfg.target_kind = rule.kind;
-        cfg.target_ipv4 = rule.ipv4;
         cfg.target_prefix_len = rule.prefix_len;
         cfg.target_port = rule.port;
         cfg.target_protocol = rule.protocol;
@@ -243,6 +228,12 @@ mod tests {
         }
     }
 
+    fn addr_v4(ipv4: u32) -> [u8; 16] {
+        let mut addr = [0u8; 16];
+        addr[..4].copy_from_slice(&ipv4.to_be_bytes());
+        addr
+    }
+
     fn endpoint_v6(addr: [u8; 16], port: u16, protocol: u64) -> Endpoint {
         Endpoint {
             address_family: 2,
@@ -290,8 +281,8 @@ mod tests {
                 port: endpoint.port as u64,
                 protocol: endpoint.protocol,
                 reserved: 0,
-                address_family: 0,
-                addr: [0; 16],
+                address_family: 1,
+                addr: endpoint.addr,
                 hostname: [0; 32],
                 sni: [0; 32],
             },
@@ -304,8 +295,8 @@ mod tests {
                 port: endpoint.port as u64,
                 protocol: endpoint.protocol,
                 reserved: 0,
-                address_family: 0,
-                addr: [0; 16],
+                address_family: 1,
+                addr: endpoint.addr,
                 hostname: [0; 32],
                 sni: [0; 32],
             },
@@ -327,8 +318,8 @@ mod tests {
                 port: endpoint.port as u64,
                 protocol: endpoint.protocol,
                 reserved: 0,
-                address_family: 0,
-                addr: [0; 16],
+                address_family: 1,
+                addr: addr_v4(0x0A000000),
                 hostname: [0; 32],
                 sni: [0; 32],
             },
@@ -341,8 +332,8 @@ mod tests {
                 port: endpoint.port as u64,
                 protocol: endpoint.protocol,
                 reserved: 0,
-                address_family: 0,
-                addr: [0; 16],
+                address_family: 1,
+                addr: addr_v4(0x0A010000),
                 hostname: [0; 32],
                 sni: [0; 32],
             },
@@ -364,8 +355,8 @@ mod tests {
             port: endpoint.port as u64,
             protocol: endpoint.protocol,
             reserved: 0,
-            address_family: 0,
-            addr: [0; 16],
+            address_family: 1,
+            addr: addr_v4(0x0A000001),
             hostname: [0; 32],
             sni: [0; 32],
         }];
@@ -385,8 +376,8 @@ mod tests {
                 port: endpoint.port as u64,
                 protocol: endpoint.protocol,
                 reserved: 0,
-                address_family: 0,
-                addr: [0; 16],
+                address_family: 1,
+                addr: endpoint.addr,
                 hostname: [0; 32],
                 sni: [0; 32],
             },
@@ -399,8 +390,8 @@ mod tests {
                 port: endpoint.port as u64,
                 protocol: endpoint.protocol,
                 reserved: 0,
-                address_family: 0,
-                addr: [0; 16],
+                address_family: 1,
+                addr: endpoint.addr,
                 hostname: [0; 32],
                 sni: [0; 32],
             },
@@ -422,8 +413,8 @@ mod tests {
                 port: 443,
                 protocol: endpoint.protocol,
                 reserved: 0,
-                address_family: 0,
-                addr: [0; 16],
+                address_family: 1,
+                addr: endpoint.addr,
                 hostname: [0; 32],
                 sni: [0; 32],
             },
@@ -436,8 +427,8 @@ mod tests {
                 port: endpoint.port as u64,
                 protocol: 1,
                 reserved: 0,
-                address_family: 0,
-                addr: [0; 16],
+                address_family: 1,
+                addr: endpoint.addr,
                 hostname: [0; 32],
                 sni: [0; 32],
             },
@@ -450,8 +441,8 @@ mod tests {
                 port: endpoint.port as u64,
                 protocol: endpoint.protocol,
                 reserved: 0,
-                address_family: 0,
-                addr: [0; 16],
+                address_family: 1,
+                addr: endpoint.addr,
                 hostname: [0; 32],
                 sni: [0; 32],
             },
@@ -472,8 +463,8 @@ mod tests {
             port: 0,
             protocol: 0,
             reserved: 0,
-            address_family: 0,
-            addr: [0; 16],
+            address_family: 1,
+            addr: addr_v4(0),
             hostname: [0; 32],
             sni: [0; 32],
         }];
@@ -529,8 +520,8 @@ mod tests {
             port: endpoint.port as u64,
             protocol: endpoint.protocol,
             reserved: 0,
-            address_family: 0,
-            addr: [0; 16],
+            address_family: 1,
+            addr: endpoint.addr,
             hostname: [0; 32],
             sni: [0; 32],
         }; crate::MAX_TARGET_RULES_PER_TID];
@@ -554,7 +545,8 @@ mod tests {
         assert_eq!(cfg_reads.get(), 2);
         assert_eq!(result.target_enabled, 1);
         assert_eq!(result.target_kind, 1);
-        assert_eq!(result.target_ipv4, endpoint.ipv4 as u64);
+        assert_eq!(result.target_address_family, 1);
+        assert_eq!(result.target_addr, endpoint.addr);
     }
 
     #[test]
@@ -573,8 +565,8 @@ mod tests {
             port: endpoint.port as u64,
             protocol: endpoint.protocol,
             reserved: 0,
-            address_family: 0,
-            addr: [0; 16],
+            address_family: 1,
+            addr: endpoint.addr,
             hostname: [0; 32],
             sni: [0; 32],
         }; crate::MAX_TARGET_RULES_PER_TID];

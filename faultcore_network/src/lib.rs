@@ -289,31 +289,17 @@ impl Config {
             return false;
         }
         let family = self.target_address_family;
+        if family == 0 {
+            return false;
+        }
         match self.target_kind {
-            1 => {
-                if family == 0 {
-                    endpoint.ipv4 == self.target_ipv4 as u32
-                } else {
-                    endpoint.address_family == family && endpoint.addr == self.target_addr
-                }
-            }
+            1 => endpoint.address_family == family && endpoint.addr == self.target_addr,
             2 => {
                 let prefix_len = self.target_prefix_len;
-                if family == 0 {
-                    if prefix_len == 0 {
-                        true
-                    } else if prefix_len >= 32 {
-                        endpoint.ipv4 == self.target_ipv4 as u32
-                    } else {
-                        let mask = u32::MAX << (32 - prefix_len as u32);
-                        (endpoint.ipv4 & mask) == ((self.target_ipv4 as u32) & mask)
-                    }
-                } else {
-                    let max_prefix = if family == 1 { 32 } else { 128 };
-                    let bounded_prefix = usize::min(prefix_len as usize, max_prefix);
-                    endpoint.address_family == family
-                        && prefix_match(&endpoint.addr, &self.target_addr, bounded_prefix)
-                }
+                let max_prefix = if family == 1 { 32 } else { 128 };
+                let bounded_prefix = usize::min(prefix_len as usize, max_prefix);
+                endpoint.address_family == family
+                    && prefix_match(&endpoint.addr, &self.target_addr, bounded_prefix)
             }
             _ => false,
         }
