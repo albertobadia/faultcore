@@ -44,10 +44,10 @@ jobs:
         run: uv sync --locked --all-extras --dev
 
       - name: Lint
-        run: sh lint.sh
+        run: bash lint.sh
 
       - name: Build
-        run: sh build.sh
+        run: bash build.sh
 
       - name: Tests
-        run: sh tests.sh
+        run: bash tests.sh

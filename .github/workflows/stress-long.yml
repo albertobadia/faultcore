@@ -57,7 +57,7 @@ jobs:
         run: uv sync --locked --all-extras --dev
 
       - name: Build
-        run: sh build.sh
+        run: bash build.sh
 
       - name: Long stress run
         env:
@@ -65,4 +65,4 @@ jobs:
           STRESS_WORKERS: ${{ github.event.inputs.workers || '24' }}
           STRESS_MAX_ERROR_RATE: ${{ github.event.inputs.max_error_rate || '0.02' }}
           STRESS_MAX_RSS_DELTA_KB: ${{ github.event.inputs.max_rss_delta_kb || '131072' }}
-        run: sh tests_long.sh
+        run: bash tests_long.sh
