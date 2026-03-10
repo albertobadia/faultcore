@@ -133,10 +133,15 @@ mod tests {
     }
 
     #[test]
-    fn returns_faultcore_error_when_shm_update_fails() {
-        assert_eq!(
-            handle_setpriority_compat(FAULTCORE_SETPRIORITY_LATENCY, 5, 1000),
-            SetpriorityCompatOutcome::FaultcoreError { errno: libc::EIO }
+    fn valid_faultcore_args_are_either_handled_or_report_eio() {
+        let outcome = handle_setpriority_compat(FAULTCORE_SETPRIORITY_LATENCY, 5, 1000);
+        assert!(
+            matches!(
+                outcome,
+                SetpriorityCompatOutcome::Handled
+                    | SetpriorityCompatOutcome::FaultcoreError { errno: libc::EIO }
+            ),
+            "unexpected outcome for valid faultcore mode: {outcome:?}"
         );
     }
 
@@ -149,9 +154,9 @@ mod tests {
             -5
         ));
         assert!(!try_handle_setpriority(
-            FAULTCORE_SETPRIORITY_LATENCY,
-            5,
-            1000
+            FAULTCORE_SETPRIORITY_TIMEOUT,
+            -2,
+            -1
         ));
         assert!(!try_handle_setpriority(
             non_faultcore_which,

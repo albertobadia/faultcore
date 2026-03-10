@@ -92,6 +92,14 @@ Diagram focus: behavior split between active interception and graceful fallback.
 Binary layout and compatibility rules are documented in:
 - `docs/shm_protocol.md`
 
+### SHM Open Modes
+
+- `faultcore_network::try_open_shm()` now supports explicit open ownership via `FAULTCORE_SHM_OPEN_MODE`.
+- Supported values:
+  - `consumer` (default): open + size validation via `fstat`; no `ftruncate`.
+  - `creator`: open + `ftruncate(FAULTCORE_SHM_SIZE)` before `mmap`.
+- Initialization is process-once guarded with an internal init lock to avoid double-map races under concurrent open attempts.
+
 Any SHM layout change must update:
 - Python writer (`src/faultcore/shm_writer.py`)
 - Rust contract/runtime (`faultcore_network/src/shm_contract.rs`, `faultcore_network/src/shm_runtime.rs`)

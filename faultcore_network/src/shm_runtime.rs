@@ -2,8 +2,8 @@ use crate::{
     FaultcoreConfig, PolicyState, TargetRule, FAULTCORE_MAGIC, FAULTCORE_SHM_SIZE, MAX_FDS,
     MAX_POLICIES, MAX_TARGET_RULES_PER_TID, MAX_TIDS,
 };
-use libc::{c_int, ftruncate, mmap, shm_open, MAP_SHARED, O_RDWR, PROT_READ, PROT_WRITE};
-use parking_lot::RwLock;
+use libc::{c_int, fstat, ftruncate, mmap, shm_open, stat, MAP_SHARED, O_RDWR, PROT_READ, PROT_WRITE};
+use parking_lot::{Mutex, RwLock};
 use std::ptr;
 use std::sync::atomic::{fence, AtomicU64, Ordering};
 
@@ -13,6 +13,7 @@ pub fn get_thread_id() -> u64 {
 
 static SHM_POINTER: RwLock<usize> = RwLock::new(0);
 static SHM_OPEN: AtomicU64 = AtomicU64::new(0);
+static SHM_INIT_LOCK: Mutex<()> = Mutex::new(());
 const INVALID_TID_SLOT: u64 = u64::MAX;
 
 const CONFIG_REGION_SIZE: usize = (MAX_FDS + MAX_TIDS) * core::mem::size_of::<FaultcoreConfig>();
@@ -42,15 +43,33 @@ fn get_shm_name() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShmOpenMode {
+    Creator,
+    Consumer,
+}
+
+fn shm_open_mode() -> ShmOpenMode {
+    match std::env::var("FAULTCORE_SHM_OPEN_MODE") {
+        Ok(raw) if raw.eq_ignore_ascii_case("creator") => ShmOpenMode::Creator,
+        _ => ShmOpenMode::Consumer,
+    }
+}
+
 pub fn try_open_shm() -> bool {
     if !check_enabled() || is_shm_open() {
         return is_shm_open();
+    }
+    let _init_guard = SHM_INIT_LOCK.lock();
+    if is_shm_open() {
+        return true;
     }
 
     let shm_name = get_shm_name()
         .unwrap_or_else(|| format!("/faultcore_{}_config", unsafe { libc::getpid() }));
 
     let name_cstr = std::ffi::CString::new(shm_name.as_bytes()).unwrap();
+    let open_mode = shm_open_mode();
 
     unsafe {
         let fd = shm_open(name_cstr.as_ptr(), O_RDWR, 0);
@@ -58,9 +77,20 @@ pub fn try_open_shm() -> bool {
             return false;
         }
 
-        if ftruncate(fd, FAULTCORE_SHM_SIZE as i64) < 0 {
-            libc::close(fd);
-            return false;
+        match open_mode {
+            ShmOpenMode::Creator => {
+                if ftruncate(fd, FAULTCORE_SHM_SIZE as i64) < 0 {
+                    libc::close(fd);
+                    return false;
+                }
+            }
+            ShmOpenMode::Consumer => {
+                let mut st: stat = std::mem::zeroed();
+                if fstat(fd, &mut st) < 0 || st.st_size < FAULTCORE_SHM_SIZE as i64 {
+                    libc::close(fd);
+                    return false;
+                }
+            }
         }
 
         let addr = mmap(
@@ -295,6 +325,18 @@ pub fn clear_rule_for_fd(fd: c_int) {
     }
 }
 
+pub fn clone_rule_for_fd(src_fd: c_int, dst_fd: c_int) {
+    if src_fd < 0 || dst_fd < 0 || (src_fd as usize) >= MAX_FDS || (dst_fd as usize) >= MAX_FDS {
+        return;
+    }
+    unsafe {
+        if let Some(owners) = get_fd_owner_base_ptr() {
+            let src_slot = ptr::read_unaligned(owners.add(src_fd as usize));
+            ptr::write_unaligned(owners.add(dst_fd as usize), src_slot);
+        }
+    }
+}
+
 unsafe fn write_config_with_versioned_publish<F>(config_ptr: *mut FaultcoreConfig, mutate: F)
 where
     F: FnOnce(&mut FaultcoreConfig),
@@ -335,7 +377,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use std::sync::{
+        Arc, Barrier, Mutex,
+        atomic::{AtomicBool, Ordering as AtomicOrdering},
+    };
+    use std::thread;
 
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -743,6 +789,29 @@ mod tests {
     }
 
     #[test]
+    fn test_clone_rule_for_fd_copies_owner_slot() {
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut table = vec![0u64; FAULTCORE_SHM_SIZE.div_ceil(core::mem::size_of::<u64>())];
+
+        let prev_ptr = *SHM_POINTER.read();
+        let prev_open = SHM_OPEN.load(Ordering::SeqCst);
+        *SHM_POINTER.write() = table.as_mut_ptr().cast::<u8>() as usize;
+        SHM_OPEN.store(1, Ordering::SeqCst);
+
+        let src_fd = 12 as c_int;
+        let dst_fd = 34 as c_int;
+        assign_rule_to_fd(src_fd, 4242);
+        clone_rule_for_fd(src_fd, dst_fd);
+
+        assert_eq!(get_tid_slot_for_fd(src_fd), get_tid_slot_for_fd(dst_fd));
+
+        *SHM_POINTER.write() = prev_ptr;
+        SHM_OPEN.store(prev_open, Ordering::SeqCst);
+    }
+
+    #[test]
     fn test_get_tid_slot_for_fd_out_of_range_returns_none() {
         let _guard = TEST_LOCK
             .lock()
@@ -760,6 +829,129 @@ mod tests {
 
         let slot = get_tid_slot_for_fd(MAX_FDS as c_int);
         assert!(slot.is_none());
+
+        *SHM_POINTER.write() = prev_ptr;
+        SHM_OPEN.store(prev_open, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn test_shm_open_mode_defaults_to_consumer() {
+        unsafe {
+            std::env::remove_var("FAULTCORE_SHM_OPEN_MODE");
+        }
+        assert_eq!(shm_open_mode(), ShmOpenMode::Consumer);
+    }
+
+    #[test]
+    fn test_shm_open_mode_accepts_creator() {
+        unsafe {
+            std::env::set_var("FAULTCORE_SHM_OPEN_MODE", "creator");
+        }
+        assert_eq!(shm_open_mode(), ShmOpenMode::Creator);
+        unsafe {
+            std::env::remove_var("FAULTCORE_SHM_OPEN_MODE");
+        }
+    }
+
+    #[test]
+    fn test_get_config_for_tid_never_observes_torn_writes_under_concurrency() {
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut table = vec![0u64; FAULTCORE_SHM_SIZE.div_ceil(core::mem::size_of::<u64>())];
+
+        let prev_ptr = *SHM_POINTER.read();
+        let prev_open = SHM_OPEN.load(Ordering::SeqCst);
+        *SHM_POINTER.write() = table.as_mut_ptr().cast::<u8>() as usize;
+        SHM_OPEN.store(1, Ordering::SeqCst);
+
+        let tid = 4242usize;
+        assert!(update_config_for_tid(tid, |cfg| {
+            cfg.latency_ns = 111;
+            cfg.jitter_ns = 222;
+            cfg.packet_loss_ppm = 333;
+            cfg.bandwidth_bps = 444;
+            cfg.connect_timeout_ms = 555;
+            cfg.recv_timeout_ms = 666;
+        }));
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let start = Arc::new(Barrier::new(6));
+
+        let writer_start = Arc::clone(&start);
+        let writer_stop = Arc::clone(&stop);
+        let writer = thread::spawn(move || {
+            writer_start.wait();
+            for i in 0..20_000 {
+                let use_a = i % 2 == 0;
+                let ok = update_config_for_tid(tid, |cfg| {
+                    if use_a {
+                        cfg.latency_ns = 111;
+                        cfg.jitter_ns = 222;
+                        cfg.packet_loss_ppm = 333;
+                        cfg.bandwidth_bps = 444;
+                        cfg.connect_timeout_ms = 555;
+                        cfg.recv_timeout_ms = 666;
+                    } else {
+                        cfg.latency_ns = 10_111;
+                        cfg.jitter_ns = 10_222;
+                        cfg.packet_loss_ppm = 10_333;
+                        cfg.bandwidth_bps = 10_444;
+                        cfg.connect_timeout_ms = 10_555;
+                        cfg.recv_timeout_ms = 10_666;
+                    }
+                });
+                assert!(ok, "writer failed to update config");
+            }
+            writer_stop.store(true, AtomicOrdering::Release);
+        });
+
+        let mut readers = Vec::new();
+        for _ in 0..4 {
+            let reader_start = Arc::clone(&start);
+            let reader_stop = Arc::clone(&stop);
+            readers.push(thread::spawn(move || {
+                reader_start.wait();
+                while !reader_stop.load(AtomicOrdering::Acquire) {
+                    if let Some(cfg) = get_config_for_tid(tid as u64) {
+                        let is_profile_a = cfg.latency_ns == 111
+                            && cfg.jitter_ns == 222
+                            && cfg.packet_loss_ppm == 333
+                            && cfg.bandwidth_bps == 444
+                            && cfg.connect_timeout_ms == 555
+                            && cfg.recv_timeout_ms == 666;
+                        let is_profile_b = cfg.latency_ns == 10_111
+                            && cfg.jitter_ns == 10_222
+                            && cfg.packet_loss_ppm == 10_333
+                            && cfg.bandwidth_bps == 10_444
+                            && cfg.connect_timeout_ms == 10_555
+                            && cfg.recv_timeout_ms == 10_666;
+                        let latency_ns = cfg.latency_ns;
+                        let jitter_ns = cfg.jitter_ns;
+                        let packet_loss_ppm = cfg.packet_loss_ppm;
+                        let bandwidth_bps = cfg.bandwidth_bps;
+                        let connect_timeout_ms = cfg.connect_timeout_ms;
+                        let recv_timeout_ms = cfg.recv_timeout_ms;
+                        assert!(
+                            is_profile_a || is_profile_b,
+                            "observed torn config snapshot: latency={} jitter={} loss={} bandwidth={} cto={} rto={}",
+                            latency_ns,
+                            jitter_ns,
+                            packet_loss_ppm,
+                            bandwidth_bps,
+                            connect_timeout_ms,
+                            recv_timeout_ms
+                        );
+                    }
+                }
+            }));
+        }
+
+        start.wait();
+        writer.join().expect("writer thread must complete");
+        for reader in readers {
+            reader.join().expect("reader thread must complete");
+        }
 
         *SHM_POINTER.write() = prev_ptr;
         SHM_OPEN.store(prev_open, Ordering::SeqCst);

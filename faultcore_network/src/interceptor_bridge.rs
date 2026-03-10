@@ -2,8 +2,9 @@ use libc::{c_int, sockaddr, socklen_t};
 
 use crate::{
     Config, Direction, Endpoint, FaultOsiEngine, LayerDecision, TargetRule, assign_rule_to_fd,
-    clear_rule_for_fd, endpoint_for_addr_or_fd, endpoint_for_fd, get_config_for_tid,
-    get_target_rules_for_tid_slot, get_thread_id, get_tid_slot_for_tid, monotonic_now_ns, try_open_shm,
+    clear_rule_for_fd, clone_rule_for_fd, endpoint_for_addr_or_fd, endpoint_for_fd, get_config_for_tid,
+    get_config_for_tid_slot, get_target_rules_for_tid_slot, get_thread_id, get_tid_slot_for_fd,
+    get_tid_slot_for_tid, monotonic_now_ns, try_open_shm,
 };
 
 fn endpoint_matches_rule(endpoint: Endpoint, rule: &TargetRule) -> bool {
@@ -86,10 +87,32 @@ pub fn clear_fd_binding(fd: c_int) {
     clear_rule_for_fd(fd);
 }
 
-pub fn runtime_config_for_fd(fd: c_int) -> Option<Config> {
+pub fn clone_fd_binding(src_fd: c_int, dst_fd: c_int) {
+    clone_rule_for_fd(src_fd, dst_fd);
+}
+
+fn resolve_runtime_config_for_endpoint(
+    fd: c_int,
+    endpoint: Option<Endpoint>,
+) -> Option<Config> {
     let tid = get_thread_id();
-    let cfg = get_config_for_tid(tid)?.into_network_config();
-    apply_multi_target_for_tid(cfg, get_tid_slot_for_tid(tid), endpoint_for_fd(fd))
+    let owner_slot = get_tid_slot_for_fd(fd);
+    let owner_cfg = owner_slot
+        .and_then(get_config_for_tid_slot)
+        .map(|cfg| cfg.into_network_config());
+
+    let (base_cfg, slot) = if let (Some(slot), Some(cfg)) = (owner_slot, owner_cfg) {
+        (cfg, slot)
+    } else {
+        let cfg = get_config_for_tid(tid)?.into_network_config();
+        (cfg, get_tid_slot_for_tid(tid))
+    };
+
+    apply_multi_target_for_tid(base_cfg, slot, endpoint)
+}
+
+pub fn runtime_config_for_fd(fd: c_int) -> Option<Config> {
+    resolve_runtime_config_for_endpoint(fd, endpoint_for_fd(fd))
 }
 
 /// # Safety
@@ -99,13 +122,7 @@ pub unsafe fn runtime_config_for_addr_or_fd(
     addr: *const sockaddr,
     addr_len: socklen_t,
 ) -> Option<Config> {
-    let tid = get_thread_id();
-    let cfg = get_config_for_tid(tid)?.into_network_config();
-    apply_multi_target_for_tid(
-        cfg,
-        get_tid_slot_for_tid(tid),
-        unsafe { endpoint_for_addr_or_fd(fd, addr, addr_len) },
-    )
+    resolve_runtime_config_for_endpoint(fd, unsafe { endpoint_for_addr_or_fd(fd, addr, addr_len) })
 }
 
 pub fn runtime_dns_config_for_current_thread() -> Option<Config> {
@@ -144,6 +161,30 @@ pub unsafe fn uplink_duplicate_count_for_addr_or_fd(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cfg_with_latency(latency_ns: u64) -> Config {
+        Config {
+            latency_ns,
+            ..Default::default()
+        }
+    }
+
+    fn select_base_config_for_test(
+        fd: c_int,
+        endpoint: Option<Endpoint>,
+        tid: u64,
+        current_cfg: Option<Config>,
+        owner_slot: Option<usize>,
+        owner_cfg: Option<Config>,
+    ) -> Option<Config> {
+        let (base_cfg, slot) = if let (Some(slot), Some(cfg)) = (owner_slot, owner_cfg) {
+            (cfg, slot)
+        } else {
+            (current_cfg?, get_tid_slot_for_tid(tid))
+        };
+        let _ = fd;
+        apply_multi_target_for_tid(base_cfg, slot, endpoint)
+    }
 
     #[test]
     fn select_rule_prefers_higher_priority() {
@@ -328,5 +369,36 @@ mod tests {
         let selected = select_best_target_rule(endpoint, &rules, rules.len()).expect("must select");
         assert_eq!(selected.kind, 2);
         assert_eq!(selected.prefix_len, 0);
+    }
+
+    #[test]
+    fn fd_owner_slot_config_takes_precedence_over_current_tid_config() {
+        let current_tid = 42_u64;
+        let owner_slot = Some(7_usize);
+        let selected = select_base_config_for_test(
+            10,
+            None,
+            current_tid,
+            Some(cfg_with_latency(111)),
+            owner_slot,
+            Some(cfg_with_latency(777)),
+        )
+        .expect("config should resolve");
+        assert_eq!(selected.latency_ns, 777);
+    }
+
+    #[test]
+    fn falls_back_to_current_tid_config_when_fd_owner_slot_is_missing() {
+        let current_tid = 42_u64;
+        let selected = select_base_config_for_test(
+            10,
+            None,
+            current_tid,
+            Some(cfg_with_latency(111)),
+            Some(7_usize),
+            None,
+        )
+        .expect("config should resolve from current tid");
+        assert_eq!(selected.latency_ns, 111);
     }
 }

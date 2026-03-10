@@ -5,12 +5,11 @@ use crate::{
 use std::collections::HashMap;
 use parking_lot::Mutex;
 use rand::{Rng, SeedableRng, random, rngs::StdRng};
-use std::sync::atomic::{AtomicU8, Ordering};
 
 pub struct L1Chaos {
     seeded_rng: Option<Mutex<StdRng>>,
     burst_remaining_by_fd: Mutex<HashMap<i32, u64>>,
-    ge_state: AtomicU8,
+    ge_state_by_fd: Mutex<HashMap<i32, u8>>,
 }
 
 impl L1Chaos {
@@ -22,7 +21,7 @@ impl L1Chaos {
         Self {
             seeded_rng,
             burst_remaining_by_fd: Mutex::new(HashMap::new()),
-            ge_state: AtomicU8::new(0),
+            ge_state_by_fd: Mutex::new(HashMap::new()),
         }
     }
 
@@ -30,7 +29,7 @@ impl L1Chaos {
         Self {
             seeded_rng: Some(Mutex::new(StdRng::seed_from_u64(seed))),
             burst_remaining_by_fd: Mutex::new(HashMap::new()),
-            ge_state: AtomicU8::new(0),
+            ge_state_by_fd: Mutex::new(HashMap::new()),
         }
     }
 
@@ -57,25 +56,28 @@ impl L1Chaos {
         random < probability_ppm as u32
     }
 
-    fn correlated_loss_ppm(&self, config: &Config) -> Option<u64> {
+    fn correlated_loss_ppm(&self, fd: i32, config: &Config) -> Option<u64> {
         if config.ge_enabled == 0 {
             return None;
         }
 
-        let current_state = self.ge_state.load(Ordering::Acquire);
+        let mut ge_state_by_fd = self.ge_state_by_fd.lock();
+        let current_state = ge_state_by_fd.get(&fd).copied().unwrap_or(0);
+        let mut next_state = current_state;
         if current_state == 0 {
             if self.event_happens(config.ge_p_good_to_bad_ppm) {
-                self.ge_state.store(1, Ordering::Release);
+                next_state = 1;
             }
         } else if self.event_happens(config.ge_p_bad_to_good_ppm) {
-            self.ge_state.store(0, Ordering::Release);
+            next_state = 0;
         }
 
-        let state = self.ge_state.load(Ordering::Acquire);
-        if state == 1 {
-            Some(config.ge_loss_bad_ppm)
-        } else {
+        if next_state == 0 {
+            ge_state_by_fd.remove(&fd);
             Some(config.ge_loss_good_ppm)
+        } else {
+            ge_state_by_fd.insert(fd, 1);
+            Some(config.ge_loss_bad_ppm)
         }
     }
 
@@ -150,7 +152,7 @@ impl Layer for L1Chaos {
         }
 
         let effective_loss = self
-            .correlated_loss_ppm(config)
+            .correlated_loss_ppm(ctx.fd, config)
             .unwrap_or(config.packet_loss_ppm);
         if self.event_happens(effective_loss) {
             if config.burst_loss_len > 0 {
@@ -355,6 +357,45 @@ mod tests {
             operation: Operation::Recv,
             direction: None,
             config: &cfg_clean,
+        };
+
+        assert!(matches!(layer.process(&ctx_fd1), LayerDecision::Drop));
+        assert!(matches!(layer.process(&ctx_fd2), LayerDecision::Continue));
+    }
+
+    #[test]
+    fn correlated_loss_state_must_not_leak_between_fds() {
+        let layer = L1Chaos::with_seed(1);
+        let cfg_fd1 = Config {
+            ge_enabled: 1,
+            ge_p_good_to_bad_ppm: 1_000_000,
+            ge_p_bad_to_good_ppm: 0,
+            ge_loss_good_ppm: 0,
+            ge_loss_bad_ppm: 1_000_000,
+            ..Default::default()
+        };
+        let cfg_fd2 = Config {
+            ge_enabled: 1,
+            ge_p_good_to_bad_ppm: 0,
+            ge_p_bad_to_good_ppm: 0,
+            ge_loss_good_ppm: 0,
+            ge_loss_bad_ppm: 1_000_000,
+            ..Default::default()
+        };
+
+        let ctx_fd1 = PacketContext {
+            fd: 20,
+            bytes: 1,
+            operation: Operation::Recv,
+            direction: None,
+            config: &cfg_fd1,
+        };
+        let ctx_fd2 = PacketContext {
+            fd: 21,
+            bytes: 1,
+            operation: Operation::Recv,
+            direction: None,
+            config: &cfg_fd2,
         };
 
         assert!(matches!(layer.process(&ctx_fd1), LayerDecision::Drop));

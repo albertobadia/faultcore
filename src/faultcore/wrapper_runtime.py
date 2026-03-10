@@ -34,6 +34,7 @@ def run_sync_with_timeout(
             signal_module.signal(signal_module.SIGALRM, previous_handler)
 
     read_fd, write_fd = os_module.pipe()
+    signal_read_fd, signal_write_fd = os_module.pipe()
     import ctypes
 
     libc = ctypes.CDLL(None)
@@ -43,13 +44,20 @@ def run_sync_with_timeout(
     pid = int(fork_fn())
     if pid == 0:
         os_module.close(read_fd)
-        payload: bytes
+        os_module.close(signal_read_fd)
+        kind: str
+        value: Any
         try:
-            result = func(*args, **kwargs)
-            payload = pickle_module.dumps(("result", result), protocol=pickle_module.HIGHEST_PROTOCOL)
+            value = func(*args, **kwargs)
+            kind = "result"
         except BaseException as exc:  # noqa: BLE001
-            payload = pickle_module.dumps(("error", exc), protocol=pickle_module.HIGHEST_PROTOCOL)
+            value = exc
+            kind = "error"
         try:
+            # Notify parent immediately when user code finishes, before serialization/write costs.
+            os_module.write(signal_write_fd, b"\x01")
+            os_module.close(signal_write_fd)
+            payload = pickle_module.dumps((kind, value), protocol=pickle_module.HIGHEST_PROTOCOL)
             offset = 0
             total = len(payload)
             while offset < total:
@@ -62,17 +70,21 @@ def run_sync_with_timeout(
         os_module._exit(0)
 
     os_module.close(write_fd)
+    os_module.close(signal_write_fd)
     startup_grace_ms = min(10, max(2, timeout_ms // 5))
     timeout_s = (timeout_ms + startup_grace_ms) / 1000
-    ready, _, _ = select_module.select([read_fd], [], [], timeout_s)
+    ready, _, _ = select_module.select([signal_read_fd], [], [], timeout_s)
     if not ready:
         try:
             os_module.kill(pid, signal_module.SIGKILL)
         except ProcessLookupError:
             pass
         os_module.waitpid(pid, 0)
+        os_module.close(signal_read_fd)
         os_module.close(read_fd)
         raise TimeoutError(f"Function execution exceeded {timeout_ms}ms")
+    os_module.read(signal_read_fd, 1)
+    os_module.close(signal_read_fd)
 
     data = b""
     while True:
@@ -82,6 +94,9 @@ def run_sync_with_timeout(
         data += chunk
     os_module.close(read_fd)
     os_module.waitpid(pid, 0)
+
+    if not data:
+        raise RuntimeError("Worker process exited without returning a payload")
 
     kind, value = pickle_module.loads(data)
     if kind == "error":

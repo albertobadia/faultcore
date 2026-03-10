@@ -12,7 +12,7 @@ pub use chaos_engine::{ChaosEngine, DecisionCounters};
 pub type FaultOsiEngine = ChaosEngine;
 pub type FaultOsiDecisionCounters = DecisionCounters;
 pub use interceptor_bridge::{
-    bind_fd_to_current_thread, clear_fd_binding, init_runtime_shm, runtime_config_for_addr_or_fd,
+    bind_fd_to_current_thread, clear_fd_binding, clone_fd_binding, init_runtime_shm, runtime_config_for_addr_or_fd,
     runtime_config_for_fd, runtime_dns_config_for_current_thread, uplink_duplicate_count_for_addr_or_fd,
     uplink_duplicate_count_for_fd,
 };
@@ -27,7 +27,7 @@ pub use setpriority_compat::{
     SetpriorityCompatOutcome, handle_setpriority_compat, try_handle_setpriority,
 };
 pub use shm_runtime::{
-    assign_rule_to_fd, clear_rule_for_fd, get_config_for_fd, get_config_for_tid, get_config_for_tid_slot,
+    assign_rule_to_fd, clear_rule_for_fd, clone_rule_for_fd, get_config_for_fd, get_config_for_tid, get_config_for_tid_slot,
     get_target_rules_for_tid_slot, get_thread_id, get_tid_slot_for_fd, get_tid_slot_for_tid, is_shm_open,
     try_open_shm, update_config_for_tid,
 };

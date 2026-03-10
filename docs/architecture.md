@@ -113,6 +113,7 @@ Diagram focus: runtime interaction order from Python write to syscall result.
 - Delay decisions are accumulated.
 - Reorder and duplicate are post-routing stream behaviors, handled outside main pipeline.
 - DNS path evaluates resolver layer behavior and skips non-DNS effects by layer applicability.
+- Gilbert-Elliott correlated-loss state is tracked per FD in `L1Chaos` to avoid cross-flow coupling.
 
 ### Fault Decision State Diagram
 
@@ -146,6 +147,14 @@ Diagram focus: accumulated delay vs terminal short-circuit decisions.
 - Business/network fault behavior belongs to `faultcore_network`.
 - Linux interception details belong to `faultcore_interceptor`.
 - SHM binary contract belongs to `faultcore_network::shm_contract` and must be reflected by Python writer.
+
+### FD/TID Ownership Model
+
+- Socket creation/binding (`socket` hook) binds an `fd` to the current thread slot via `bind_fd_to_current_thread`.
+- Runtime config resolution for stream hooks prefers the `fd` owner slot (`get_tid_slot_for_fd`) when present.
+- If the owner slot cannot be resolved to a valid config row, resolution falls back to current thread `tid` config.
+- This makes cross-thread `fd` handoff deterministic: the bound owner policy stays authoritative unless explicitly cleared/rebound.
+- FD aliasing hooks (`dup`, `dup2`, `dup3`, `accept`, `accept4`) clone the owner binding from source/listener FD to the new FD.
 
 ## Change Rules
 
