@@ -651,6 +651,32 @@ class TestTargetDecorators:
                 )
                 mock_shm.clear.assert_called_once_with(978)
 
+    def test_for_target_accepts_explicit_any_protocol(self):
+        mock_shm = MagicMock()
+        mock_shm.write_target = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=979):
+
+                @faultcore.for_target("10.1.2.3:443", protocol="any")
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_target.assert_called_once_with(
+                    979,
+                    enabled=True,
+                    kind=1,
+                    ipv4=167838211,
+                    prefix_len=32,
+                    port=443,
+                    protocol=0,
+                    address_family=1,
+                    addr=[10, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                )
+                mock_shm.clear.assert_called_once_with(979)
+
 
 class TestTemporalProfiles:
     def test_profile_spike_writes_schedule_to_shm(self):
@@ -973,6 +999,40 @@ class TestPolicyRegistry:
                     addr=[10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                 )
                 mock_shm.clear.assert_called_once_with(895)
+
+    def test_register_policy_target_filter_accepts_explicit_any_protocol(self):
+        faultcore.register_policy(
+            "target_policy_any",
+            latency_ms=10,
+            target={"target": "10.0.0.0/8", "port": 53, "protocol": "any"},
+        )
+
+        mock_shm = MagicMock()
+        mock_shm.write_latency = MagicMock()
+        mock_shm.write_target = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=989):
+
+                @faultcore.apply_policy("target_policy_any")
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_latency.assert_called_once_with(989, 10)
+                mock_shm.write_target.assert_called_once_with(
+                    989,
+                    enabled=True,
+                    kind=2,
+                    ipv4=167772160,
+                    prefix_len=8,
+                    port=53,
+                    protocol=0,
+                    address_family=1,
+                    addr=[10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                )
+                mock_shm.clear.assert_called_once_with(989)
 
     def test_register_policy_with_multiple_targets(self):
         faultcore.register_policy(

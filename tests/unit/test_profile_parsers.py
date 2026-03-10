@@ -49,6 +49,18 @@ def test_build_target_profile_accepts_bracketed_ipv6_target_string():
     assert profile["addr"] == [32, 1, 13, 184, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16]
 
 
+def test_build_target_profile_accepts_explicit_any_protocol_parameter():
+    profile = build_target_profile(host="10.1.2.3", port=443, protocol="any")
+    assert profile["protocol"] == 0
+
+
+def test_build_target_profile_accepts_any_protocol_in_target_string():
+    profile = build_target_profile(target="any://10.1.2.3:443")
+    assert profile["protocol"] == 0
+    assert profile["kind"] == 1
+    assert profile["address_family"] == 1
+
+
 def test_build_target_profile_rejects_unbracketed_ipv6_target_string():
     with pytest.raises(ValueError, match=r"(?i)bracket"):
         build_target_profile(target="tcp://2001:db8::10:443")

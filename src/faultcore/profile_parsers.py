@@ -173,11 +173,13 @@ def parse_target_protocol(protocol: str | None) -> int:
     if protocol is None:
         return 0
     normalized = protocol.strip().lower()
+    if normalized == "any":
+        return 0
     if normalized == "tcp":
         return 1
     if normalized == "udp":
         return 2
-    raise ValueError("target protocol must be one of: tcp, udp")
+    raise ValueError("target protocol must be one of: any, tcp, udp")
 
 
 def _parse_target_host_port(raw: str) -> tuple[str, int]:

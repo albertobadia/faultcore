@@ -45,7 +45,6 @@ def run_sync_with_timeout(
     if pid == 0:
         os_module.close(read_fd)
         os_module.close(signal_read_fd)
-        # Handshake: notify parent that function execution is about to start.
         os_module.write(signal_write_fd, b"S")
         kind: str
         value: Any
@@ -56,7 +55,6 @@ def run_sync_with_timeout(
             value = exc
             kind = "error"
         try:
-            # Notify parent when user code finishes, before serialization/write costs.
             os_module.write(signal_write_fd, b"D")
             os_module.close(signal_write_fd)
             payload = pickle_module.dumps((kind, value), protocol=pickle_module.HIGHEST_PROTOCOL)
@@ -73,7 +71,6 @@ def run_sync_with_timeout(
 
     os_module.close(write_fd)
     os_module.close(signal_write_fd)
-    # Allow bounded startup time for thread/process scheduling before timing user execution.
     startup_timeout_ms = min(50, max(10, timeout_ms // 2))
     startup_ready, _, _ = select_module.select([signal_read_fd], [], [], startup_timeout_ms / 1000)
     if not startup_ready:

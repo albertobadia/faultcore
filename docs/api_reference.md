@@ -163,8 +163,8 @@ Accepted forms:
 - `for_target(cidr="10.0.0.0/8", port=53)`
 
 Current scope:
-- IPv4 targets only.
-- Protocol can be `tcp` or `udp`.
+- IPv4/IPv6 targets.
+- Protocol can be `any`, `tcp` or `udp`.
 
 ### `profile(...)`
 
