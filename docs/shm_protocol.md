@@ -32,7 +32,7 @@ flowchart LR
 
 Diagram focus: top-level SHM memory regions consumed by writer/runtime.
 
-## FaultcoreConfig (376 bytes)
+## FaultcoreConfig (472 bytes)
 - Endianness: little-endian
 - Fixed packed layout
 
@@ -86,17 +86,22 @@ Diagram focus: top-level SHM memory regions consumed by writer/runtime.
 | `schedule_param_c_ns` | 356 | 8 | `u64` |
 | `schedule_started_monotonic_ns` | 364 | 8 | `u64` |
 | `reserved` | 372 | 4 | `u32` |
+| `ruleset_generation` | 376 | 8 | `u64` |
+| `target_address_family` | 384 | 8 | `u64` |
+| `target_addr` | 392 | 16 | `[u8;16]` |
+| `target_hostname` | 408 | 32 | `[u8;32]` |
+| `target_sni` | 440 | 32 | `[u8;32]` |
 
 Constants:
 - `FAULTCORE_MAGIC = 0xFACC0DE`
-- `CONFIG_SIZE = 376`
+- `CONFIG_SIZE = 472`
 - `MAX_FDS = 131072`
 - `MAX_TIDS = 65536`
 - `MAX_TARGET_RULES_PER_TID = 8`
 
 ## Target Rules Region
 
-`TargetRule` is a fixed 64-byte row stored in a per-TID-slot table:
+`TargetRule` is a fixed 152-byte row stored in a per-TID-slot table:
 
 | Field | Type | Notes |
 |---|---|---|
@@ -108,6 +113,10 @@ Constants:
 | `port` | `u64` | `0` means any |
 | `protocol` | `u64` | `0=any`, `1=tcp`, `2=udp` |
 | `reserved` | `u64` | reserved |
+| `address_family` | `u64` | `0=unset`, `1=ipv4`, `2=ipv6` |
+| `addr` | `[u8;16]` | unified IP bytes (network order) |
+| `hostname` | `[u8;32]` | normalized hostname buffer (NUL padded) |
+| `sni` | `[u8;32]` | normalized SNI buffer (NUL padded) |
 
 Selection semantics for `targets[]`:
 - consider first `target_enabled` rules;

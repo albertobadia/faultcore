@@ -1,6 +1,6 @@
 use libc::c_int;
 
-use crate::{get_thread_id, update_config_for_tid, FAULTCORE_MAGIC};
+use crate::{FAULTCORE_MAGIC, get_thread_id, update_config_for_tid};
 
 pub const FAULTCORE_SETPRIORITY_LATENCY: c_int = 0xFA;
 pub const FAULTCORE_SETPRIORITY_BANDWIDTH: c_int = 0xFB;
@@ -13,7 +13,11 @@ pub enum SetpriorityCompatOutcome {
     FaultcoreError { errno: c_int },
 }
 
-pub fn handle_setpriority_compat(which: c_int, who: c_int, prio: c_int) -> SetpriorityCompatOutcome {
+pub fn handle_setpriority_compat(
+    which: c_int,
+    who: c_int,
+    prio: c_int,
+) -> SetpriorityCompatOutcome {
     if !is_faultcore_mode(which) {
         return SetpriorityCompatOutcome::NotHandled;
     }
@@ -158,10 +162,6 @@ mod tests {
             -2,
             -1
         ));
-        assert!(!try_handle_setpriority(
-            non_faultcore_which,
-            0,
-            0
-        ));
+        assert!(!try_handle_setpriority(non_faultcore_which, 0, 0));
     }
 }

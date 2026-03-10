@@ -34,7 +34,10 @@ pub unsafe fn sockaddr_ipv4(addr: *const sockaddr, addr_len: socklen_t) -> Optio
         return None;
     }
     let in_addr = unsafe { &*(addr.cast::<libc::sockaddr_in>()) };
-    Some((u32::from_be(in_addr.sin_addr.s_addr), u16::from_be(in_addr.sin_port)))
+    Some((
+        u32::from_be(in_addr.sin_addr.s_addr),
+        u16::from_be(in_addr.sin_port),
+    ))
 }
 
 pub fn peer_ipv4_for_fd(fd: c_int) -> Option<(u32, u16)> {
@@ -50,7 +53,12 @@ pub fn peer_ipv4_for_fd(fd: c_int) -> Option<(u32, u16)> {
     if rc < 0 {
         return None;
     }
-    unsafe { sockaddr_ipv4((&storage as *const libc::sockaddr_storage).cast::<sockaddr>(), len) }
+    unsafe {
+        sockaddr_ipv4(
+            (&storage as *const libc::sockaddr_storage).cast::<sockaddr>(),
+            len,
+        )
+    }
 }
 
 pub fn monotonic_now_ns() -> u64 {

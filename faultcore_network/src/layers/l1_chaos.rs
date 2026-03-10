@@ -2,9 +2,9 @@ use crate::{
     Config,
     layers::{Layer, LayerDecision, LayerStage, PacketContext},
 };
-use std::collections::HashMap;
 use parking_lot::Mutex;
 use rand::{Rng, SeedableRng, random, rngs::StdRng};
+use std::collections::HashMap;
 
 pub struct L1Chaos {
     seeded_rng: Option<Mutex<StdRng>>,

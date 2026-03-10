@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use libc::{
-    c_void, sockaddr, socklen_t, ssize_t, EAGAIN, EAI_AGAIN, EAI_FAIL, EAI_NONAME, ECONNREFUSED,
-    ECONNRESET, EIO, ENETUNREACH, ETIMEDOUT,
+    EAGAIN, EAI_AGAIN, EAI_FAIL, EAI_NONAME, ECONNREFUSED, ECONNRESET, EIO, ENETUNREACH, ETIMEDOUT,
+    c_void, sockaddr, socklen_t, ssize_t,
 };
 use parking_lot::Mutex;
 
@@ -531,9 +531,11 @@ mod tests {
         let runtime = InterceptorRuntime::new();
         let mut pending = VecDeque::from([pkt(b"a"), pkt(b"b")]);
 
-        assert!(runtime
-            .pop_reorder_after_success(&mut pending, true)
-            .is_none());
+        assert!(
+            runtime
+                .pop_reorder_after_success(&mut pending, true)
+                .is_none()
+        );
         assert_eq!(pending.len(), 2);
 
         let popped = runtime.pop_reorder_after_success(&mut pending, false);

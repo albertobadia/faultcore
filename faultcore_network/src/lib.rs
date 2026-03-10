@@ -3,8 +3,8 @@ pub mod interceptor_bridge;
 pub mod layers;
 pub mod runtime;
 pub mod setpriority_compat;
-pub mod shm_runtime;
 pub mod shm_contract;
+pub mod shm_runtime;
 pub mod socket_runtime;
 use std::sync::OnceLock;
 
@@ -12,34 +12,34 @@ pub use chaos_engine::{ChaosEngine, DecisionCounters};
 pub type FaultOsiEngine = ChaosEngine;
 pub type FaultOsiDecisionCounters = DecisionCounters;
 pub use interceptor_bridge::{
-    bind_fd_to_current_thread, clear_fd_binding, clone_fd_binding, init_runtime_shm, runtime_config_for_addr_or_fd,
-    runtime_config_for_fd, runtime_dns_config_for_current_thread, uplink_duplicate_count_for_addr_or_fd,
-    uplink_duplicate_count_for_fd,
+    bind_fd_to_current_thread, clear_fd_binding, clone_fd_binding, init_runtime_shm,
+    runtime_config_for_addr_or_fd, runtime_config_for_fd, runtime_dns_config_for_current_thread,
+    uplink_duplicate_count_for_addr_or_fd, uplink_duplicate_count_for_fd,
+};
+pub use layers::{
+    Direction, L1Chaos, L2QoS, L3Routing, L4Transport, L5Session, L6Presentation, L7Resolver,
+    Layer, LayerDecision, LayerStage, Operation, PacketContext,
 };
 pub use runtime::{
-    ConnectDirective, InterceptorRuntime, PendingDatagram, StreamDirective, apply_connect_directive,
-    apply_stream_directive, set_errno_value, snapshot_recv_datagram, snapshot_recvfrom_datagram,
-    stage_reorder_send, stage_reorder_sendto, write_pending_recv_result,
-    write_pending_recvfrom_result,
+    ConnectDirective, InterceptorRuntime, PendingDatagram, StreamDirective,
+    apply_connect_directive, apply_stream_directive, set_errno_value, snapshot_recv_datagram,
+    snapshot_recvfrom_datagram, stage_reorder_send, stage_reorder_sendto,
+    write_pending_recv_result, write_pending_recvfrom_result,
 };
 pub use setpriority_compat::{
     FAULTCORE_SETPRIORITY_BANDWIDTH, FAULTCORE_SETPRIORITY_LATENCY, FAULTCORE_SETPRIORITY_TIMEOUT,
     SetpriorityCompatOutcome, handle_setpriority_compat, try_handle_setpriority,
 };
-pub use shm_runtime::{
-    assign_rule_to_fd, clear_rule_for_fd, clone_rule_for_fd, get_config_for_fd, get_config_for_tid, get_config_for_tid_slot,
-    get_target_rules_for_tid_slot, get_thread_id, get_tid_slot_for_fd, get_tid_slot_for_tid, is_shm_open,
-    try_open_shm, update_config_for_tid,
-};
 pub use shm_contract::{
-    FAULTCORE_MAGIC, FAULTCORE_SHM_SIZE, FaultcoreConfig, MAX_BANDWIDTH_BPS, MAX_FDS, MAX_LATENCY_NS,
-    MAX_POLICIES, MAX_TARGET_RULES_PER_TID, MAX_TIDS, PolicyState, TargetRule,
+    FAULTCORE_MAGIC, FAULTCORE_SHM_SIZE, FaultcoreConfig, MAX_BANDWIDTH_BPS, MAX_FDS,
+    MAX_LATENCY_NS, MAX_POLICIES, MAX_TARGET_RULES_PER_TID, MAX_TIDS, PolicyState, TargetRule,
+};
+pub use shm_runtime::{
+    assign_rule_to_fd, clear_rule_for_fd, clone_rule_for_fd, get_config_for_fd, get_config_for_tid,
+    get_config_for_tid_slot, get_target_rules_for_tid_slot, get_thread_id, get_tid_slot_for_fd,
+    get_tid_slot_for_tid, is_shm_open, try_open_shm, update_config_for_tid,
 };
 pub use socket_runtime::{endpoint_for_addr_or_fd, endpoint_for_fd, monotonic_now_ns};
-pub use layers::{
-    Direction, L1Chaos, L2QoS, L3Routing, L4Transport, L5Session, L6Presentation, L7Resolver, Layer,
-    LayerDecision, LayerStage, Operation, PacketContext,
-};
 
 static GLOBAL_ENGINE: OnceLock<ChaosEngine> = OnceLock::new();
 static GLOBAL_RUNTIME: OnceLock<InterceptorRuntime> = OnceLock::new();
@@ -176,6 +176,10 @@ pub struct Config {
     pub target_prefix_len: u64,
     pub target_port: u64,
     pub target_protocol: u64,
+    pub target_address_family: u64,
+    pub target_addr: [u8; 16],
+    pub target_hostname: [u8; 32],
+    pub target_sni: [u8; 32],
     pub schedule_type: u64,
     pub schedule_param_a_ns: u64,
     pub schedule_param_b_ns: u64,
@@ -402,7 +406,6 @@ impl Config {
         self.dns_timeout_ms = 0;
         self.dns_nxdomain_ppm = 0;
     }
-
 }
 
 fn scale_u64(value: u64, factor: f64) -> u64 {

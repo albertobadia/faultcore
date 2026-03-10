@@ -2,9 +2,9 @@ use libc::{c_int, sockaddr, socklen_t};
 
 use crate::{
     Config, Direction, Endpoint, FaultOsiEngine, LayerDecision, TargetRule, assign_rule_to_fd,
-    clear_rule_for_fd, clone_rule_for_fd, endpoint_for_addr_or_fd, endpoint_for_fd, get_config_for_tid,
-    get_config_for_tid_slot, get_target_rules_for_tid_slot, get_thread_id, get_tid_slot_for_fd,
-    get_tid_slot_for_tid, monotonic_now_ns, try_open_shm,
+    clear_rule_for_fd, clone_rule_for_fd, endpoint_for_addr_or_fd, endpoint_for_fd,
+    get_config_for_tid, get_config_for_tid_slot, get_target_rules_for_tid_slot, get_thread_id,
+    get_tid_slot_for_fd, get_tid_slot_for_tid, monotonic_now_ns, try_open_shm,
 };
 
 fn endpoint_matches_rule(endpoint: Endpoint, rule: &TargetRule) -> bool {
@@ -54,7 +54,11 @@ fn select_best_target_rule(
     selected_idx.map(|idx| rules[idx])
 }
 
-fn apply_multi_target_for_tid(mut cfg: Config, tid_slot: usize, endpoint: Option<Endpoint>) -> Option<Config> {
+fn apply_multi_target_for_tid(
+    mut cfg: Config,
+    tid_slot: usize,
+    endpoint: Option<Endpoint>,
+) -> Option<Config> {
     if cfg.target_enabled <= 1 {
         return cfg.runtime_filtered(endpoint, monotonic_now_ns());
     }
@@ -91,10 +95,7 @@ pub fn clone_fd_binding(src_fd: c_int, dst_fd: c_int) {
     clone_rule_for_fd(src_fd, dst_fd);
 }
 
-fn resolve_runtime_config_for_endpoint(
-    fd: c_int,
-    endpoint: Option<Endpoint>,
-) -> Option<Config> {
+fn resolve_runtime_config_for_endpoint(fd: c_int, endpoint: Option<Endpoint>) -> Option<Config> {
     let tid = get_thread_id();
     let owner_slot = get_tid_slot_for_fd(fd);
     let owner_cfg = owner_slot
@@ -203,6 +204,10 @@ mod tests {
                 port: endpoint.port as u64,
                 protocol: endpoint.protocol,
                 reserved: 0,
+                address_family: 0,
+                addr: [0; 16],
+                hostname: [0; 32],
+                sni: [0; 32],
             },
             TargetRule {
                 enabled: 1,
@@ -213,6 +218,10 @@ mod tests {
                 port: endpoint.port as u64,
                 protocol: endpoint.protocol,
                 reserved: 0,
+                address_family: 0,
+                addr: [0; 16],
+                hostname: [0; 32],
+                sni: [0; 32],
             },
         ];
         let selected = select_best_target_rule(endpoint, &rules, rules.len()).expect("must select");
@@ -236,6 +245,10 @@ mod tests {
                 port: endpoint.port as u64,
                 protocol: endpoint.protocol,
                 reserved: 0,
+                address_family: 0,
+                addr: [0; 16],
+                hostname: [0; 32],
+                sni: [0; 32],
             },
             TargetRule {
                 enabled: 1,
@@ -246,6 +259,10 @@ mod tests {
                 port: endpoint.port as u64,
                 protocol: endpoint.protocol,
                 reserved: 0,
+                address_family: 0,
+                addr: [0; 16],
+                hostname: [0; 32],
+                sni: [0; 32],
             },
         ];
         let selected = select_best_target_rule(endpoint, &rules, rules.len()).expect("must select");
@@ -269,6 +286,10 @@ mod tests {
             port: endpoint.port as u64,
             protocol: endpoint.protocol,
             reserved: 0,
+            address_family: 0,
+            addr: [0; 16],
+            hostname: [0; 32],
+            sni: [0; 32],
         }];
         assert!(select_best_target_rule(endpoint, &rules, rules.len()).is_none());
     }
@@ -290,6 +311,10 @@ mod tests {
                 port: endpoint.port as u64,
                 protocol: endpoint.protocol,
                 reserved: 0,
+                address_family: 0,
+                addr: [0; 16],
+                hostname: [0; 32],
+                sni: [0; 32],
             },
             TargetRule {
                 enabled: 1,
@@ -300,6 +325,10 @@ mod tests {
                 port: endpoint.port as u64,
                 protocol: endpoint.protocol,
                 reserved: 0,
+                address_family: 0,
+                addr: [0; 16],
+                hostname: [0; 32],
+                sni: [0; 32],
             },
         ];
         let selected = select_best_target_rule(endpoint, &rules, rules.len()).expect("must select");
@@ -323,6 +352,10 @@ mod tests {
                 port: 443,
                 protocol: endpoint.protocol,
                 reserved: 0,
+                address_family: 0,
+                addr: [0; 16],
+                hostname: [0; 32],
+                sni: [0; 32],
             },
             TargetRule {
                 enabled: 1,
@@ -333,6 +366,10 @@ mod tests {
                 port: endpoint.port as u64,
                 protocol: 1,
                 reserved: 0,
+                address_family: 0,
+                addr: [0; 16],
+                hostname: [0; 32],
+                sni: [0; 32],
             },
             TargetRule {
                 enabled: 1,
@@ -343,6 +380,10 @@ mod tests {
                 port: endpoint.port as u64,
                 protocol: endpoint.protocol,
                 reserved: 0,
+                address_family: 0,
+                addr: [0; 16],
+                hostname: [0; 32],
+                sni: [0; 32],
             },
         ];
         let selected = select_best_target_rule(endpoint, &rules, rules.len()).expect("must select");
@@ -365,6 +406,10 @@ mod tests {
             port: 0,
             protocol: 0,
             reserved: 0,
+            address_family: 0,
+            addr: [0; 16],
+            hostname: [0; 32],
+            sni: [0; 32],
         }];
         let selected = select_best_target_rule(endpoint, &rules, rules.len()).expect("must select");
         assert_eq!(selected.kind, 2);

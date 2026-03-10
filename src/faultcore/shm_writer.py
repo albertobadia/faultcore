@@ -9,9 +9,9 @@ MAX_FDS = 131072
 MAX_TIDS = 65536
 MAX_POLICIES = 1024
 MAX_TARGET_RULES_PER_TID = 8
-CONFIG_SIZE = 376
+CONFIG_SIZE = 472
 POLICY_STATE_SIZE = 56
-TARGET_RULE_SIZE = 64
+TARGET_RULE_SIZE = 152
 SHM_SIZE = (
     ((MAX_FDS + MAX_TIDS) * CONFIG_SIZE)
     + (MAX_POLICIES * POLICY_STATE_SIZE)
@@ -79,6 +79,11 @@ _OFFSET_SCHEDULE_PARAM_A = 340
 _OFFSET_SCHEDULE_PARAM_B = 348
 _OFFSET_SCHEDULE_PARAM_C = 356
 _OFFSET_SCHEDULE_STARTED_MONOTONIC_NS = 364
+_OFFSET_RULESET_GENERATION = 376
+_OFFSET_TARGET_ADDRESS_FAMILY = 384
+_OFFSET_TARGET_ADDR = 392
+_OFFSET_TARGET_HOSTNAME = 408
+_OFFSET_TARGET_SNI = 440
 
 _UPLINK_DIRECTION_OFFSETS: DirectionOffsets = (
     _OFFSET_UPLINK_LATENCY_NS,
@@ -166,6 +171,7 @@ class SHMWriter:
 
     def _write_target_rule_row(self, target_rules_offset: int, idx: int, rule: dict[str, int]) -> None:
         base = target_rules_offset + (idx * TARGET_RULE_SIZE)
+        self._mmap[base : base + TARGET_RULE_SIZE] = b"\x00" * TARGET_RULE_SIZE
         self._pack_u64_fields(
             base,
             (
@@ -177,6 +183,7 @@ class SHMWriter:
                 (40, int(rule.get("port", 0))),
                 (48, int(rule.get("protocol", 0))),
                 (56, 0),
+                (64, int(rule.get("address_family", 0))),
             ),
         )
 
@@ -300,6 +307,10 @@ class SHMWriter:
         ipv4 = self._rule_int(rule, "ipv4", 0, idx)
         if not 0 <= ipv4 <= _U32_MAX:
             raise ValueError(f"targets[{idx}].ipv4 must be a valid u32 value")
+
+        address_family = self._rule_int(rule, "address_family", 0, idx)
+        if address_family not in (0, 1, 2):
+            raise ValueError(f"targets[{idx}].address_family must be one of 0, 1, 2")
 
     def write_latency(self, tid: int, latency_ms: int) -> None:
         self._write_fields(tid, ((_OFFSET_LATENCY_NS, self._ms_to_ns(latency_ms)),))

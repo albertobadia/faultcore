@@ -7,7 +7,8 @@ pub const MAX_POLICIES: usize = 1024;
 pub const MAX_TARGET_RULES_PER_TID: usize = 8;
 pub const MAX_LATENCY_NS: u64 = 60_000_000_000;
 pub const MAX_BANDWIDTH_BPS: u64 = 100_000_000_000;
-pub const FAULTCORE_SHM_SIZE: usize = ((MAX_FDS + MAX_TIDS) * core::mem::size_of::<FaultcoreConfig>())
+pub const FAULTCORE_SHM_SIZE: usize = ((MAX_FDS + MAX_TIDS)
+    * core::mem::size_of::<FaultcoreConfig>())
     + (MAX_POLICIES * core::mem::size_of::<PolicyState>())
     + (MAX_TIDS * MAX_TARGET_RULES_PER_TID * core::mem::size_of::<TargetRule>())
     + (MAX_FDS * core::mem::size_of::<u64>());
@@ -63,6 +64,11 @@ pub struct FaultcoreConfig {
     pub schedule_param_c_ns: u64,
     pub schedule_started_monotonic_ns: u64,
     pub reserved: u32,
+    pub ruleset_generation: u64,
+    pub target_address_family: u64,
+    pub target_addr: [u8; 16],
+    pub target_hostname: [u8; 32],
+    pub target_sni: [u8; 32],
 }
 
 #[repr(C)]
@@ -86,6 +92,10 @@ pub struct TargetRule {
     pub port: u64,
     pub protocol: u64,
     pub reserved: u64,
+    pub address_family: u64,
+    pub addr: [u8; 16],
+    pub hostname: [u8; 32],
+    pub sni: [u8; 32],
 }
 
 impl FaultcoreConfig {
@@ -123,6 +133,7 @@ impl FaultcoreConfig {
             && self.target_prefix_len <= 32
             && self.target_port <= 65_535
             && self.target_protocol <= 2
+            && self.target_address_family <= 2
             && self.schedule_type <= 3
     }
 
@@ -168,6 +179,10 @@ impl FaultcoreConfig {
             target_prefix_len: self.target_prefix_len,
             target_port: self.target_port,
             target_protocol: self.target_protocol,
+            target_address_family: self.target_address_family,
+            target_addr: self.target_addr,
+            target_hostname: self.target_hostname,
+            target_sni: self.target_sni,
             schedule_type: self.schedule_type,
             schedule_param_a_ns: self.schedule_param_a_ns,
             schedule_param_b_ns: self.schedule_param_b_ns,

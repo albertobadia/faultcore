@@ -1,15 +1,13 @@
 use faultcore_network::{
-    Config, Direction, LayerDecision, PendingDatagram,
-    SetpriorityCompatOutcome,
-    apply_connect_directive, apply_stream_directive, bind_fd_to_current_thread, clear_fd_binding,
-    clone_fd_binding,
-    global_fault_osi_engine, global_interceptor_runtime,
-    handle_setpriority_compat,
-    init_runtime_shm, reset_global_fault_osi_metrics, runtime_config_for_addr_or_fd, runtime_config_for_fd,
+    Config, Direction, FaultOsiMetricsSnapshot, LayerDecision, PendingDatagram,
+    SetpriorityCompatOutcome, apply_connect_directive, apply_stream_directive,
+    bind_fd_to_current_thread, clear_fd_binding, clone_fd_binding, global_fault_osi_engine,
+    global_interceptor_runtime, handle_setpriority_compat, init_runtime_shm,
+    reset_global_fault_osi_metrics, runtime_config_for_addr_or_fd, runtime_config_for_fd,
     runtime_dns_config_for_current_thread, set_errno_value, snapshot_recv_datagram,
     snapshot_recvfrom_datagram, stage_reorder_send, stage_reorder_sendto,
     uplink_duplicate_count_for_addr_or_fd, uplink_duplicate_count_for_fd,
-    write_pending_recv_result, write_pending_recvfrom_result, FaultOsiMetricsSnapshot,
+    write_pending_recv_result, write_pending_recvfrom_result,
 };
 use libc::{addrinfo, c_char, c_int, c_void, size_t, sockaddr, socklen_t, ssize_t};
 use std::collections::VecDeque;
@@ -102,8 +100,9 @@ fn maybe_duplicate_sendto(
     if sent <= 0 {
         return;
     }
-    let count =
-        unsafe { uplink_duplicate_count_for_addr_or_fd(global_fault_osi_engine(), fd, addr, addr_len) };
+    let count = unsafe {
+        uplink_duplicate_count_for_addr_or_fd(global_fault_osi_engine(), fd, addr, addr_len)
+    };
     for _ in 0..count {
         unsafe {
             let _ = (ORIG_SENDTO)(fd, b, sent as size_t, f, addr, addr_len);
@@ -204,19 +203,26 @@ where
     let mut faults_applied = false;
     let result = if let Some(network_cfg) = config_lookup() {
         faults_applied = true;
-        for pkt in global_interceptor_runtime().flush_expired_reorder(pending, network_cfg.reorder_max_delay_ns) {
+        for pkt in global_interceptor_runtime()
+            .flush_expired_reorder(pending, network_cfg.reorder_max_delay_ns)
+        {
             send_pending_datagram(s, &pkt);
         }
-        let decision =
-            global_fault_osi_engine().evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Uplink);
-        let directive = global_interceptor_runtime().map_stream_decision(s, decision.clone(), non_blocking);
+        let decision = global_fault_osi_engine().evaluate_stream_pre(
+            s,
+            &network_cfg,
+            l as u64,
+            Direction::Uplink,
+        );
+        let directive =
+            global_interceptor_runtime().map_stream_decision(s, decision.clone(), non_blocking);
         if let Some(error) = apply_stream_directive(directive) {
             error as ssize_t
         } else if matches!(decision, LayerDecision::StageReorder) {
             staged_reorder = true;
             let staged = stage_reorder(pending);
-            for pkt in
-                global_interceptor_runtime().enforce_reorder_window(pending, network_cfg.reorder_window as usize)
+            for pkt in global_interceptor_runtime()
+                .enforce_reorder_window(pending, network_cfg.reorder_window as usize)
             {
                 send_pending_datagram(s, &pkt);
             }
@@ -234,7 +240,8 @@ where
             duplicate_after_success(result);
         }
         if faults_applied
-            && let Some(pkt) = global_interceptor_runtime().pop_reorder_after_success(pending, staged_reorder)
+            && let Some(pkt) =
+                global_interceptor_runtime().pop_reorder_after_success(pending, staged_reorder)
         {
             send_pending_datagram(s, &pkt);
         }
@@ -262,9 +269,14 @@ where
             return (write_staged(&pkt), false);
         }
 
-        let decision =
-            global_fault_osi_engine().evaluate_stream_pre(s, &network_cfg, l as u64, Direction::Downlink);
-        let directive = global_interceptor_runtime().map_stream_decision(s, decision.clone(), non_blocking);
+        let decision = global_fault_osi_engine().evaluate_stream_pre(
+            s,
+            &network_cfg,
+            l as u64,
+            Direction::Downlink,
+        );
+        let directive =
+            global_interceptor_runtime().map_stream_decision(s, decision.clone(), non_blocking);
         let out = if let Some(error) = apply_stream_directive(directive) {
             error as ssize_t
         } else if !non_blocking && matches!(decision, LayerDecision::StageReorder) {
@@ -303,7 +315,6 @@ where
         (call_orig(), true)
     }
 }
-
 
 #[unsafe(no_mangle)]
 pub extern "C" fn socket(domain: c_int, ty: c_int, protocol: c_int) -> c_int {
@@ -471,17 +482,18 @@ pub unsafe extern "C" fn recv(s: c_int, b: *mut c_void, l: size_t, f: c_int) -> 
 
     initialize();
     let non_blocking = is_non_blocking(s);
-    let (result, should_record) = global_interceptor_runtime().with_reorder_pending_recv(s, |pending| {
-        handle_downlink_recv(
-            s,
-            l,
-            non_blocking,
-            pending,
-            || unsafe { (ORIG_RECV)(s, b, l, f) },
-            |recv_result| unsafe { snapshot_recv_datagram(b, recv_result, f) },
-            |pkt| unsafe { write_pending_recv_result(pkt, b, l) },
-        )
-    });
+    let (result, should_record) =
+        global_interceptor_runtime().with_reorder_pending_recv(s, |pending| {
+            handle_downlink_recv(
+                s,
+                l,
+                non_blocking,
+                pending,
+                || unsafe { (ORIG_RECV)(s, b, l, f) },
+                |recv_result| unsafe { snapshot_recv_datagram(b, recv_result, f) },
+                |pkt| unsafe { write_pending_recv_result(pkt, b, l) },
+            )
+        });
 
     if should_record && result > 0 {
         record_stream_bytes(s, result as u64);
@@ -544,7 +556,8 @@ pub unsafe extern "C" fn sendto(
             || unsafe { runtime_config_for_addr_or_fd(s, addr, addr_len) },
             || unsafe { (ORIG_SENDTO)(s, b, l, f, addr, addr_len) },
             |pending| {
-                unsafe { stage_reorder_sendto(pending, b, l, f, addr, addr_len) }.unwrap_or(l as ssize_t)
+                unsafe { stage_reorder_sendto(pending, b, l, f, addr, addr_len) }
+                    .unwrap_or(l as ssize_t)
             },
             |result| maybe_duplicate_sendto(s, b, result, f, addr, addr_len),
         )
@@ -572,17 +585,20 @@ pub unsafe extern "C" fn recvfrom(
 
     initialize();
     let non_blocking = is_non_blocking(s);
-    let (result, should_record) = global_interceptor_runtime().with_reorder_pending_recv(s, |pending| {
-        handle_downlink_recv(
-            s,
-            l,
-            non_blocking,
-            pending,
-            || unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) },
-            |recv_result| unsafe { snapshot_recvfrom_datagram(b, recv_result, f, addr, addr_len) },
-            |pkt| unsafe { write_pending_recvfrom_result(pkt, b, l, addr, addr_len) },
-        )
-    });
+    let (result, should_record) =
+        global_interceptor_runtime().with_reorder_pending_recv(s, |pending| {
+            handle_downlink_recv(
+                s,
+                l,
+                non_blocking,
+                pending,
+                || unsafe { (ORIG_RECVFROM)(s, b, l, f, addr, addr_len) },
+                |recv_result| unsafe {
+                    snapshot_recvfrom_datagram(b, recv_result, f, addr, addr_len)
+                },
+                |pkt| unsafe { write_pending_recvfrom_result(pkt, b, l, addr, addr_len) },
+            )
+        });
 
     if should_record && result > 0 {
         record_stream_bytes(s, result as u64);
@@ -674,7 +690,8 @@ mod tests {
 
     #[test]
     fn connect_timeout_maps_to_etimedout() {
-        let directive = global_interceptor_runtime().map_connect_decision(LayerDecision::TimeoutMs(10));
+        let directive =
+            global_interceptor_runtime().map_connect_decision(LayerDecision::TimeoutMs(10));
         assert_eq!(
             directive,
             faultcore_network::ConnectDirective::ReturnErrno {
@@ -686,7 +703,8 @@ mod tests {
 
     #[test]
     fn connect_error_kind_maps_to_errno() {
-        let directive = global_interceptor_runtime().map_connect_decision(LayerDecision::ConnectionErrorKind(1));
+        let directive = global_interceptor_runtime()
+            .map_connect_decision(LayerDecision::ConnectionErrorKind(1));
         assert_eq!(
             directive,
             faultcore_network::ConnectDirective::ReturnErrno {
@@ -698,7 +716,8 @@ mod tests {
 
     #[test]
     fn stream_drop_maps_to_errno() {
-        let directive = global_interceptor_runtime().map_stream_decision(1, LayerDecision::Drop, false);
+        let directive =
+            global_interceptor_runtime().map_stream_decision(1, LayerDecision::Drop, false);
         assert_eq!(
             directive,
             faultcore_network::StreamDirective::ReturnErrno {
@@ -710,16 +729,24 @@ mod tests {
 
     #[test]
     fn stream_drop_must_not_look_like_successful_zero_byte_io() {
-        let directive = global_interceptor_runtime().map_stream_decision(1, LayerDecision::Drop, false);
+        let directive =
+            global_interceptor_runtime().map_stream_decision(1, LayerDecision::Drop, false);
         assert!(
-            !matches!(directive, faultcore_network::StreamDirective::ReturnValue(0)),
+            !matches!(
+                directive,
+                faultcore_network::StreamDirective::ReturnValue(0)
+            ),
             "drop for stream I/O should not be mapped as a successful zero-byte operation"
         );
     }
 
     #[test]
     fn stream_timeout_maps_to_etimedout() {
-        let directive = global_interceptor_runtime().map_stream_decision(1, LayerDecision::TimeoutMs(50), false);
+        let directive = global_interceptor_runtime().map_stream_decision(
+            1,
+            LayerDecision::TimeoutMs(50),
+            false,
+        );
         assert_eq!(
             directive,
             faultcore_network::StreamDirective::ReturnErrno {
@@ -731,7 +758,8 @@ mod tests {
 
     #[test]
     fn stream_stage_reorder_is_non_terminal() {
-        let directive = global_interceptor_runtime().map_stream_decision(1, LayerDecision::StageReorder, false);
+        let directive =
+            global_interceptor_runtime().map_stream_decision(1, LayerDecision::StageReorder, false);
         assert_eq!(directive, faultcore_network::StreamDirective::Continue);
     }
 
@@ -746,10 +774,14 @@ mod tests {
             Some(libc::EAI_NONAME)
         );
         assert_eq!(
-            global_interceptor_runtime().map_dns_decision_to_eai(&LayerDecision::ConnectionErrorKind(1)),
+            global_interceptor_runtime()
+                .map_dns_decision_to_eai(&LayerDecision::ConnectionErrorKind(1)),
             Some(libc::EAI_FAIL)
         );
-        assert_eq!(global_interceptor_runtime().map_dns_decision_to_eai(&LayerDecision::DelayNs(1)), None);
+        assert_eq!(
+            global_interceptor_runtime().map_dns_decision_to_eai(&LayerDecision::DelayNs(1)),
+            None
+        );
     }
 
     #[test]

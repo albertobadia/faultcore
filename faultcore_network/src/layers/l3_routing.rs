@@ -1,6 +1,4 @@
-use crate::{
-    layers::{Layer, LayerDecision, LayerStage, PacketContext},
-};
+use crate::layers::{Layer, LayerDecision, LayerStage, PacketContext};
 use parking_lot::Mutex;
 use rand::{Rng, SeedableRng, random, rngs::StdRng};
 

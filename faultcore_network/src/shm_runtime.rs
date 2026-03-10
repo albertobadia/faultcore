@@ -1,11 +1,13 @@
 use crate::{
-    FaultcoreConfig, PolicyState, TargetRule, FAULTCORE_MAGIC, FAULTCORE_SHM_SIZE, MAX_FDS,
-    MAX_POLICIES, MAX_TARGET_RULES_PER_TID, MAX_TIDS,
+    FAULTCORE_MAGIC, FAULTCORE_SHM_SIZE, FaultcoreConfig, MAX_FDS, MAX_POLICIES,
+    MAX_TARGET_RULES_PER_TID, MAX_TIDS, PolicyState, TargetRule,
 };
-use libc::{c_int, fstat, ftruncate, mmap, shm_open, stat, MAP_SHARED, O_RDWR, PROT_READ, PROT_WRITE};
+use libc::{
+    MAP_SHARED, O_RDWR, PROT_READ, PROT_WRITE, c_int, fstat, ftruncate, mmap, shm_open, stat,
+};
 use parking_lot::{Mutex, RwLock};
 use std::ptr;
-use std::sync::atomic::{fence, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering, fence};
 
 pub fn get_thread_id() -> u64 {
     unsafe { libc::syscall(libc::SYS_gettid) as u64 }
@@ -436,6 +438,11 @@ mod tests {
             schedule_param_c_ns: 0,
             schedule_started_monotonic_ns: 0,
             reserved: 0,
+            ruleset_generation: 0,
+            target_address_family: 0,
+            target_addr: [0; 16],
+            target_hostname: [0; 32],
+            target_sni: [0; 32],
         };
         assert!(config.is_valid());
     }
@@ -491,6 +498,11 @@ mod tests {
             schedule_param_c_ns: 0,
             schedule_started_monotonic_ns: 0,
             reserved: 0,
+            ruleset_generation: 0,
+            target_address_family: 0,
+            target_addr: [0; 16],
+            target_hostname: [0; 32],
+            target_sni: [0; 32],
         };
         assert!(!config.is_valid());
     }
@@ -591,6 +603,11 @@ mod tests {
                 schedule_param_c_ns: 0,
                 schedule_started_monotonic_ns: 0,
                 reserved: 0,
+                ruleset_generation: 0,
+                target_address_family: 0,
+                target_addr: [0; 16],
+                target_hostname: [0; 32],
+                target_sni: [0; 32],
             });
         }
 

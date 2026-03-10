@@ -33,7 +33,6 @@ impl L7Resolver {
         let random = self.random_u32() % 1_000_000;
         random < probability_ppm as u32
     }
-
 }
 
 impl Layer for L7Resolver {
