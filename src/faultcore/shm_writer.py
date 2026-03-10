@@ -5,6 +5,7 @@ import threading
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from faultcore.target_name_helpers import encode_target_name_bytes
 from faultcore.target_rule_helpers import (
     normalize_target_address,
     resolve_port_range,
@@ -178,6 +179,8 @@ class SHMWriter:
         self._mmap[base : base + TARGET_RULE_SIZE] = b"\x00" * TARGET_RULE_SIZE
         address_family, addr = normalize_target_address(rule, idx)
         port_start, port_end = resolve_port_range(rule, idx)
+        hostname = encode_target_name_bytes(rule.get("hostname"), f"targets[{idx}].hostname")
+        sni = encode_target_name_bytes(rule.get("sni"), f"targets[{idx}].sni")
         self._pack_u64_fields(
             base,
             (
@@ -193,9 +196,13 @@ class SHMWriter:
             ),
         )
         self._mmap[base + 72 : base + 88] = addr
+        self._mmap[base + 88 : base + 120] = hostname
+        self._mmap[base + 120 : base + 152] = sni
 
     def _write_single_target_fields(self, offset: int, rule: dict[str, Any], idx: int = 0) -> None:
         address_family, addr = normalize_target_address(rule, idx)
+        hostname = encode_target_name_bytes(rule.get("hostname"), f"targets[{idx}].hostname")
+        sni = encode_target_name_bytes(rule.get("sni"), f"targets[{idx}].sni")
         self._pack_u64_fields(
             offset,
             (
@@ -208,6 +215,8 @@ class SHMWriter:
             ),
         )
         self._mmap[offset + _OFFSET_TARGET_ADDR : offset + _OFFSET_TARGET_ADDR + 16] = addr
+        self._mmap[offset + _OFFSET_TARGET_HOSTNAME : offset + _OFFSET_TARGET_HOSTNAME + 32] = hostname
+        self._mmap[offset + _OFFSET_TARGET_SNI : offset + _OFFSET_TARGET_SNI + 32] = sni
 
     def _clear_single_target_fields(self, offset: int) -> None:
         self._pack_u64_fields(
@@ -222,6 +231,8 @@ class SHMWriter:
             ),
         )
         self._mmap[offset + _OFFSET_TARGET_ADDR : offset + _OFFSET_TARGET_ADDR + 16] = b"\x00" * 16
+        self._mmap[offset + _OFFSET_TARGET_HOSTNAME : offset + _OFFSET_TARGET_HOSTNAME + 32] = b"\x00" * 32
+        self._mmap[offset + _OFFSET_TARGET_SNI : offset + _OFFSET_TARGET_SNI + 32] = b"\x00" * 32
 
     def _write_fields(self, tid: int, fields: tuple[U64Field, ...]) -> None:
         def writer(offset: int) -> None:
@@ -448,6 +459,8 @@ class SHMWriter:
         protocol: int,
         address_family: int = 0,
         addr: bytes | bytearray | Sequence[int] | None = None,
+        hostname: str | None = None,
+        sni: str | None = None,
     ) -> None:
         tid_slot = self._tid_slot(tid)
         target_rules_offset = self._target_rules_offset_for_slot(tid_slot)
@@ -465,6 +478,8 @@ class SHMWriter:
                 "protocol": protocol,
                 "address_family": address_family,
                 "addr": addr,
+                "hostname": hostname,
+                "sni": sni,
             }
             validate_target_rule(rule, 0)
             normalized_family, addr_value = normalize_target_address(

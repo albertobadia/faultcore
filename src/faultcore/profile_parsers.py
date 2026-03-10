@@ -1,5 +1,7 @@
 import ipaddress
 
+from faultcore.target_name_helpers import normalize_target_name
+
 
 def parse_rate(rate: str | int | float) -> int:
     def as_non_negative(value: float) -> float:
@@ -213,18 +215,22 @@ def build_target_profile(
     target: str | None = None,
     host: str | None = None,
     cidr: str | None = None,
+    hostname: str | None = None,
+    sni: str | None = None,
     port: int | None = None,
     port_start: int | None = None,
     port_end: int | None = None,
     protocol: str | None = None,
     priority: int | None = None,
-) -> dict[str, int | list[int]]:
+) -> dict[str, object]:
     parsed_protocol = parse_target_protocol(protocol)
     parsed_host = host
     parsed_port = int(port) if port is not None else 0
     parsed_port_start = int(port_start) if port_start is not None else None
     parsed_port_end = int(port_end) if port_end is not None else None
     parsed_cidr = cidr
+    parsed_hostname = normalize_target_name(hostname, "target hostname") if hostname is not None else None
+    parsed_sni = normalize_target_name(sni, "target sni") if sni is not None else None
 
     if target is not None:
         raw = target.strip()
@@ -265,10 +271,37 @@ def build_target_profile(
     if parsed_priority < 0 or parsed_priority > 65535:
         raise ValueError("target priority must be between 0 and 65535")
 
+    if parsed_hostname and parsed_sni:
+        raise ValueError("target cannot define both hostname and sni")
+    has_semantic_name = parsed_hostname is not None or parsed_sni is not None
+
     if parsed_host and parsed_cidr:
         raise ValueError("target cannot define both host and cidr")
-    if not parsed_host and not parsed_cidr:
+    if has_semantic_name and (parsed_host or parsed_cidr):
+        raise ValueError("target cannot mix host/cidr with hostname/sni")
+    if not parsed_host and not parsed_cidr and not has_semantic_name:
         raise ValueError("target requires either host or cidr")
+
+    if has_semantic_name:
+        profile: dict[str, object] = {
+            "enabled": 1,
+            "kind": 0,
+            "ipv4": 0,
+            "prefix_len": 0,
+            "port": parsed_port,
+            "protocol": parsed_protocol,
+            "priority": parsed_priority,
+            "address_family": 0,
+            "addr": [0] * 16,
+        }
+        if parsed_hostname is not None:
+            profile["hostname"] = parsed_hostname
+        if parsed_sni is not None:
+            profile["sni"] = parsed_sni
+        if parsed_port_start is not None and parsed_port_end is not None:
+            profile["port_start"] = parsed_port_start
+            profile["port_end"] = parsed_port_end
+        return profile
 
     if parsed_host:
         try:

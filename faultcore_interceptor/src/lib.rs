@@ -4,12 +4,14 @@ use faultcore_network::{
     bind_fd_to_current_thread, clear_fd_binding, clone_fd_binding, global_fault_osi_engine,
     global_interceptor_runtime, handle_setpriority_compat, init_runtime_shm,
     reset_global_fault_osi_metrics, runtime_config_for_addr_or_fd, runtime_config_for_fd,
-    runtime_dns_config_for_current_thread, set_errno_value, snapshot_recv_datagram,
+    runtime_dns_config_for_current_thread, runtime_dns_config_for_query, set_errno_value,
+    snapshot_recv_datagram,
     snapshot_recvfrom_datagram, stage_reorder_send, stage_reorder_sendto,
     uplink_duplicate_count_for_addr_or_fd, uplink_duplicate_count_for_fd,
     write_pending_recv_result, write_pending_recvfrom_result,
 };
 use libc::{addrinfo, c_char, c_int, c_void, size_t, sockaddr, socklen_t, ssize_t};
+use std::ffi::CStr;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -180,6 +182,20 @@ fn is_non_blocking(fd: c_int) -> bool {
         return false;
     }
     (flags & libc::O_NONBLOCK) != 0
+}
+
+/// # Safety
+/// `raw` must be null or point to a valid NUL-terminated C string.
+unsafe fn normalized_name_from_cstr(raw: *const c_char) -> Option<String> {
+    if raw.is_null() {
+        return None;
+    }
+    let observed = unsafe { CStr::from_ptr(raw) }.to_str().ok()?;
+    let normalized = observed.trim().trim_end_matches('.').to_ascii_lowercase();
+    if normalized.is_empty() {
+        return None;
+    }
+    Some(normalized)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -609,7 +625,9 @@ pub unsafe extern "C" fn recvfrom(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn getaddrinfo(
+/// # Safety
+/// `node`, `service`, `hints` and `res` follow libc `getaddrinfo` pointer contracts.
+pub unsafe extern "C" fn getaddrinfo(
     node: *const c_char,
     service: *const c_char,
     hints: *const addrinfo,
@@ -620,7 +638,10 @@ pub extern "C" fn getaddrinfo(
     }
 
     initialize();
-    if let Some(network_cfg) = runtime_dns_config_for_current_thread() {
+    let observed_hostname = unsafe { normalized_name_from_cstr(node) };
+    let dns_cfg = runtime_dns_config_for_query(observed_hostname.as_deref(), None)
+        .or_else(runtime_dns_config_for_current_thread);
+    if let Some(network_cfg) = dns_cfg {
         let decision = global_fault_osi_engine().evaluate_dns_lookup(&network_cfg);
         if let LayerDecision::DelayNs(ns) = &decision {
             std::thread::sleep(std::time::Duration::from_nanos(*ns));

@@ -1,6 +1,8 @@
 from collections.abc import Sequence
 from typing import Any
 
+from faultcore.target_name_helpers import encode_target_name_bytes
+
 _U64_MAX = 0xFFFFFFFFFFFFFFFF
 _U32_MAX = 0xFFFFFFFF
 
@@ -95,6 +97,18 @@ def validate_target_rule(rule: dict[str, Any], idx: int) -> None:
     kind = rule_int(rule, "kind", 0, idx)
     if kind not in (0, 1, 2):
         raise ValueError(f"targets[{idx}].kind must be one of 0, 1, 2")
+
+    hostname_bytes = encode_target_name_bytes(rule.get("hostname"), f"targets[{idx}].hostname")
+    sni_bytes = encode_target_name_bytes(rule.get("sni"), f"targets[{idx}].sni")
+    has_hostname = any(hostname_bytes)
+    has_sni = any(sni_bytes)
+    if has_hostname and has_sni:
+        raise ValueError(f"targets[{idx}] cannot define both hostname and sni")
+    has_semantic_name = has_hostname or has_sni
+    if has_semantic_name and kind != 0:
+        raise ValueError(f"targets[{idx}] semantic hostname/sni rules require kind=0")
+    if enabled == 1 and not has_semantic_name and kind == 0:
+        raise ValueError(f"targets[{idx}] requires kind host/cidr or hostname/sni")
 
     address_family, _ = normalize_target_address(rule, idx)
     prefix_len = rule_int(rule, "prefix_len", 0, idx)

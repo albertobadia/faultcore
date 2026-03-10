@@ -143,6 +143,16 @@ class TestTargetRulesValidation:
                 },
                 "requires both port_start and port_end",
             ),
+            (
+                {
+                    "enabled": 1,
+                    "kind": 0,
+                    "hostname": "api.foo.com",
+                    "sni": "api.foo.com",
+                    "protocol": 0,
+                },
+                "both hostname and sni",
+            ),
         ],
     )
     def test_write_targets_rejects_invalid_rule_fields(self, rule, expected):
@@ -239,6 +249,37 @@ class TestTargetRulesValidation:
             rule_port_end = struct.unpack_from("<Q", writer._mmap, rules_offset + 56)[0]
             assert rule_port_start == 8000
             assert rule_port_end == 9000
+        finally:
+            writer.close()
+            cleanup_test_shm(name)
+
+    def test_write_targets_serializes_hostname_and_sni_buffers(self):
+        name = f"faultcore_test_{uuid.uuid4().hex}"
+        fd = create_test_shm(name)
+        os.close(fd)
+        writer = SHMWriter(name)
+        tid = 4242
+
+        try:
+            rule = {
+                "enabled": 1,
+                "kind": 0,
+                "hostname": "*.foo.com",
+                "protocol": 0,
+            }
+            writer.write_targets(tid, [rule])
+
+            cfg_offset = writer._get_offset(tid)
+            hostname = bytes(writer._mmap[cfg_offset + 408 : cfg_offset + 440]).rstrip(b"\x00")
+            sni = bytes(writer._mmap[cfg_offset + 440 : cfg_offset + 472]).rstrip(b"\x00")
+            assert hostname == b"*.foo.com"
+            assert sni == b""
+
+            rules_offset = writer._target_rules_offset(tid)
+            row_hostname = bytes(writer._mmap[rules_offset + 88 : rules_offset + 120]).rstrip(b"\x00")
+            row_sni = bytes(writer._mmap[rules_offset + 120 : rules_offset + 152]).rstrip(b"\x00")
+            assert row_hostname == b"*.foo.com"
+            assert row_sni == b""
         finally:
             writer.close()
             cleanup_test_shm(name)

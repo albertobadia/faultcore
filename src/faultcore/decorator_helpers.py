@@ -16,6 +16,10 @@ def _target_write_kwargs(target_profile: dict[str, Any]) -> dict[str, Any]:
         kwargs["port_start"] = target_profile.get("port_start")
     if target_profile.get("port_end") is not None:
         kwargs["port_end"] = target_profile.get("port_end")
+    if target_profile.get("hostname") is not None:
+        kwargs["hostname"] = target_profile.get("hostname")
+    if target_profile.get("sni") is not None:
+        kwargs["sni"] = target_profile.get("sni")
     return kwargs
 
 

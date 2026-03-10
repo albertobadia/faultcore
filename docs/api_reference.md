@@ -162,9 +162,12 @@ Accepted forms:
 - `for_target(host="10.1.2.3", port=443, protocol="tcp")`
 - `for_target(host="10.1.2.3", port_start=8000, port_end=9000, protocol="any")`
 - `for_target(cidr="10.0.0.0/8", port=53)`
+- `for_target(hostname="*.foo.com")`
+- `for_target(sni="api.foo.com")`
 
 Current scope:
 - IPv4/IPv6 targets.
+- Semantic targets by normalized `hostname`/`sni` (exact or `*.` suffix wildcard).
 - Protocol can be `any`, `tcp` or `udp`.
 - Ports accept either `port` (single value) or `port_start` + `port_end` (closed range).
 
@@ -265,9 +268,9 @@ Notes:
 - `packet_reorder` accepts `prob`, `max_delay_ms`, and `window`.
 - `target` accepts:
   - string format: `"tcp://10.1.2.3:443"`, `"10.1.2.3:443"`, `"10.0.0.0/8"`;
-  - mapping format with keys: `target`, `host`, `cidr`, `port`, `protocol`.
+  - mapping format with keys: `target`, `host`, `cidr`, `hostname`, `sni`, `port`, `port_start`, `port_end`, `protocol`.
 - `targets` accepts a non-empty list of target rules (string or mapping):
-  - mapping supports: `target`, `host`, `cidr`, `port`, `protocol`, `priority`.
+  - mapping supports: `target`, `host`, `cidr`, `hostname`, `sni`, `port`, `port_start`, `port_end`, `protocol`, `priority`.
   - precedence: higher `priority` wins; same `priority` keeps registration order.
 - `target` and `targets` are mutually exclusive.
 - `schedule` mapping accepts:

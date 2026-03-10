@@ -93,3 +93,26 @@ def test_build_target_profile_rejects_invalid_prefix_len_by_family():
         build_target_profile(cidr="10.0.0.0/33")
     with pytest.raises(ValueError, match=r"(?i)cidr"):
         build_target_profile(cidr="2001:db8::/129")
+
+
+def test_build_target_profile_accepts_hostname_and_normalizes_punycode_lowercase():
+    profile = build_target_profile(hostname="T\u00e4st.FOO.com")
+    assert profile["kind"] == 0
+    assert profile["hostname"] == "xn--tst-qla.foo.com"
+    assert profile["address_family"] == 0
+
+
+def test_build_target_profile_accepts_sni_wildcard():
+    profile = build_target_profile(sni="*.Foo.com")
+    assert profile["kind"] == 0
+    assert profile["sni"] == "*.foo.com"
+
+
+def test_build_target_profile_rejects_hostname_and_sni_together():
+    with pytest.raises(ValueError, match=r"(?i)both hostname and sni"):
+        build_target_profile(hostname="api.foo.com", sni="api.foo.com")
+
+
+def test_build_target_profile_rejects_mixed_ip_and_semantic_targeting():
+    with pytest.raises(ValueError, match=r"(?i)mix host/cidr with hostname/sni"):
+        build_target_profile(host="10.1.2.3", hostname="api.foo.com")
