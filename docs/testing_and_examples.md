@@ -43,7 +43,8 @@ tests/integration/test_stress.py --mode long
 Tune with environment variables:
 - `STRESS_DURATION` (default `20`)
 - `STRESS_WORKERS` (default `24`)
-- `STRESS_MAX_ERROR_RATE` (default `0.10`)
+- `STRESS_MAX_ERROR_RATE` (default `0.02`)
+- `STRESS_MAX_RSS_DELTA_KB` (default `131072`)
 
 ## Integration CLI Scripts
 

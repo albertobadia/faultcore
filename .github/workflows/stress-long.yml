@@ -16,7 +16,11 @@ on:
       max_error_rate:
         description: "Maximum allowed error rate"
         required: false
-        default: "0.10"
+        default: "0.02"
+      max_rss_delta_kb:
+        description: "Maximum allowed RSS delta in KB"
+        required: false
+        default: "131072"
 
 permissions:
   contents: read
@@ -59,5 +63,6 @@ jobs:
         env:
           STRESS_DURATION: ${{ github.event.inputs.duration || '20' }}
           STRESS_WORKERS: ${{ github.event.inputs.workers || '24' }}
-          STRESS_MAX_ERROR_RATE: ${{ github.event.inputs.max_error_rate || '0.10' }}
+          STRESS_MAX_ERROR_RATE: ${{ github.event.inputs.max_error_rate || '0.02' }}
+          STRESS_MAX_RSS_DELTA_KB: ${{ github.event.inputs.max_rss_delta_kb || '131072' }}
         run: sh tests_long.sh

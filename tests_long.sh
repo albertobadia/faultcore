@@ -10,7 +10,8 @@ HTTP_PID=""
 
 STRESS_DURATION="${STRESS_DURATION:-20}"
 STRESS_WORKERS="${STRESS_WORKERS:-24}"
-STRESS_MAX_ERROR_RATE="${STRESS_MAX_ERROR_RATE:-0.10}"
+STRESS_MAX_ERROR_RATE="${STRESS_MAX_ERROR_RATE:-0.02}"
+STRESS_MAX_RSS_DELTA_KB="${STRESS_MAX_RSS_DELTA_KB:-131072}"
 
 cleanup() {
     echo "Cleaning up servers..."
@@ -73,4 +74,5 @@ LD_PRELOAD="$INTERCEPTOR" "$PYTHON_BIN" tests/integration/test_stress.py \
     --mode long \
     --duration "$STRESS_DURATION" \
     --workers "$STRESS_WORKERS" \
-    --max-error-rate "$STRESS_MAX_ERROR_RATE"
+    --max-error-rate "$STRESS_MAX_ERROR_RATE" \
+    --max-rss-delta-kb "$STRESS_MAX_RSS_DELTA_KB"

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import os
 import socket
 import sys
 import threading
@@ -8,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 import faultcore
+from faultcore.shm_writer import SHM_SIZE
 
 
 def read_rss_kb() -> int:
@@ -35,6 +37,18 @@ def tcp_echo_once(host: str, port: int, payload: str) -> None:
         sock.close()
 
 
+def ensure_shm_ready() -> str:
+    name = os.environ.get("FAULTCORE_CONFIG_SHM", f"/faultcore_{os.getpid()}_config")
+    os.environ["FAULTCORE_CONFIG_SHM"] = name
+    path = f"/dev/shm/{name.lstrip('/')}"
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        os.ftruncate(fd, SHM_SIZE)
+    finally:
+        os.close(fd)
+    return name
+
+
 @dataclass
 class StressStats:
     ops: int = 0
@@ -50,6 +64,14 @@ class StressStats:
     @property
     def error_rate(self) -> float:
         return self.errors / self.ops if self.ops > 0 else 1.0
+
+
+def read_metrics_totals(reset: bool = False) -> dict:
+    snapshot = faultcore.get_fault_metrics(reset=reset)
+    totals = snapshot.get("totals")
+    if not isinstance(totals, dict):
+        raise RuntimeError("invalid metrics snapshot: missing totals")
+    return totals
 
 
 def run_stress_phase(
@@ -118,6 +140,12 @@ def main() -> int:
     parser.add_argument("--duration", type=float, default=2.0, help="phase duration in seconds for smoke mode")
     parser.add_argument("--workers", type=int, default=6, help="worker threads for smoke mode")
     parser.add_argument("--max-error-rate", type=float, default=0.10, help="maximum allowed error ratio")
+    parser.add_argument(
+        "--max-rss-delta-kb",
+        type=int,
+        default=0,
+        help="maximum allowed RSS delta in KB across full run (0 disables check)",
+    )
     args = parser.parse_args()
 
     duration = args.duration if args.mode == "smoke" else max(args.duration, 20.0)
@@ -126,6 +154,8 @@ def main() -> int:
         f"[{datetime.now().isoformat()}] stress integration mode={args.mode} "
         f"host={args.host} port={args.port} duration={duration}s workers={workers}"
     )
+    shm_name = ensure_shm_ready()
+    print(f"using shm: {shm_name}")
 
     rss_before = read_rss_kb()
 
@@ -143,6 +173,8 @@ def main() -> int:
         tcp_echo_once(args.host, args.port, payload)
 
     try:
+        read_metrics_totals(reset=True)
+        baseline_rss_before = read_rss_kb()
         baseline = run_stress_phase(
             "baseline",
             baseline_call,
@@ -150,6 +182,11 @@ def main() -> int:
             workers=workers,
             max_error_rate=args.max_error_rate,
         )
+        baseline_rss_after = read_rss_kb()
+        baseline_metrics = read_metrics_totals()
+
+        read_metrics_totals(reset=True)
+        policy_rss_before = read_rss_kb()
         policy = run_stress_phase(
             "policy_latency",
             policy_call,
@@ -157,19 +194,44 @@ def main() -> int:
             workers=workers,
             max_error_rate=args.max_error_rate,
         )
+        policy_rss_after = read_rss_kb()
+        policy_metrics = read_metrics_totals()
     except Exception as exc:  # noqa: BLE001
         print(f"ERROR: {exc}")
         return 1
 
     rss_after = read_rss_kb()
-    if rss_before >= 0 and rss_after >= 0:
-        print(f"rss_kb: before={rss_before} after={rss_after} delta={rss_after - rss_before}")
+    overall_delta_kb = rss_after - rss_before if rss_before >= 0 and rss_after >= 0 else -1
+    if overall_delta_kb >= 0:
+        print(f"rss_kb: before={rss_before} after={rss_after} delta={overall_delta_kb}")
+    if args.max_rss_delta_kb > 0 and overall_delta_kb > args.max_rss_delta_kb:
+        print(f"ERROR: rss delta {overall_delta_kb}KB exceeds limit {args.max_rss_delta_kb}KB")
+        return 1
+
+    baseline_phase_delta_kb = (
+        baseline_rss_after - baseline_rss_before if baseline_rss_before >= 0 and baseline_rss_after >= 0 else -1
+    )
+    policy_phase_delta_kb = (
+        policy_rss_after - policy_rss_before if policy_rss_before >= 0 and policy_rss_after >= 0 else -1
+    )
+    print(f"baseline: rss_phase_delta_kb={baseline_phase_delta_kb} metrics_totals={baseline_metrics}")
+    print(f"policy_latency: rss_phase_delta_kb={policy_phase_delta_kb} metrics_totals={policy_metrics}")
+    if policy_metrics.get("delay", 0) <= 0:
+        print("ERROR: expected policy phase to produce delay metrics > 0")
+        return 1
+    if policy.avg_latency_ms <= baseline.avg_latency_ms + 5.0:
+        print(
+            "ERROR: expected policy avg latency to exceed baseline by at least 5ms "
+            f"(baseline={baseline.avg_latency_ms:.2f}, policy={policy.avg_latency_ms:.2f})"
+        )
+        return 1
     print(
         "summary: "
         f"baseline_rps={baseline.ops / duration:.2f} "
         f"policy_rps={policy.ops / duration:.2f} "
         f"baseline_avg_ms={baseline.avg_latency_ms:.2f} "
-        f"policy_avg_ms={policy.avg_latency_ms:.2f}"
+        f"policy_avg_ms={policy.avg_latency_ms:.2f} "
+        f"rss_delta_kb={overall_delta_kb}"
     )
     print("stress integration: PASS")
     return 0

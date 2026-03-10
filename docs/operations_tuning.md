@@ -63,7 +63,9 @@ Recommended scripts:
   - Use in local iteration and pre-commit checks.
 - Long profile:
   - `--mode long` with sustained concurrency.
+  - Use `--max-rss-delta-kb <value>` to enforce a memory growth ceiling.
   - Use for memory stability and long-tail latency checks.
+  - Current calibrated defaults: `STRESS_MAX_ERROR_RATE=0.02`, `STRESS_MAX_RSS_DELTA_KB=131072`.
 
 ## Operational Checklist
 
