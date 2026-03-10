@@ -180,6 +180,7 @@ pub struct Config {
     pub target_addr: [u8; 16],
     pub target_hostname: [u8; 32],
     pub target_sni: [u8; 32],
+    pub ruleset_generation: u64,
     pub schedule_type: u64,
     pub schedule_param_a_ns: u64,
     pub schedule_param_b_ns: u64,

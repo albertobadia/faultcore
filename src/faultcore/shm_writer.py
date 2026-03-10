@@ -144,6 +144,10 @@ class SHMWriter:
             if value is not None:
                 struct.pack_into("<Q", self._mmap, offset + relative_offset, value)
 
+    def _bump_ruleset_generation(self, offset: int) -> None:
+        generation = struct.unpack_from("<Q", self._mmap, offset + _OFFSET_RULESET_GENERATION)[0]
+        struct.pack_into("<Q", self._mmap, offset + _OFFSET_RULESET_GENERATION, (generation + 1) & _U64_MAX)
+
     def _ms_to_ns(self, milliseconds: int) -> int:
         return milliseconds * _NS_PER_MS
 
@@ -472,17 +476,21 @@ class SHMWriter:
         port: int,
         protocol: int,
     ) -> None:
-        self._write_fields(
-            tid,
-            (
-                (_OFFSET_TARGET_ENABLED, 1 if enabled else 0),
-                (_OFFSET_TARGET_KIND, kind),
-                (_OFFSET_TARGET_IPV4, ipv4),
-                (_OFFSET_TARGET_PREFIX_LEN, prefix_len),
-                (_OFFSET_TARGET_PORT, port),
-                (_OFFSET_TARGET_PROTOCOL, protocol),
-            ),
-        )
+        def writer(offset: int) -> None:
+            self._pack_u64_fields(
+                offset,
+                (
+                    (_OFFSET_TARGET_ENABLED, 1 if enabled else 0),
+                    (_OFFSET_TARGET_KIND, kind),
+                    (_OFFSET_TARGET_IPV4, ipv4),
+                    (_OFFSET_TARGET_PREFIX_LEN, prefix_len),
+                    (_OFFSET_TARGET_PORT, port),
+                    (_OFFSET_TARGET_PROTOCOL, protocol),
+                ),
+            )
+            self._bump_ruleset_generation(offset)
+
+        self._write_versioned(tid, writer)
 
     def write_targets(self, tid: int, rules: list[dict[str, int]]) -> None:
         if not self._is_available():
@@ -508,6 +516,7 @@ class SHMWriter:
                 self._write_single_target_fields(offset, rules[0])
             else:
                 self._clear_single_target_fields(offset)
+            self._bump_ruleset_generation(offset)
 
         self._write_versioned(tid, writer)
 

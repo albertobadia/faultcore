@@ -183,6 +183,7 @@ impl FaultcoreConfig {
             target_addr: self.target_addr,
             target_hostname: self.target_hostname,
             target_sni: self.target_sni,
+            ruleset_generation: self.ruleset_generation,
             schedule_type: self.schedule_type,
             schedule_param_a_ns: self.schedule_param_a_ns,
             schedule_param_b_ns: self.schedule_param_b_ns,

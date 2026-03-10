@@ -7,6 +7,8 @@ use crate::{
     get_tid_slot_for_fd, get_tid_slot_for_tid, monotonic_now_ns, try_open_shm,
 };
 
+const RULESET_READ_RETRY_LIMIT: usize = 3;
+
 fn endpoint_matches_rule(endpoint: Endpoint, rule: &TargetRule) -> bool {
     if rule.enabled == 0 || rule.kind == 0 {
         return false;
@@ -55,7 +57,7 @@ fn select_best_target_rule(
 }
 
 fn apply_multi_target_for_tid(
-    mut cfg: Config,
+    cfg: Config,
     tid_slot: usize,
     endpoint: Option<Endpoint>,
 ) -> Option<Config> {
@@ -63,16 +65,49 @@ fn apply_multi_target_for_tid(
         return cfg.runtime_filtered(endpoint, monotonic_now_ns());
     }
     let endpoint = endpoint?;
-    let rules = get_target_rules_for_tid_slot(tid_slot)?;
-    let count = usize::min(cfg.target_enabled as usize, rules.len());
-    let rule = select_best_target_rule(endpoint, &rules, count)?;
-    cfg.target_enabled = 1;
-    cfg.target_kind = rule.kind;
-    cfg.target_ipv4 = rule.ipv4;
-    cfg.target_prefix_len = rule.prefix_len;
-    cfg.target_port = rule.port;
-    cfg.target_protocol = rule.protocol;
-    cfg.runtime_filtered(Some(endpoint), monotonic_now_ns())
+    apply_multi_target_for_tid_with_reader(
+        cfg,
+        endpoint,
+        || get_target_rules_for_tid_slot(tid_slot),
+        || get_config_for_tid_slot(tid_slot).map(|item| item.into_network_config()),
+    )
+}
+
+fn apply_multi_target_for_tid_with_reader<FRules, FCfg>(
+    mut cfg: Config,
+    endpoint: Endpoint,
+    mut read_rules: FRules,
+    mut read_cfg: FCfg,
+) -> Option<Config>
+where
+    FRules: FnMut() -> Option<[TargetRule; crate::MAX_TARGET_RULES_PER_TID]>,
+    FCfg: FnMut() -> Option<Config>,
+{
+    for _ in 0..RULESET_READ_RETRY_LIMIT {
+        if cfg.target_enabled <= 1 {
+            return cfg.runtime_filtered(Some(endpoint), monotonic_now_ns());
+        }
+
+        let generation_before = cfg.ruleset_generation;
+        let rules = read_rules()?;
+        let refreshed_cfg = read_cfg()?;
+        if refreshed_cfg.ruleset_generation != generation_before {
+            cfg = refreshed_cfg;
+            continue;
+        }
+
+        let count = usize::min(cfg.target_enabled as usize, rules.len());
+        let rule = select_best_target_rule(endpoint, &rules, count)?;
+        cfg.target_enabled = 1;
+        cfg.target_kind = rule.kind;
+        cfg.target_ipv4 = rule.ipv4;
+        cfg.target_prefix_len = rule.prefix_len;
+        cfg.target_port = rule.port;
+        cfg.target_protocol = rule.protocol;
+        return cfg.runtime_filtered(Some(endpoint), monotonic_now_ns());
+    }
+
+    None
 }
 
 pub fn init_runtime_shm() -> bool {
@@ -162,6 +197,7 @@ pub unsafe fn uplink_duplicate_count_for_addr_or_fd(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
 
     fn cfg_with_latency(latency_ns: u64) -> Config {
         Config {
@@ -445,5 +481,98 @@ mod tests {
         )
         .expect("config should resolve from current tid");
         assert_eq!(selected.latency_ns, 111);
+    }
+
+    #[test]
+    fn lockstep_retries_on_generation_change_and_then_applies_rule() {
+        let endpoint = Endpoint {
+            ipv4: 0x0A010203,
+            port: 443,
+            protocol: 1,
+        };
+        let mut base_cfg = cfg_with_latency(500);
+        base_cfg.target_enabled = 2;
+        base_cfg.ruleset_generation = 10;
+
+        let rules = [TargetRule {
+            enabled: 1,
+            priority: 100,
+            kind: 1,
+            ipv4: endpoint.ipv4 as u64,
+            prefix_len: 32,
+            port: endpoint.port as u64,
+            protocol: endpoint.protocol,
+            reserved: 0,
+            address_family: 0,
+            addr: [0; 16],
+            hostname: [0; 32],
+            sni: [0; 32],
+        }; crate::MAX_TARGET_RULES_PER_TID];
+
+        let cfg_reads = Cell::new(0usize);
+        let result = apply_multi_target_for_tid_with_reader(
+            base_cfg,
+            endpoint,
+            || Some(rules),
+            || {
+                let n = cfg_reads.get();
+                cfg_reads.set(n + 1);
+                let mut refreshed = cfg_with_latency(500);
+                refreshed.target_enabled = 2;
+                refreshed.ruleset_generation = 11;
+                Some(refreshed)
+            },
+        )
+        .expect("rule should apply after generation stabilizes");
+
+        assert_eq!(cfg_reads.get(), 2);
+        assert_eq!(result.target_enabled, 1);
+        assert_eq!(result.target_kind, 1);
+        assert_eq!(result.target_ipv4, endpoint.ipv4 as u64);
+    }
+
+    #[test]
+    fn lockstep_returns_none_when_generation_never_stabilizes() {
+        let endpoint = Endpoint {
+            ipv4: 0x0A010203,
+            port: 443,
+            protocol: 1,
+        };
+        let mut base_cfg = cfg_with_latency(500);
+        base_cfg.target_enabled = 2;
+        base_cfg.ruleset_generation = 20;
+
+        let rules = [TargetRule {
+            enabled: 1,
+            priority: 100,
+            kind: 1,
+            ipv4: endpoint.ipv4 as u64,
+            prefix_len: 32,
+            port: endpoint.port as u64,
+            protocol: endpoint.protocol,
+            reserved: 0,
+            address_family: 0,
+            addr: [0; 16],
+            hostname: [0; 32],
+            sni: [0; 32],
+        }; crate::MAX_TARGET_RULES_PER_TID];
+
+        let cfg_reads = Cell::new(0usize);
+        let result = apply_multi_target_for_tid_with_reader(
+            base_cfg,
+            endpoint,
+            || Some(rules),
+            || {
+                let n = cfg_reads.get();
+                cfg_reads.set(n + 1);
+                let mut refreshed = cfg_with_latency(500);
+                refreshed.target_enabled = 2;
+                refreshed.ruleset_generation = 21 + (n as u64);
+                Some(refreshed)
+            },
+        );
+
+        assert!(result.is_none());
+        assert_eq!(cfg_reads.get(), RULESET_READ_RETRY_LIMIT);
     }
 }
