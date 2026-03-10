@@ -11,6 +11,20 @@ For tuning guidance in longer operational runs, see `docs/operations_tuning.md`.
 
 This builds the Python extension and Rust interceptor artifacts used by examples/tests.
 
+## Validation Path
+
+```mermaid
+flowchart LR
+    L["sh lint.sh"] --> B["sh build.sh"]
+    B --> T["sh tests.sh"]
+    T --> O{"Need long-run confidence?"}
+    O -->|Yes| TL["sh tests_long.sh"]
+    O -->|No| Done["Done for fast gate"]
+    TL --> Done2["Done for stress gate"]
+```
+
+Diagram focus: recommended execution order for fast and long validation paths.
+
 ## Primary Test Entry Point
 
 Run:

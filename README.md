@@ -45,13 +45,20 @@ def network_operation():
 
 | Document | Scope |
 |---|---|
-| [`docs/api_reference.md`](docs/api_reference.md) | Public Python API, signatures, accepted value formats, sync/async behavior |
-| [`docs/architecture.md`](docs/architecture.md) | System architecture, module responsibilities, runtime flow, and ownership boundaries |
-| [`docs/policies_and_context.md`](docs/policies_and_context.md) | Policy registry, `fault()`, thread policy context, and policy file loading |
-| [`docs/interceptor_and_shm.md`](docs/interceptor_and_shm.md) | Linux `LD_PRELOAD` flow, interceptor behavior, and SHM integration |
-| [`docs/testing_and_examples.md`](docs/testing_and_examples.md) | Build/test workflow (`sh tests.sh`) and example execution guidance |
-| [`docs/shm_protocol.md`](docs/shm_protocol.md) | Binary SHM contract between Python writer and Rust interceptor |
-| [`docs/operations_tuning.md`](docs/operations_tuning.md) | Practical tuning guide for long-running scenarios, metrics, and stress profiles |
+| [`docs/api_reference.md`](docs/api_reference.md) | Public Python API and a decorator-family map (Mermaid) for quick navigation |
+| [`docs/architecture.md`](docs/architecture.md) | System architecture with module layout, runtime sequence, and FaultOSI decision diagrams |
+| [`docs/policies_and_context.md`](docs/policies_and_context.md) | Policy lifecycle and timeout precedence flowcharts |
+| [`docs/interceptor_and_shm.md`](docs/interceptor_and_shm.md) | Linux `LD_PRELOAD` runtime sequence and platform compatibility flow |
+| [`docs/testing_and_examples.md`](docs/testing_and_examples.md) | Validation path diagram (`lint -> build -> tests.sh -> tests_long.sh`) and execution guidance |
+| [`docs/shm_protocol.md`](docs/shm_protocol.md) | SHM region layout, consistency sequence, and compatibility update flow |
+| [`docs/operations_tuning.md`](docs/operations_tuning.md) | Baseline/tuning/stress operational flowchart for long-running scenarios |
+
+## Mermaid Conventions
+
+- Use fenced code blocks with language tag `mermaid` for all diagrams.
+- Keep titles short and keep each diagram focused on one question.
+- Use `flowchart` for process/ownership, `sequenceDiagram` for runtime interaction, and `stateDiagram-v2` for decision states.
+- Prefer complementary diagrams over duplicated prose.
 
 ## Project Status
 

@@ -9,6 +9,33 @@ This document explains how `faultcore` interacts with the Linux network intercep
 3. Interceptor reads SHM config and delegates network effects to `faultcore_network` (FaultOSI pipeline).
 4. Wrapped call clears SHM fields in `finally` paths.
 
+### Runtime Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    participant App as Python App
+    participant Decorator as faultcore decorator
+    participant SHM as Shared Memory
+    participant Hook as libfaultcore_interceptor.so
+    participant Net as faultcore_network
+    participant Libc as Original libc
+
+    App->>Decorator: call wrapped function
+    Decorator->>SHM: write policy fields (tid slot)
+    App->>Hook: socket syscall
+    Hook->>Net: read config + evaluate FaultOSI
+    Net-->>Hook: syscall directive
+    alt continue
+        Hook->>Libc: call original symbol
+        Libc-->>Hook: rc/errno
+    else terminal
+        Hook-->>Hook: inject timeout/drop/error
+    end
+    Decorator->>SHM: clear in finally path
+```
+
+Diagram focus: end-to-end lifecycle from decorator write to hook behavior.
+
 ## Linux `LD_PRELOAD` Usage
 
 Build:
@@ -44,6 +71,21 @@ These are convenience checks and not hard guarantees of all runtime conditions.
 - `LD_PRELOAD` interception is Linux-specific.
 - Without active SHM/interceptor, decorators remain callable and fail gracefully (no-op writes).
 - Function-level timeout behavior still applies without interceptor.
+
+### Platform Compatibility Flow
+
+```mermaid
+flowchart TD
+    Start["Decorator invoked"] --> Linux{"Linux + LD_PRELOAD active?"}
+    Linux -->|Yes| SHM["Write/read SHM config"]
+    SHM --> Hook["Interceptor applies network effects"]
+    Hook --> EndA["Return with injected behavior"]
+    Linux -->|No| Noop["SHM write may be no-op"]
+    Noop --> Timeout["Function timeout decorators still apply"]
+    Timeout --> EndB["Return without interceptor network effects"]
+```
+
+Diagram focus: behavior split between active interception and graceful fallback.
 
 ## Shared Memory Contract
 

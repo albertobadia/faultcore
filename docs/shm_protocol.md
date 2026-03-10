@@ -14,6 +14,24 @@ This document defines the shared binary contract between:
   - Target rules region: `MAX_TIDS * MAX_TARGET_RULES_PER_TID * sizeof(TargetRule)`
   - FD owner region (`fd -> tid_slot`): `MAX_FDS * sizeof(u64)`
 
+### Region Layout Diagram
+
+```mermaid
+flowchart LR
+    SHM["SHM Segment"]
+    FD["FD table + TID hash<br/>(FaultcoreConfig rows)"]
+    PS["Policy state region"]
+    TR["Target rules region"]
+    FO["FD owner region<br/>(fd -> tid_slot)"]
+
+    SHM --> FD
+    SHM --> PS
+    SHM --> TR
+    SHM --> FO
+```
+
+Diagram focus: top-level SHM memory regions consumed by writer/runtime.
+
 ## FaultcoreConfig (376 bytes)
 - Endianness: little-endian
 - Fixed packed layout
@@ -103,11 +121,50 @@ Selection semantics for `targets[]`:
   - publishes `version` as even when done.
 - Rust validates stable reads using a double-read of `version` plus fences.
 
+### Consistency Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    participant Py as Python writer
+    participant SHM as SHM row
+    participant Rs as Rust reader
+
+    Py->>SHM: set version = odd
+    Py->>SHM: write magic + payload
+    Py->>SHM: set version = even
+
+    Rs->>SHM: read version_before
+    Rs->>SHM: read payload
+    Rs->>SHM: read version_after
+    alt stable even snapshot
+        Rs-->>Rs: accept row
+    else changed or odd
+        Rs-->>Rs: retry read
+    end
+```
+
+Diagram focus: odd/even publish protocol and reader stability check.
+
 ## Compatibility Rule
 Any change in offsets/size must:
 1. update this document,
 2. update Python and Rust together,
 3. keep SHM contract tests green.
+
+### Compatibility Update Flow
+
+```mermaid
+flowchart TD
+    Change["Offset/size change proposed"] --> Doc["Update docs/shm_protocol.md"]
+    Doc --> Code["Update Python writer + Rust contract/runtime"]
+    Code --> Tests["Run SHM contract tests"]
+    Tests --> Gate{"Tests green?"}
+    Gate -->|Yes| Merge["Safe to merge"]
+    Gate -->|No| Fix["Fix layout mismatch and re-test"]
+    Fix --> Tests
+```
+
+Diagram focus: mandatory synchronization path for SHM schema changes.
 
 ## Runtime Model over SHM
 

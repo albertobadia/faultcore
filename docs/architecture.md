@@ -16,6 +16,24 @@ This document describes the current `faultcore` architecture after the FaultOSI 
 - `faultcore_interceptor/`: syscall hooks and original libc dispatch (`dlsym`/`RTLD_NEXT`).
 - `tests/`: Python unit/integration + Rust unit tests.
 
+### Module Layout Diagram
+
+```mermaid
+flowchart LR
+    P["src/faultcore<br/>Python API + SHM writer"]
+    N["faultcore_network<br/>FaultOSI + SHM runtime + bridge"]
+    I["faultcore_interceptor<br/>LD_PRELOAD hooks + libc dispatch"]
+    T["tests<br/>Python + Rust coverage"]
+
+    P -->|"writes policy rows"| N
+    I -->|"delegates decisions"| N
+    T -->|"validates"| P
+    T -->|"validates"| N
+    T -->|"validates"| I
+```
+
+Diagram focus: ownership boundaries and primary call/data edges.
+
 ## Runtime Flow
 
 1. Python decorator/policy writes a `FaultcoreConfig` row into SHM (`tid` slot).
@@ -24,6 +42,33 @@ This document describes the current `faultcore` architecture after the FaultOSI 
 4. `ChaosEngine` runs FaultOSI stages in strict order (`L1..L7`).
 5. `InterceptorRuntime` maps `LayerDecision` to syscall directives (`sleep`, return value, `errno`).
 6. Interceptor applies directive and delegates to original libc function if needed.
+
+### Runtime Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    participant Py as Python Decorator/Policy
+    participant SHM as SHM Slot (tid)
+    participant Hook as Interceptor Hook
+    participant Bridge as interceptor_bridge
+    participant Engine as ChaosEngine (L1..L7)
+    participant RT as InterceptorRuntime
+    participant Libc as Original libc syscall
+
+    Py->>SHM: write FaultcoreConfig
+    Hook->>Bridge: read effective config
+    Bridge->>Engine: build PacketContext + run stages
+    Engine-->>RT: LayerDecision
+    RT-->>Hook: syscall directive (sleep/drop/errno/continue)
+    alt Continue path
+        Hook->>Libc: call original syscall
+        Libc-->>Hook: return rc/errno
+    else Terminal path
+        Hook-->>Hook: apply terminal behavior
+    end
+```
+
+Diagram focus: runtime interaction order from Python write to syscall result.
 
 ## Module Responsibilities
 
@@ -68,6 +113,26 @@ This document describes the current `faultcore` architecture after the FaultOSI 
 - Delay decisions are accumulated.
 - Reorder and duplicate are post-routing stream behaviors, handled outside main pipeline.
 - DNS path evaluates resolver layer behavior and skips non-DNS effects by layer applicability.
+
+### Fault Decision State Diagram
+
+```mermaid
+stateDiagram-v2
+    [*] --> Evaluate
+    Evaluate --> Evaluate: AddDelay
+    Evaluate --> Continue: No terminal decision
+    Evaluate --> Drop: Drop
+    Evaluate --> Timeout: TimeoutMs
+    Evaluate --> ConnErr: ConnectionErrorKind
+    Evaluate --> NxDomain: NxDomain
+    Continue --> [*]
+    Drop --> [*]
+    Timeout --> [*]
+    ConnErr --> [*]
+    NxDomain --> [*]
+```
+
+Diagram focus: accumulated delay vs terminal short-circuit decisions.
 
 ### Reorder Matrix
 

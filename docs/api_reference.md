@@ -8,6 +8,20 @@ Source of truth:
 
 ## Decorators
 
+### Decorator Families Map
+
+```mermaid
+flowchart TD
+    D["faultcore decorators"] --> T["Timing and QoS<br/>timeout, connect_timeout, recv_timeout, rate_limit"]
+    D --> L["Loss and transport faults<br/>packet_loss, burst_loss, correlated_loss,<br/>connection_error, half_open"]
+    D --> R["Packet behavior<br/>packet_duplicate, packet_reorder"]
+    D --> N["DNS faults<br/>dns_delay, dns_timeout, dns_nxdomain"]
+    D --> G["Targeting and profiles<br/>for_target, uplink, downlink, profile"]
+    D --> P["Policy application<br/>apply_policy, fault"]
+```
+
+Diagram focus: quick navigation by decorator intent before per-API details.
+
 ### `timeout(timeout_ms: int)`
 
 Apply an execution deadline to sync and async callables.

@@ -8,6 +8,19 @@ This guide focuses on practical tuning for stable long-running fault injection t
 2. Enable one policy at a time.
 3. Compare throughput, error rate, and latency deltas.
 
+```mermaid
+flowchart TD
+    Base["Baseline run<br/>no policy"] --> Add["Enable one policy"]
+    Add --> Measure["Measure throughput/error/latency"]
+    Measure --> Tune{"Within expected bounds?"}
+    Tune -->|No| Adjust["Adjust parameters<br/>(latency/jitter/loss/rate)"]
+    Adjust --> Measure
+    Tune -->|Yes| Stress["Run stress profile<br/>(smoke or long)"]
+    Stress --> Checklist["Finalize with operational checklist"]
+```
+
+Diagram focus: iterative tuning loop from baseline to stress validation.
+
 Recommended scripts:
 - `examples/12_perf_baseline.py` for baseline vs policy throughput.
 - `tests/integration/test_stress.py --mode smoke` for fast validation.

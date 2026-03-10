@@ -14,6 +14,32 @@ A policy is a named set of optional fields:
 
 Policies are stored in a process-local registry protected by a lock.
 
+### Policy Lifecycle Sequence
+
+```mermaid
+sequenceDiagram
+    participant User as User code
+    participant Reg as Policy registry
+    participant Ctx as Thread policy context
+    participant Wrap as Decorator wrapper
+    participant SHM as SHM writer
+
+    User->>Reg: register_policy(name, fields)
+    alt Explicit binding
+        User->>Wrap: @apply_policy(name)
+        Wrap->>Reg: resolve name
+    else Auto binding
+        User->>Ctx: with fault_context(name)
+        User->>Wrap: @fault()
+        Wrap->>Ctx: read current thread policy
+        Wrap->>Reg: resolve policy by context
+    end
+    Wrap->>SHM: write selected fields
+    Wrap->>SHM: clear on exit/finally
+```
+
+Diagram focus: registration, selection path, and cleanup behavior.
+
 ## Register and Inspect Policies
 
 ```python
@@ -100,6 +126,23 @@ Notes:
 - `timeout_ms` sets both connect and recv timeout.
 - If split timeout fields are also provided, split fields are used for final stored timeout tuple.
 - Missing fields are simply omitted from the policy; decorators only write fields that exist.
+
+### Timeout Precedence Flow
+
+```mermaid
+flowchart TD
+    Start["register_policy(...)"] --> A{"timeout_ms provided?"}
+    A -->|No| B["No base timeout pair from timeout_ms"]
+    A -->|Yes| C["Set connect_timeout_ms and recv_timeout_ms from timeout_ms"]
+    B --> D{"split timeout fields provided?"}
+    C --> D
+    D -->|Yes| E["Override with explicit connect_timeout_ms and/or recv_timeout_ms"]
+    D -->|No| F["Keep current timeout pair"]
+    E --> G["Persist final timeout tuple"]
+    F --> G
+```
+
+Diagram focus: how shared and split timeout values resolve.
 
 ## Related
 
