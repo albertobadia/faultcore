@@ -129,6 +129,8 @@ pub fn reset_global_fault_osi_metrics() {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Endpoint {
+    pub address_family: u64,
+    pub addr: [u8; 16],
     pub ipv4: u32,
     pub port: u16,
     pub protocol: u64,
@@ -286,17 +288,31 @@ impl Config {
         if self.target_port > 0 && self.target_port != u64::from(endpoint.port) {
             return false;
         }
+        let family = self.target_address_family;
         match self.target_kind {
-            1 => endpoint.ipv4 == self.target_ipv4 as u32,
-            2 => {
-                let prefix_len = self.target_prefix_len;
-                if prefix_len == 0 {
-                    true
-                } else if prefix_len >= 32 {
+            1 => {
+                if family == 0 {
                     endpoint.ipv4 == self.target_ipv4 as u32
                 } else {
-                    let mask = u32::MAX << (32 - prefix_len as u32);
-                    (endpoint.ipv4 & mask) == ((self.target_ipv4 as u32) & mask)
+                    endpoint.address_family == family && endpoint.addr == self.target_addr
+                }
+            }
+            2 => {
+                let prefix_len = self.target_prefix_len;
+                if family == 0 {
+                    if prefix_len == 0 {
+                        true
+                    } else if prefix_len >= 32 {
+                        endpoint.ipv4 == self.target_ipv4 as u32
+                    } else {
+                        let mask = u32::MAX << (32 - prefix_len as u32);
+                        (endpoint.ipv4 & mask) == ((self.target_ipv4 as u32) & mask)
+                    }
+                } else {
+                    let max_prefix = if family == 1 { 32 } else { 128 };
+                    let bounded_prefix = usize::min(prefix_len as usize, max_prefix);
+                    endpoint.address_family == family
+                        && prefix_match(&endpoint.addr, &self.target_addr, bounded_prefix)
                 }
             }
             _ => false,
@@ -411,6 +427,22 @@ impl Config {
 
 fn scale_u64(value: u64, factor: f64) -> u64 {
     ((value as f64) * factor).round() as u64
+}
+
+fn prefix_match(candidate: &[u8; 16], network: &[u8; 16], prefix_len: usize) -> bool {
+    if prefix_len == 0 {
+        return true;
+    }
+    let full_bytes = prefix_len / 8;
+    let partial_bits = prefix_len % 8;
+    if full_bytes > 0 && candidate[..full_bytes] != network[..full_bytes] {
+        return false;
+    }
+    if partial_bits == 0 {
+        return true;
+    }
+    let mask = (!0u8) << (8 - partial_bits);
+    (candidate[full_bytes] & mask) == (network[full_bytes] & mask)
 }
 
 #[cfg(test)]

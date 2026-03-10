@@ -130,7 +130,8 @@ impl FaultcoreConfig {
             && self.dns_nxdomain_ppm <= 1_000_000
             && self.target_enabled <= MAX_TARGET_RULES_PER_TID as u64
             && self.target_kind <= 2
-            && self.target_prefix_len <= 32
+            && ((self.target_address_family == 2 && self.target_prefix_len <= 128)
+                || (self.target_address_family != 2 && self.target_prefix_len <= 32))
             && self.target_port <= 65_535
             && self.target_protocol <= 2
             && self.target_address_family <= 2

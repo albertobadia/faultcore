@@ -19,20 +19,50 @@ fn endpoint_matches_rule(endpoint: Endpoint, rule: &TargetRule) -> bool {
     if rule.port > 0 && rule.port != u64::from(endpoint.port) {
         return false;
     }
+    let family = rule.address_family;
     match rule.kind {
-        1 => endpoint.ipv4 == rule.ipv4 as u32,
-        2 => {
-            if rule.prefix_len == 0 {
-                true
-            } else if rule.prefix_len >= 32 {
+        1 => {
+            if family == 0 {
                 endpoint.ipv4 == rule.ipv4 as u32
             } else {
-                let mask = u32::MAX << (32 - rule.prefix_len as u32);
-                (endpoint.ipv4 & mask) == ((rule.ipv4 as u32) & mask)
+                endpoint.address_family == family && endpoint.addr == rule.addr
+            }
+        }
+        2 => {
+            if family == 0 {
+                if rule.prefix_len == 0 {
+                    true
+                } else if rule.prefix_len >= 32 {
+                    endpoint.ipv4 == rule.ipv4 as u32
+                } else {
+                    let mask = u32::MAX << (32 - rule.prefix_len as u32);
+                    (endpoint.ipv4 & mask) == ((rule.ipv4 as u32) & mask)
+                }
+            } else {
+                let max_prefix = if family == 1 { 32 } else { 128 };
+                let bounded_prefix = usize::min(rule.prefix_len as usize, max_prefix);
+                endpoint.address_family == family
+                    && prefix_match(&endpoint.addr, &rule.addr, bounded_prefix)
             }
         }
         _ => false,
     }
+}
+
+fn prefix_match(candidate: &[u8; 16], network: &[u8; 16], prefix_len: usize) -> bool {
+    if prefix_len == 0 {
+        return true;
+    }
+    let full_bytes = prefix_len / 8;
+    let partial_bits = prefix_len % 8;
+    if full_bytes > 0 && candidate[..full_bytes] != network[..full_bytes] {
+        return false;
+    }
+    if partial_bits == 0 {
+        return true;
+    }
+    let mask = (!0u8) << (8 - partial_bits);
+    (candidate[full_bytes] & mask) == (network[full_bytes] & mask)
 }
 
 fn select_best_target_rule(
@@ -104,6 +134,8 @@ where
         cfg.target_prefix_len = rule.prefix_len;
         cfg.target_port = rule.port;
         cfg.target_protocol = rule.protocol;
+        cfg.target_address_family = rule.address_family;
+        cfg.target_addr = rule.addr;
         return cfg.runtime_filtered(Some(endpoint), monotonic_now_ns());
     }
 
@@ -199,6 +231,28 @@ mod tests {
     use super::*;
     use std::cell::Cell;
 
+    fn endpoint_v4(ipv4: u32, port: u16, protocol: u64) -> Endpoint {
+        let mut addr = [0u8; 16];
+        addr[..4].copy_from_slice(&ipv4.to_be_bytes());
+        Endpoint {
+            address_family: 1,
+            addr,
+            ipv4,
+            port,
+            protocol,
+        }
+    }
+
+    fn endpoint_v6(addr: [u8; 16], port: u16, protocol: u64) -> Endpoint {
+        Endpoint {
+            address_family: 2,
+            addr,
+            ipv4: 0,
+            port,
+            protocol,
+        }
+    }
+
     fn cfg_with_latency(latency_ns: u64) -> Config {
         Config {
             latency_ns,
@@ -225,11 +279,7 @@ mod tests {
 
     #[test]
     fn select_rule_prefers_higher_priority() {
-        let endpoint = Endpoint {
-            ipv4: 0x0A010203,
-            port: 443,
-            protocol: 1,
-        };
+        let endpoint = endpoint_v4(0x0A010203, 443, 1);
         let rules = [
             TargetRule {
                 enabled: 1,
@@ -266,11 +316,7 @@ mod tests {
 
     #[test]
     fn select_rule_keeps_first_on_priority_tie() {
-        let endpoint = Endpoint {
-            ipv4: 0x0A010203,
-            port: 53,
-            protocol: 2,
-        };
+        let endpoint = endpoint_v4(0x0A010203, 53, 2);
         let rules = [
             TargetRule {
                 enabled: 1,
@@ -308,11 +354,7 @@ mod tests {
 
     #[test]
     fn select_rule_returns_none_when_no_match() {
-        let endpoint = Endpoint {
-            ipv4: 0xC0A80101,
-            port: 80,
-            protocol: 1,
-        };
+        let endpoint = endpoint_v4(0xC0A80101, 80, 1);
         let rules = [TargetRule {
             enabled: 1,
             priority: 100,
@@ -332,11 +374,7 @@ mod tests {
 
     #[test]
     fn select_rule_skips_disabled_entries() {
-        let endpoint = Endpoint {
-            ipv4: 0x0A010203,
-            port: 443,
-            protocol: 1,
-        };
+        let endpoint = endpoint_v4(0x0A010203, 443, 1);
         let rules = [
             TargetRule {
                 enabled: 0,
@@ -373,11 +411,7 @@ mod tests {
 
     #[test]
     fn select_rule_respects_protocol_and_port_filters() {
-        let endpoint = Endpoint {
-            ipv4: 0x0A010203,
-            port: 53,
-            protocol: 2,
-        };
+        let endpoint = endpoint_v4(0x0A010203, 53, 2);
         let rules = [
             TargetRule {
                 enabled: 1,
@@ -428,11 +462,7 @@ mod tests {
 
     #[test]
     fn select_rule_cidr_zero_prefix_matches_any_ipv4() {
-        let endpoint = Endpoint {
-            ipv4: 0xC0A8010A,
-            port: 8080,
-            protocol: 1,
-        };
+        let endpoint = endpoint_v4(0xC0A8010A, 8080, 1);
         let rules = [TargetRule {
             enabled: 1,
             priority: 10,
@@ -485,11 +515,7 @@ mod tests {
 
     #[test]
     fn lockstep_retries_on_generation_change_and_then_applies_rule() {
-        let endpoint = Endpoint {
-            ipv4: 0x0A010203,
-            port: 443,
-            protocol: 1,
-        };
+        let endpoint = endpoint_v4(0x0A010203, 443, 1);
         let mut base_cfg = cfg_with_latency(500);
         base_cfg.target_enabled = 2;
         base_cfg.ruleset_generation = 10;
@@ -533,11 +559,7 @@ mod tests {
 
     #[test]
     fn lockstep_returns_none_when_generation_never_stabilizes() {
-        let endpoint = Endpoint {
-            ipv4: 0x0A010203,
-            port: 443,
-            protocol: 1,
-        };
+        let endpoint = endpoint_v4(0x0A010203, 443, 1);
         let mut base_cfg = cfg_with_latency(500);
         base_cfg.target_enabled = 2;
         base_cfg.ruleset_generation = 20;
@@ -574,5 +596,64 @@ mod tests {
 
         assert!(result.is_none());
         assert_eq!(cfg_reads.get(), RULESET_READ_RETRY_LIMIT);
+    }
+
+    #[test]
+    fn select_rule_ipv6_host_exact_match() {
+        let endpoint = endpoint_v6(
+            [
+                0x20, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10,
+            ],
+            443,
+            1,
+        );
+        let rules = [TargetRule {
+            enabled: 1,
+            priority: 300,
+            kind: 1,
+            ipv4: 0,
+            prefix_len: 128,
+            port: 443,
+            protocol: 1,
+            reserved: 0,
+            address_family: 2,
+            addr: [
+                0x20, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10,
+            ],
+            hostname: [0; 32],
+            sni: [0; 32],
+        }];
+        let selected = select_best_target_rule(endpoint, &rules, rules.len()).expect("must select");
+        assert_eq!(selected.priority, 300);
+    }
+
+    #[test]
+    fn select_rule_ipv6_cidr_match() {
+        let endpoint = endpoint_v6(
+            [
+                0x20, 0x01, 0x0D, 0xB8, 0xAB, 0xCD, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10,
+            ],
+            443,
+            1,
+        );
+        let rules = [TargetRule {
+            enabled: 1,
+            priority: 300,
+            kind: 2,
+            ipv4: 0,
+            prefix_len: 48,
+            port: 443,
+            protocol: 1,
+            reserved: 0,
+            address_family: 2,
+            addr: [
+                0x20, 0x01, 0x0D, 0xB8, 0xAB, 0xCD, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ],
+            hostname: [0; 32],
+            sni: [0; 32],
+        }];
+        let selected = select_best_target_rule(endpoint, &rules, rules.len()).expect("must select");
+        assert_eq!(selected.kind, 2);
+        assert_eq!(selected.prefix_len, 48);
     }
 }
