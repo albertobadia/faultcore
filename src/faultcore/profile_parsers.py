@@ -202,7 +202,6 @@ def _parse_target_host_port(raw: str) -> tuple[str, int]:
 
     colon_count = raw.count(":")
     if colon_count > 1:
-        # Keep string-target parsing unambiguous: IPv6 + port requires brackets.
         raise ValueError("target IPv6 must use brackets in string format, e.g. tcp://[2001:db8::1]:443")
     if colon_count == 1:
         host, port_str = raw.rsplit(":", 1)

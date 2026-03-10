@@ -333,7 +333,7 @@ Parameters:
   - when `True`, resets global runtime counters after reading.
 
 Returns:
-- `{"layers": [...], "totals": {...}}`
+- `{"layers": [...], "totals": {...}, "reload_applied": int, "reload_retry": int}`
 - each layer has:
   - `stage`: `"L1"`..`"L7"`
   - `continue`, `delay`, `drop`, `timeout`, `error`,

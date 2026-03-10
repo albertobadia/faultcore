@@ -13,6 +13,7 @@ pub type FaultOsiEngine = ChaosEngine;
 pub type FaultOsiDecisionCounters = DecisionCounters;
 pub use interceptor_bridge::{
     bind_fd_to_current_thread, clear_fd_binding, clone_fd_binding, init_runtime_shm,
+    reset_runtime_reload_metrics, runtime_reload_metrics_snapshot,
     runtime_config_for_addr_or_fd, runtime_config_for_fd, runtime_dns_config_for_current_thread,
     runtime_dns_config_for_query, uplink_duplicate_count_for_addr_or_fd,
     uplink_duplicate_count_for_fd,
@@ -76,6 +77,8 @@ pub struct FaultOsiLayerMetricsSnapshot {
 pub struct FaultOsiMetricsSnapshot {
     pub len: u64,
     pub layers: [FaultOsiLayerMetricsSnapshot; FAULT_OSI_LAYER_COUNT],
+    pub reload_applied_count: u64,
+    pub reload_retry_count: u64,
 }
 
 impl Default for FaultOsiMetricsSnapshot {
@@ -83,6 +86,8 @@ impl Default for FaultOsiMetricsSnapshot {
         Self {
             len: 0,
             layers: [FaultOsiLayerMetricsSnapshot::default(); FAULT_OSI_LAYER_COUNT],
+            reload_applied_count: 0,
+            reload_retry_count: 0,
         }
     }
 }
@@ -121,11 +126,15 @@ pub fn global_fault_osi_metrics_snapshot() -> FaultOsiMetricsSnapshot {
             skipped_count: counters.skipped_count,
         };
     }
+    let (reload_applied, reload_retry) = runtime_reload_metrics_snapshot();
+    out.reload_applied_count = reload_applied;
+    out.reload_retry_count = reload_retry;
     out
 }
 
 pub fn reset_global_fault_osi_metrics() {
     global_fault_osi_engine().reset_metrics();
+    reset_runtime_reload_metrics();
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

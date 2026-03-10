@@ -1,4 +1,5 @@
 use libc::{c_int, sockaddr, socklen_t};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{
     Config, Direction, Endpoint, FaultOsiEngine, LayerDecision, TargetRule, assign_rule_to_fd,
@@ -8,6 +9,20 @@ use crate::{
 };
 
 const RULESET_READ_RETRY_LIMIT: usize = 3;
+static RELOAD_APPLIED_TOTAL: AtomicU64 = AtomicU64::new(0);
+static RELOAD_RETRY_TOTAL: AtomicU64 = AtomicU64::new(0);
+
+pub fn runtime_reload_metrics_snapshot() -> (u64, u64) {
+    (
+        RELOAD_APPLIED_TOTAL.load(Ordering::Relaxed),
+        RELOAD_RETRY_TOTAL.load(Ordering::Relaxed),
+    )
+}
+
+pub fn reset_runtime_reload_metrics() {
+    RELOAD_APPLIED_TOTAL.store(0, Ordering::Relaxed);
+    RELOAD_RETRY_TOTAL.store(0, Ordering::Relaxed);
+}
 
 #[derive(Clone, Copy, Default)]
 struct SemanticContext<'a> {
@@ -44,6 +59,29 @@ fn match_name_score(rule_name: &str, candidate: Option<&str>) -> Option<u8> {
     (rule_name == candidate).then_some(2)
 }
 
+fn rule_port_end(rule: &TargetRule) -> u64 {
+    if rule.reserved > 0 {
+        rule.reserved
+    } else {
+        rule.port
+    }
+}
+
+fn endpoint_matches_rule_filters(rule: &TargetRule, endpoint: Endpoint) -> bool {
+    if rule.protocol > 0 && rule.protocol != endpoint.protocol {
+        return false;
+    }
+
+    let endpoint_port = u64::from(endpoint.port);
+    let port_start = rule.port;
+    let port_end = rule_port_end(rule);
+    if (port_start > 0 || port_end > 0) && (endpoint_port < port_start || endpoint_port > port_end) {
+        return false;
+    }
+
+    true
+}
+
 fn rule_match_class(
     rule: &TargetRule,
     endpoint: Option<Endpoint>,
@@ -66,15 +104,7 @@ fn rule_match_class(
     if let Some(name) = sni_rule {
         if rule.protocol > 0 || rule.port > 0 || rule.reserved > 0 {
             let endpoint = endpoint?;
-            if rule.protocol > 0 && rule.protocol != endpoint.protocol {
-                return None;
-            }
-            let endpoint_port = u64::from(endpoint.port);
-            let port_start = rule.port;
-            let port_end = if rule.reserved > 0 { rule.reserved } else { rule.port };
-            if (port_start > 0 || port_end > 0)
-                && (endpoint_port < port_start || endpoint_port > port_end)
-            {
+            if !endpoint_matches_rule_filters(rule, endpoint) {
                 return None;
             }
         }
@@ -83,15 +113,7 @@ fn rule_match_class(
     if let Some(name) = hostname_rule {
         if rule.protocol > 0 || rule.port > 0 || rule.reserved > 0 {
             let endpoint = endpoint?;
-            if rule.protocol > 0 && rule.protocol != endpoint.protocol {
-                return None;
-            }
-            let endpoint_port = u64::from(endpoint.port);
-            let port_start = rule.port;
-            let port_end = if rule.reserved > 0 { rule.reserved } else { rule.port };
-            if (port_start > 0 || port_end > 0)
-                && (endpoint_port < port_start || endpoint_port > port_end)
-            {
+            if !endpoint_matches_rule_filters(rule, endpoint) {
                 return None;
             }
         }
@@ -99,14 +121,7 @@ fn rule_match_class(
     }
 
     let endpoint = endpoint?;
-    if rule.protocol > 0 && rule.protocol != endpoint.protocol {
-        return None;
-    }
-    let endpoint_port = u64::from(endpoint.port);
-    let port_start = rule.port;
-    let port_end = if rule.reserved > 0 { rule.reserved } else { rule.port };
-    if (port_start > 0 || port_end > 0) && (endpoint_port < port_start || endpoint_port > port_end)
-    {
+    if !endpoint_matches_rule_filters(rule, endpoint) {
         return None;
     }
 
@@ -207,6 +222,7 @@ where
         let rules = read_rules()?;
         let refreshed_cfg = read_cfg()?;
         if refreshed_cfg.ruleset_generation != generation_before {
+            RELOAD_RETRY_TOTAL.fetch_add(1, Ordering::Relaxed);
             cfg = refreshed_cfg;
             continue;
         }
@@ -222,6 +238,7 @@ where
         cfg.target_addr = rule.addr;
         cfg.target_hostname = rule.hostname;
         cfg.target_sni = rule.sni;
+        RELOAD_APPLIED_TOTAL.fetch_add(1, Ordering::Relaxed);
         return cfg.runtime_filtered(endpoint, monotonic_now_ns());
     }
 
@@ -849,6 +866,51 @@ mod tests {
     
        assert!(result.is_none());
        assert_eq!(cfg_reads.get(), RULESET_READ_RETRY_LIMIT);
+    }
+
+    #[test]
+    fn reload_metrics_count_retry_and_apply() {
+       reset_runtime_reload_metrics();
+       let endpoint = endpoint_v4(0x0A010203, 443, 1);
+       let mut base_cfg = cfg_with_latency(500);
+       base_cfg.target_enabled = 1;
+       base_cfg.ruleset_generation = 10;
+
+       let rules = [TargetRule {
+           enabled: 1,
+           priority: 100,
+           kind: 1,
+           ipv4: endpoint.ipv4 as u64,
+           prefix_len: 32,
+           port: endpoint.port as u64,
+           protocol: endpoint.protocol,
+           reserved: 0,
+           address_family: 1,
+           addr: endpoint.addr,
+           hostname: [0; 32],
+           sni: [0; 32],
+       }; crate::MAX_TARGET_RULES_PER_TID];
+
+       let cfg_reads = Cell::new(0usize);
+       let _ = apply_multi_target_for_tid_with_reader(
+           base_cfg,
+           Some(endpoint),
+           SemanticContext::default(),
+           || Some(rules),
+           || {
+               let n = cfg_reads.get();
+               cfg_reads.set(n + 1);
+               let mut refreshed = cfg_with_latency(500);
+               refreshed.target_enabled = 1;
+               refreshed.ruleset_generation = 11;
+               Some(refreshed)
+           },
+       );
+
+       let (applied, retry) = runtime_reload_metrics_snapshot();
+       assert_eq!(applied, 1);
+       assert_eq!(retry, 1);
+       reset_runtime_reload_metrics();
     }
     
     #[test]

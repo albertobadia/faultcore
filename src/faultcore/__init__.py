@@ -85,7 +85,18 @@ def _metrics_diff(current: dict[str, Any], baseline: dict[str, Any]) -> dict[str
             layer[field] = max(0, int(current_layer.get(field, 0)) - int(base_layer.get(field, 0)))
         layers.append(layer)
     totals = {field: sum(item[field] for item in layers) for field in _METRICS_FIELDS}
-    return {"layers": layers, "totals": totals}
+    return {
+        "layers": layers,
+        "totals": totals,
+        "reload_applied": max(
+            0,
+            int(current.get("reload_applied", 0)) - int(baseline.get("reload_applied", 0)),
+        ),
+        "reload_retry": max(
+            0,
+            int(current.get("reload_retry", 0)) - int(baseline.get("reload_retry", 0)),
+        ),
+    }
 
 
 def get_fault_metrics(*, reset: bool = False, scope: str = "global") -> dict[str, Any]:

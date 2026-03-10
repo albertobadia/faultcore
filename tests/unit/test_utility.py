@@ -73,6 +73,8 @@ def test_get_fault_metrics_returns_snapshot_and_supports_reset(monkeypatch):
         def __call__(self, ptr):
             snapshot = ptr._obj
             snapshot.len = 1
+            snapshot.reload_applied_count = 12
+            snapshot.reload_retry_count = 5
             layer = snapshot.layers[0]
             layer.stage = 1
             layer.continue_count = 2
@@ -131,6 +133,8 @@ def test_get_fault_metrics_returns_snapshot_and_supports_reset(monkeypatch):
         "nxdomain": 10,
         "skipped": 11,
     }
+    assert metrics["reload_applied"] == 12
+    assert metrics["reload_retry"] == 5
     assert fake_lib.faultcore_metrics_reset.called is True
 
 
@@ -176,6 +180,8 @@ def test_get_fault_metrics_context_scope_returns_delta(monkeypatch):
             self.calls += 1
             snapshot = ptr._obj
             snapshot.len = 1
+            snapshot.reload_applied_count = 3 if self.calls == 1 else 9
+            snapshot.reload_retry_count = 1 if self.calls == 1 else 4
             layer = snapshot.layers[0]
             layer.stage = 1
             base = 10 if self.calls == 1 else 16
@@ -210,6 +216,8 @@ def test_get_fault_metrics_context_scope_returns_delta(monkeypatch):
     ]
     assert metrics["totals"]["continue"] == 6
     assert metrics["totals"]["delay"] == 6
+    assert metrics["reload_applied"] == 6
+    assert metrics["reload_retry"] == 3
 
 
 def test_get_fault_metrics_ignores_len_over_contract_limit(monkeypatch):

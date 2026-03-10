@@ -43,6 +43,8 @@ def read_fault_metrics_snapshot() -> dict[str, Any] | None:
         _fields_ = [
             ("len", ctypes.c_uint64),
             ("layers", LayerMetrics * 7),
+            ("reload_applied_count", ctypes.c_uint64),
+            ("reload_retry_count", ctypes.c_uint64),
         ]
 
     lib = ctypes.CDLL(None)
@@ -86,7 +88,12 @@ def read_fault_metrics_snapshot() -> dict[str, Any] | None:
         )
 
     totals = {name: sum(item[name] for item in layers) for name in _METRICS_FIELDS}
-    return {"layers": layers, "totals": totals}
+    return {
+        "layers": layers,
+        "totals": totals,
+        "reload_applied": int(snapshot.reload_applied_count),
+        "reload_retry": int(snapshot.reload_retry_count),
+    }
 
 
 def capture_metrics_context() -> contextvars.Token[dict[str, Any] | None] | None:

@@ -1,10 +1,34 @@
+import ctypes
 import os
 import pickle
 import select
 import signal
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
+
+_STARTUP_TIMEOUT_S = 0.25
+
+
+def _terminate_worker_process(os_module: Any, signal_module: Any, pid: int) -> None:
+    try:
+        os_module.kill(pid, signal_module.SIGKILL)
+    except ProcessLookupError:
+        pass
+    os_module.waitpid(pid, 0)
+
+
+def _terminate_and_close(
+    os_module: Any,
+    signal_module: Any,
+    pid: int,
+    signal_read_fd: int,
+    read_fd: int,
+) -> None:
+    _terminate_worker_process(os_module, signal_module, pid)
+    os_module.close(signal_read_fd)
+    os_module.close(read_fd)
 
 
 def run_sync_with_timeout(
@@ -35,7 +59,6 @@ def run_sync_with_timeout(
 
     read_fd, write_fd = os_module.pipe()
     signal_read_fd, signal_write_fd = os_module.pipe()
-    import ctypes
 
     libc = ctypes.CDLL(None)
     fork_fn = libc.fork
@@ -71,62 +94,41 @@ def run_sync_with_timeout(
 
     os_module.close(write_fd)
     os_module.close(signal_write_fd)
-    startup_timeout_ms = min(50, max(10, timeout_ms // 2))
-    startup_ready, _, _ = select_module.select([signal_read_fd], [], [], startup_timeout_ms / 1000)
+    startup_ready, _, _ = select_module.select([signal_read_fd], [], [], _STARTUP_TIMEOUT_S)
     if not startup_ready:
-        try:
-            os_module.kill(pid, signal_module.SIGKILL)
-        except ProcessLookupError:
-            pass
-        os_module.waitpid(pid, 0)
-        os_module.close(signal_read_fd)
-        os_module.close(read_fd)
+        _terminate_and_close(os_module, signal_module, pid, signal_read_fd, read_fd)
         raise TimeoutError(f"Function execution exceeded {timeout_ms}ms")
 
     started = os_module.read(signal_read_fd, 1)
     if started != b"S":
-        try:
-            os_module.kill(pid, signal_module.SIGKILL)
-        except ProcessLookupError:
-            pass
-        os_module.waitpid(pid, 0)
-        os_module.close(signal_read_fd)
-        os_module.close(read_fd)
+        _terminate_and_close(os_module, signal_module, pid, signal_read_fd, read_fd)
         raise RuntimeError("Worker process failed before execution handshake")
 
-    ready, _, _ = select_module.select([signal_read_fd], [], [], timeout_ms / 1000)
+    deadline_ns = time.monotonic_ns() + (timeout_ms * 1_000_000)
+    remaining_ns = deadline_ns - time.monotonic_ns()
+    timeout_s = 0.0 if remaining_ns <= 0 else remaining_ns / 1_000_000_000
+    ready, _, _ = select_module.select([signal_read_fd], [], [], timeout_s)
     if not ready:
-        try:
-            os_module.kill(pid, signal_module.SIGKILL)
-        except ProcessLookupError:
-            pass
-        os_module.waitpid(pid, 0)
-        os_module.close(signal_read_fd)
-        os_module.close(read_fd)
+        _terminate_and_close(os_module, signal_module, pid, signal_read_fd, read_fd)
         raise TimeoutError(f"Function execution exceeded {timeout_ms}ms")
 
     finished = os_module.read(signal_read_fd, 1)
     if finished != b"D":
-        try:
-            os_module.kill(pid, signal_module.SIGKILL)
-        except ProcessLookupError:
-            pass
-        os_module.waitpid(pid, 0)
-        os_module.close(signal_read_fd)
-        os_module.close(read_fd)
+        _terminate_and_close(os_module, signal_module, pid, signal_read_fd, read_fd)
         raise RuntimeError("Worker process failed before completion handshake")
 
     os_module.close(signal_read_fd)
 
-    data = b""
+    chunks: list[bytes] = []
     while True:
         chunk = os_module.read(read_fd, 65536)
         if not chunk:
             break
-        data += chunk
+        chunks.append(chunk)
     os_module.close(read_fd)
     os_module.waitpid(pid, 0)
 
+    data = b"".join(chunks)
     if not data:
         raise RuntimeError("Worker process exited without returning a payload")
 

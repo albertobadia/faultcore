@@ -45,7 +45,6 @@ def normalize_target_address(rule: dict[str, Any], idx: int) -> tuple[int, bytes
 
     has_addr = rule.get("addr") is not None
     if family == 0 and kind in (1, 2) and not has_addr:
-        # Backward compatibility for rules that only provide legacy IPv4 fields.
         family = 1
 
     if family == 1:
@@ -120,5 +119,4 @@ def validate_target_rule(rule: dict[str, Any], idx: int) -> None:
     if protocol not in (0, 1, 2):
         raise ValueError(f"targets[{idx}].protocol must be one of 0, 1, 2")
 
-    _ = normalize_target_address(rule, idx)
     _ = resolve_port_range(rule, idx)
