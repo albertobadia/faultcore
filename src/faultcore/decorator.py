@@ -865,35 +865,27 @@ def profile(
 
 
 def _parse_rate(rate: str | int | float) -> int:
+    def as_non_negative(value: float) -> float:
+        if value < 0:
+            raise ValueError("rate must be >= 0")
+        return value
+
     if isinstance(rate, (int, float)):
-        if rate < 0:
-            raise ValueError("rate must be >= 0")
-        return int(rate * 1_000_000)
-    r = rate.lower()
-    if r.endswith("mbps"):
-        value = float(r[:-4])
-        if value < 0:
-            raise ValueError("rate must be >= 0")
-        return int(value * 1_000_000)
-    if r.endswith("gbps"):
-        value = float(r[:-4])
-        if value < 0:
-            raise ValueError("rate must be >= 0")
-        return int(value * 1_000_000_000)
-    if r.endswith("kbps"):
-        value = float(r[:-4])
-        if value < 0:
-            raise ValueError("rate must be >= 0")
-        return int(value * 1_000)
-    if r.endswith("bps"):
-        value = float(r[:-3])
-        if value < 0:
-            raise ValueError("rate must be >= 0")
-        return int(value)
-    value = float(r)
-    if value < 0:
-        raise ValueError("rate must be >= 0")
-    return int(value)
+        return int(as_non_negative(float(rate)) * 1_000_000)
+
+    normalized_rate = rate.strip().lower()
+    units = {
+        "gbps": 1_000_000_000,
+        "mbps": 1_000_000,
+        "kbps": 1_000,
+        "bps": 1,
+    }
+    for suffix, multiplier in units.items():
+        if normalized_rate.endswith(suffix):
+            numeric = as_non_negative(float(normalized_rate[: -len(suffix)]))
+            return int(numeric * multiplier)
+
+    return int(as_non_negative(float(normalized_rate)))
 
 
 def _parse_packet_loss(loss: str | int | float) -> int:

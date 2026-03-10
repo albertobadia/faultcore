@@ -24,6 +24,13 @@ _POLICY_REGION_OFFSET = _CONFIG_REGION_SIZE
 _POLICY_REGION_SIZE = MAX_POLICIES * POLICY_STATE_SIZE
 _TARGET_RULES_REGION_OFFSET = _POLICY_REGION_OFFSET + _POLICY_REGION_SIZE
 _TARGET_RULES_REGION_SIZE = MAX_TARGET_RULES_PER_TID * TARGET_RULE_SIZE
+_U64_MAX = 0xFFFFFFFFFFFFFFFF
+_U32_MAX = 0xFFFFFFFF
+_NS_PER_MS = 1_000_000
+
+U64Field = tuple[int, int]
+OptionalU64Field = tuple[int, int | None]
+DirectionOffsets = tuple[int, int, int, int, int]
 
 _OFFSET_MAGIC = 0
 _OFFSET_VERSION = 4
@@ -73,6 +80,22 @@ _OFFSET_SCHEDULE_PARAM_B = 348
 _OFFSET_SCHEDULE_PARAM_C = 356
 _OFFSET_SCHEDULE_STARTED_MONOTONIC_NS = 364
 
+_UPLINK_DIRECTION_OFFSETS: DirectionOffsets = (
+    _OFFSET_UPLINK_LATENCY_NS,
+    _OFFSET_UPLINK_JITTER_NS,
+    _OFFSET_UPLINK_PACKET_LOSS_PPM,
+    _OFFSET_UPLINK_BURST_LOSS_LEN,
+    _OFFSET_UPLINK_BANDWIDTH_BPS,
+)
+
+_DOWNLINK_DIRECTION_OFFSETS: DirectionOffsets = (
+    _OFFSET_DOWNLINK_LATENCY_NS,
+    _OFFSET_DOWNLINK_JITTER_NS,
+    _OFFSET_DOWNLINK_PACKET_LOSS_PPM,
+    _OFFSET_DOWNLINK_BURST_LOSS_LEN,
+    _OFFSET_DOWNLINK_BANDWIDTH_BPS,
+)
+
 
 class SHMWriter:
     def __init__(self, shm_name: str | None = None):
@@ -86,7 +109,7 @@ class SHMWriter:
         try:
             self._fd = os.open(f"/dev/shm/{name}", os.O_RDWR)
             self._mmap = mmap.mmap(self._fd, 0, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
-        except (FileNotFoundError, PermissionError, OSError):
+        except OSError:
             self._fd = None
             self._mmap = None
 
@@ -106,6 +129,21 @@ class SHMWriter:
 
     def _target_rules_offset_for_slot(self, tid_slot: int) -> int:
         return _TARGET_RULES_REGION_OFFSET + (tid_slot * _TARGET_RULES_REGION_SIZE)
+
+    def _pack_u64_fields(self, base_offset: int, fields: tuple[U64Field, ...]) -> None:
+        for relative_offset, value in fields:
+            struct.pack_into("<Q", self._mmap, base_offset + relative_offset, value)
+
+    def _write_optional_u64_fields(self, offset: int, fields: tuple[OptionalU64Field, ...]) -> None:
+        for relative_offset, value in fields:
+            if value is not None:
+                struct.pack_into("<Q", self._mmap, offset + relative_offset, value)
+
+    def _ms_to_ns(self, milliseconds: int) -> int:
+        return milliseconds * _NS_PER_MS
+
+    def _optional_ms_to_ns(self, milliseconds: int | None) -> int | None:
+        return None if milliseconds is None else self._ms_to_ns(milliseconds)
 
     def _write_versioned(self, tid: int, writer: Callable[[int], None]) -> None:
         if not self._is_available():
@@ -128,28 +166,105 @@ class SHMWriter:
 
     def _write_target_rule_row(self, target_rules_offset: int, idx: int, rule: dict[str, int]) -> None:
         base = target_rules_offset + (idx * TARGET_RULE_SIZE)
-        struct.pack_into("<Q", self._mmap, base + 0, 1 if rule.get("enabled", 0) else 0)
-        struct.pack_into("<Q", self._mmap, base + 8, int(rule.get("priority", 100)))
-        struct.pack_into("<Q", self._mmap, base + 16, int(rule.get("kind", 0)))
-        struct.pack_into("<Q", self._mmap, base + 24, int(rule.get("ipv4", 0)))
-        struct.pack_into("<Q", self._mmap, base + 32, int(rule.get("prefix_len", 0)))
-        struct.pack_into("<Q", self._mmap, base + 40, int(rule.get("port", 0)))
-        struct.pack_into("<Q", self._mmap, base + 48, int(rule.get("protocol", 0)))
-        struct.pack_into("<Q", self._mmap, base + 56, 0)
+        self._pack_u64_fields(
+            base,
+            (
+                (0, 1 if rule.get("enabled", 0) else 0),
+                (8, int(rule.get("priority", 100))),
+                (16, int(rule.get("kind", 0))),
+                (24, int(rule.get("ipv4", 0))),
+                (32, int(rule.get("prefix_len", 0))),
+                (40, int(rule.get("port", 0))),
+                (48, int(rule.get("protocol", 0))),
+                (56, 0),
+            ),
+        )
 
     def _write_single_target_fields(self, offset: int, rule: dict[str, int]) -> None:
-        struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_KIND, int(rule.get("kind", 0)))
-        struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_IPV4, int(rule.get("ipv4", 0)))
-        struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_PREFIX_LEN, int(rule.get("prefix_len", 0)))
-        struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_PORT, int(rule.get("port", 0)))
-        struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_PROTOCOL, int(rule.get("protocol", 0)))
+        self._pack_u64_fields(
+            offset,
+            (
+                (_OFFSET_TARGET_KIND, int(rule.get("kind", 0))),
+                (_OFFSET_TARGET_IPV4, int(rule.get("ipv4", 0))),
+                (_OFFSET_TARGET_PREFIX_LEN, int(rule.get("prefix_len", 0))),
+                (_OFFSET_TARGET_PORT, int(rule.get("port", 0))),
+                (_OFFSET_TARGET_PROTOCOL, int(rule.get("protocol", 0))),
+            ),
+        )
 
     def _clear_single_target_fields(self, offset: int) -> None:
-        struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_KIND, 0)
-        struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_IPV4, 0)
-        struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_PREFIX_LEN, 0)
-        struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_PORT, 0)
-        struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_PROTOCOL, 0)
+        self._pack_u64_fields(
+            offset,
+            (
+                (_OFFSET_TARGET_KIND, 0),
+                (_OFFSET_TARGET_IPV4, 0),
+                (_OFFSET_TARGET_PREFIX_LEN, 0),
+                (_OFFSET_TARGET_PORT, 0),
+                (_OFFSET_TARGET_PROTOCOL, 0),
+            ),
+        )
+
+    def _write_fields(self, tid: int, fields: tuple[U64Field, ...]) -> None:
+        def writer(offset: int) -> None:
+            self._pack_u64_fields(offset, fields)
+
+        self._write_versioned(tid, writer)
+
+    def _write_direction_profile(
+        self,
+        offset: int,
+        *,
+        latency_ms: int | None,
+        jitter_ms: int | None,
+        packet_loss_ppm: int | None,
+        burst_loss_len: int | None,
+        bandwidth_bps: int | None,
+        latency_offset: int,
+        jitter_offset: int,
+        packet_loss_offset: int,
+        burst_loss_offset: int,
+        bandwidth_offset: int,
+    ) -> None:
+        self._write_optional_u64_fields(
+            offset,
+            (
+                (latency_offset, self._optional_ms_to_ns(latency_ms)),
+                (jitter_offset, self._optional_ms_to_ns(jitter_ms)),
+                (packet_loss_offset, packet_loss_ppm),
+                (burst_loss_offset, burst_loss_len),
+                (bandwidth_offset, bandwidth_bps),
+            ),
+        )
+
+    def _write_direction_profile_for_tid(
+        self,
+        tid: int,
+        *,
+        latency_ms: int | None,
+        jitter_ms: int | None,
+        packet_loss_ppm: int | None,
+        burst_loss_len: int | None,
+        bandwidth_bps: int | None,
+        offsets: DirectionOffsets,
+    ) -> None:
+        latency_offset, jitter_offset, packet_loss_offset, burst_loss_offset, bandwidth_offset = offsets
+
+        def writer(offset: int) -> None:
+            self._write_direction_profile(
+                offset,
+                latency_ms=latency_ms,
+                jitter_ms=jitter_ms,
+                packet_loss_ppm=packet_loss_ppm,
+                burst_loss_len=burst_loss_len,
+                bandwidth_bps=bandwidth_bps,
+                latency_offset=latency_offset,
+                jitter_offset=jitter_offset,
+                packet_loss_offset=packet_loss_offset,
+                burst_loss_offset=burst_loss_offset,
+                bandwidth_offset=bandwidth_offset,
+            )
+
+        self._write_versioned(tid, writer)
 
     def _rule_int(self, rule: dict[str, int], key: str, default: int, idx: int) -> int:
         try:
@@ -163,7 +278,7 @@ class SHMWriter:
             raise ValueError(f"targets[{idx}].enabled must be 0 or 1")
 
         priority = self._rule_int(rule, "priority", 100, idx)
-        if priority < 0 or priority > 0xFFFFFFFFFFFFFFFF:
+        if not 0 <= priority <= _U64_MAX:
             raise ValueError(f"targets[{idx}].priority must be between 0 and 18446744073709551615")
 
         kind = self._rule_int(rule, "kind", 0, idx)
@@ -171,11 +286,11 @@ class SHMWriter:
             raise ValueError(f"targets[{idx}].kind must be one of 0, 1, 2")
 
         prefix_len = self._rule_int(rule, "prefix_len", 0, idx)
-        if prefix_len < 0 or prefix_len > 32:
+        if not 0 <= prefix_len <= 32:
             raise ValueError(f"targets[{idx}].prefix_len must be between 0 and 32")
 
         port = self._rule_int(rule, "port", 0, idx)
-        if port < 0 or port > 65535:
+        if not 0 <= port <= 65535:
             raise ValueError(f"targets[{idx}].port must be between 0 and 65535")
 
         protocol = self._rule_int(rule, "protocol", 0, idx)
@@ -183,45 +298,32 @@ class SHMWriter:
             raise ValueError(f"targets[{idx}].protocol must be one of 0, 1, 2")
 
         ipv4 = self._rule_int(rule, "ipv4", 0, idx)
-        if ipv4 < 0 or ipv4 > 0xFFFFFFFF:
+        if not 0 <= ipv4 <= _U32_MAX:
             raise ValueError(f"targets[{idx}].ipv4 must be a valid u32 value")
 
     def write_latency(self, tid: int, latency_ms: int) -> None:
-        def writer(offset: int) -> None:
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_LATENCY_NS, latency_ms * 1_000_000)
-
-        self._write_versioned(tid, writer)
+        self._write_fields(tid, ((_OFFSET_LATENCY_NS, self._ms_to_ns(latency_ms)),))
 
     def write_packet_loss(self, tid: int, ppm: int) -> None:
-        def writer(offset: int) -> None:
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_PACKET_LOSS_PPM, ppm)
-
-        self._write_versioned(tid, writer)
+        self._write_fields(tid, ((_OFFSET_PACKET_LOSS_PPM, ppm),))
 
     def write_jitter(self, tid: int, jitter_ms: int) -> None:
-        def writer(offset: int) -> None:
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_JITTER_NS, jitter_ms * 1_000_000)
-
-        self._write_versioned(tid, writer)
+        self._write_fields(tid, ((_OFFSET_JITTER_NS, self._ms_to_ns(jitter_ms)),))
 
     def write_burst_loss(self, tid: int, burst_loss_len: int) -> None:
-        def writer(offset: int) -> None:
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_BURST_LOSS_LEN, burst_loss_len)
-
-        self._write_versioned(tid, writer)
+        self._write_fields(tid, ((_OFFSET_BURST_LOSS_LEN, burst_loss_len),))
 
     def write_bandwidth(self, tid: int, bps: int) -> None:
-        def writer(offset: int) -> None:
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_BANDWIDTH_BPS, bps)
-
-        self._write_versioned(tid, writer)
+        self._write_fields(tid, ((_OFFSET_BANDWIDTH_BPS, bps),))
 
     def write_timeouts(self, tid: int, connect_ms: int, recv_ms: int) -> None:
-        def writer(offset: int) -> None:
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_CONNECT_TIMEOUT_MS, connect_ms)
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_RECV_TIMEOUT_MS, recv_ms)
-
-        self._write_versioned(tid, writer)
+        self._write_fields(
+            tid,
+            (
+                (_OFFSET_CONNECT_TIMEOUT_MS, connect_ms),
+                (_OFFSET_RECV_TIMEOUT_MS, recv_ms),
+            ),
+        )
 
     def write_uplink(
         self,
@@ -233,19 +335,15 @@ class SHMWriter:
         burst_loss_len: int | None = None,
         bandwidth_bps: int | None = None,
     ) -> None:
-        def writer(offset: int) -> None:
-            if latency_ms is not None:
-                struct.pack_into("<Q", self._mmap, offset + _OFFSET_UPLINK_LATENCY_NS, latency_ms * 1_000_000)
-            if jitter_ms is not None:
-                struct.pack_into("<Q", self._mmap, offset + _OFFSET_UPLINK_JITTER_NS, jitter_ms * 1_000_000)
-            if packet_loss_ppm is not None:
-                struct.pack_into("<Q", self._mmap, offset + _OFFSET_UPLINK_PACKET_LOSS_PPM, packet_loss_ppm)
-            if burst_loss_len is not None:
-                struct.pack_into("<Q", self._mmap, offset + _OFFSET_UPLINK_BURST_LOSS_LEN, burst_loss_len)
-            if bandwidth_bps is not None:
-                struct.pack_into("<Q", self._mmap, offset + _OFFSET_UPLINK_BANDWIDTH_BPS, bandwidth_bps)
-
-        self._write_versioned(tid, writer)
+        self._write_direction_profile_for_tid(
+            tid,
+            latency_ms=latency_ms,
+            jitter_ms=jitter_ms,
+            packet_loss_ppm=packet_loss_ppm,
+            burst_loss_len=burst_loss_len,
+            bandwidth_bps=bandwidth_bps,
+            offsets=_UPLINK_DIRECTION_OFFSETS,
+        )
 
     def write_downlink(
         self,
@@ -257,19 +355,15 @@ class SHMWriter:
         burst_loss_len: int | None = None,
         bandwidth_bps: int | None = None,
     ) -> None:
-        def writer(offset: int) -> None:
-            if latency_ms is not None:
-                struct.pack_into("<Q", self._mmap, offset + _OFFSET_DOWNLINK_LATENCY_NS, latency_ms * 1_000_000)
-            if jitter_ms is not None:
-                struct.pack_into("<Q", self._mmap, offset + _OFFSET_DOWNLINK_JITTER_NS, jitter_ms * 1_000_000)
-            if packet_loss_ppm is not None:
-                struct.pack_into("<Q", self._mmap, offset + _OFFSET_DOWNLINK_PACKET_LOSS_PPM, packet_loss_ppm)
-            if burst_loss_len is not None:
-                struct.pack_into("<Q", self._mmap, offset + _OFFSET_DOWNLINK_BURST_LOSS_LEN, burst_loss_len)
-            if bandwidth_bps is not None:
-                struct.pack_into("<Q", self._mmap, offset + _OFFSET_DOWNLINK_BANDWIDTH_BPS, bandwidth_bps)
-
-        self._write_versioned(tid, writer)
+        self._write_direction_profile_for_tid(
+            tid,
+            latency_ms=latency_ms,
+            jitter_ms=jitter_ms,
+            packet_loss_ppm=packet_loss_ppm,
+            burst_loss_len=burst_loss_len,
+            bandwidth_bps=bandwidth_bps,
+            offsets=_DOWNLINK_DIRECTION_OFFSETS,
+        )
 
     def write_correlated_loss(
         self,
@@ -281,35 +375,43 @@ class SHMWriter:
         loss_good_ppm: int,
         loss_bad_ppm: int,
     ) -> None:
-        def writer(offset: int) -> None:
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_GE_ENABLED, 1 if enabled else 0)
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_GE_P_GOOD_TO_BAD_PPM, p_good_to_bad_ppm)
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_GE_P_BAD_TO_GOOD_PPM, p_bad_to_good_ppm)
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_GE_LOSS_GOOD_PPM, loss_good_ppm)
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_GE_LOSS_BAD_PPM, loss_bad_ppm)
-
-        self._write_versioned(tid, writer)
+        self._write_fields(
+            tid,
+            (
+                (_OFFSET_GE_ENABLED, 1 if enabled else 0),
+                (_OFFSET_GE_P_GOOD_TO_BAD_PPM, p_good_to_bad_ppm),
+                (_OFFSET_GE_P_BAD_TO_GOOD_PPM, p_bad_to_good_ppm),
+                (_OFFSET_GE_LOSS_GOOD_PPM, loss_good_ppm),
+                (_OFFSET_GE_LOSS_BAD_PPM, loss_bad_ppm),
+            ),
+        )
 
     def write_connection_error(self, tid: int, *, kind: int, prob_ppm: int) -> None:
-        def writer(offset: int) -> None:
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_CONN_ERR_KIND, kind)
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_CONN_ERR_PROB_PPM, prob_ppm)
-
-        self._write_versioned(tid, writer)
+        self._write_fields(
+            tid,
+            (
+                (_OFFSET_CONN_ERR_KIND, kind),
+                (_OFFSET_CONN_ERR_PROB_PPM, prob_ppm),
+            ),
+        )
 
     def write_half_open(self, tid: int, *, after_bytes: int, err_kind: int) -> None:
-        def writer(offset: int) -> None:
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_HALF_OPEN_AFTER_BYTES, after_bytes)
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_HALF_OPEN_ERR_KIND, err_kind)
-
-        self._write_versioned(tid, writer)
+        self._write_fields(
+            tid,
+            (
+                (_OFFSET_HALF_OPEN_AFTER_BYTES, after_bytes),
+                (_OFFSET_HALF_OPEN_ERR_KIND, err_kind),
+            ),
+        )
 
     def write_packet_duplicate(self, tid: int, *, prob_ppm: int, max_extra: int) -> None:
-        def writer(offset: int) -> None:
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_DUP_PROB_PPM, prob_ppm)
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_DUP_MAX_EXTRA, max_extra)
-
-        self._write_versioned(tid, writer)
+        self._write_fields(
+            tid,
+            (
+                (_OFFSET_DUP_PROB_PPM, prob_ppm),
+                (_OFFSET_DUP_MAX_EXTRA, max_extra),
+            ),
+        )
 
     def write_packet_reorder(
         self,
@@ -319,12 +421,14 @@ class SHMWriter:
         max_delay_ns: int = 0,
         window: int = 1,
     ) -> None:
-        def writer(offset: int) -> None:
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_REORDER_PROB_PPM, prob_ppm)
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_REORDER_MAX_DELAY_NS, max_delay_ns)
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_REORDER_WINDOW, window)
-
-        self._write_versioned(tid, writer)
+        self._write_fields(
+            tid,
+            (
+                (_OFFSET_REORDER_PROB_PPM, prob_ppm),
+                (_OFFSET_REORDER_MAX_DELAY_NS, max_delay_ns),
+                (_OFFSET_REORDER_WINDOW, window),
+            ),
+        )
 
     def write_dns(
         self,
@@ -335,12 +439,14 @@ class SHMWriter:
         nxdomain_ppm: int | None = None,
     ) -> None:
         def writer(offset: int) -> None:
-            if delay_ms is not None:
-                struct.pack_into("<Q", self._mmap, offset + _OFFSET_DNS_DELAY_NS, delay_ms * 1_000_000)
-            if timeout_ms is not None:
-                struct.pack_into("<Q", self._mmap, offset + _OFFSET_DNS_TIMEOUT_MS, timeout_ms)
-            if nxdomain_ppm is not None:
-                struct.pack_into("<Q", self._mmap, offset + _OFFSET_DNS_NXDOMAIN_PPM, nxdomain_ppm)
+            self._write_optional_u64_fields(
+                offset,
+                (
+                    (_OFFSET_DNS_DELAY_NS, self._optional_ms_to_ns(delay_ms)),
+                    (_OFFSET_DNS_TIMEOUT_MS, timeout_ms),
+                    (_OFFSET_DNS_NXDOMAIN_PPM, nxdomain_ppm),
+                ),
+            )
 
         self._write_versioned(tid, writer)
 
@@ -355,20 +461,23 @@ class SHMWriter:
         port: int,
         protocol: int,
     ) -> None:
-        def writer(offset: int) -> None:
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_ENABLED, 1 if enabled else 0)
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_KIND, kind)
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_IPV4, ipv4)
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_PREFIX_LEN, prefix_len)
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_PORT, port)
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_PROTOCOL, protocol)
-
-        self._write_versioned(tid, writer)
+        self._write_fields(
+            tid,
+            (
+                (_OFFSET_TARGET_ENABLED, 1 if enabled else 0),
+                (_OFFSET_TARGET_KIND, kind),
+                (_OFFSET_TARGET_IPV4, ipv4),
+                (_OFFSET_TARGET_PREFIX_LEN, prefix_len),
+                (_OFFSET_TARGET_PORT, port),
+                (_OFFSET_TARGET_PROTOCOL, protocol),
+            ),
+        )
 
     def write_targets(self, tid: int, rules: list[dict[str, int]]) -> None:
         if not self._is_available():
             return
-        if len(rules) > MAX_TARGET_RULES_PER_TID:
+        rule_count = len(rules)
+        if rule_count > MAX_TARGET_RULES_PER_TID:
             raise ValueError(f"targets supports up to {MAX_TARGET_RULES_PER_TID} rules")
         for idx, rule in enumerate(rules):
             if not isinstance(rule, dict):
@@ -383,8 +492,8 @@ class SHMWriter:
             for idx, rule in enumerate(rules):
                 self._write_target_rule_row(target_rules_offset, idx, rule)
 
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_ENABLED, len(rules))
-            if len(rules) == 1:
+            struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_ENABLED, rule_count)
+            if rule_count == 1:
                 self._write_single_target_fields(offset, rules[0])
             else:
                 self._clear_single_target_fields(offset)
@@ -401,32 +510,25 @@ class SHMWriter:
         param_c_ns: int = 0,
         started_monotonic_ns: int = 0,
     ) -> None:
-        def writer(offset: int) -> None:
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_SCHEDULE_TYPE, schedule_type)
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_SCHEDULE_PARAM_A, param_a_ns)
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_SCHEDULE_PARAM_B, param_b_ns)
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_SCHEDULE_PARAM_C, param_c_ns)
-            struct.pack_into(
-                "<Q",
-                self._mmap,
-                offset + _OFFSET_SCHEDULE_STARTED_MONOTONIC_NS,
-                started_monotonic_ns,
-            )
-
-        self._write_versioned(tid, writer)
+        self._write_fields(
+            tid,
+            (
+                (_OFFSET_SCHEDULE_TYPE, schedule_type),
+                (_OFFSET_SCHEDULE_PARAM_A, param_a_ns),
+                (_OFFSET_SCHEDULE_PARAM_B, param_b_ns),
+                (_OFFSET_SCHEDULE_PARAM_C, param_c_ns),
+                (_OFFSET_SCHEDULE_STARTED_MONOTONIC_NS, started_monotonic_ns),
+            ),
+        )
 
     def clear(self, tid: int) -> None:
-        if not self._is_available():
-            return
+        tid_slot = self._tid_slot(tid)
 
-        offset = self._get_offset(tid)
-
-        with self._lock:
-            version = struct.unpack_from("<Q", self._mmap, offset + _OFFSET_VERSION)[0]
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_VERSION, version | 1)
+        def writer(offset: int) -> None:
             self._mmap[offset : offset + CONFIG_SIZE] = b"\x00" * CONFIG_SIZE
-            self._clear_target_rules_table(self._tid_slot(tid))
-            struct.pack_into("<Q", self._mmap, offset + _OFFSET_VERSION, (version + 2) & ~1)
+            self._clear_target_rules_table(tid_slot)
+
+        self._write_versioned(tid, writer)
 
     def close(self) -> None:
         if self._mmap:

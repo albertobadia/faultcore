@@ -134,7 +134,7 @@ pub struct Endpoint {
     pub protocol: u64,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Config {
     pub latency_ns: u64,
     pub jitter_ns: u64,
@@ -216,7 +216,7 @@ impl Config {
     }
 
     pub fn effective_for_send(&self) -> Self {
-        let mut out = self.clone_for_effective();
+        let mut out = self.clone();
         if self.uplink_latency_ns > 0 {
             out.latency_ns = self.uplink_latency_ns;
         }
@@ -236,7 +236,7 @@ impl Config {
     }
 
     pub fn effective_for_recv(&self) -> Self {
-        let mut out = self.clone_for_effective();
+        let mut out = self.clone();
         if self.downlink_latency_ns > 0 {
             out.latency_ns = self.downlink_latency_ns;
         }
@@ -260,7 +260,7 @@ impl Config {
         endpoint: Option<Endpoint>,
         now_monotonic_ns: u64,
     ) -> Option<Self> {
-        let mut out = self.clone_for_effective();
+        let mut out = self.clone();
         if !out.matches_target(endpoint) {
             return None;
         }
@@ -403,55 +403,6 @@ impl Config {
         self.dns_nxdomain_ppm = 0;
     }
 
-    fn clone_for_effective(&self) -> Self {
-        Self {
-            latency_ns: self.latency_ns,
-            jitter_ns: self.jitter_ns,
-            packet_loss_ppm: self.packet_loss_ppm,
-            burst_loss_len: self.burst_loss_len,
-            bandwidth_bps: self.bandwidth_bps,
-            connect_timeout_ms: self.connect_timeout_ms,
-            recv_timeout_ms: self.recv_timeout_ms,
-            uplink_latency_ns: self.uplink_latency_ns,
-            uplink_jitter_ns: self.uplink_jitter_ns,
-            uplink_packet_loss_ppm: self.uplink_packet_loss_ppm,
-            uplink_burst_loss_len: self.uplink_burst_loss_len,
-            uplink_bandwidth_bps: self.uplink_bandwidth_bps,
-            downlink_latency_ns: self.downlink_latency_ns,
-            downlink_jitter_ns: self.downlink_jitter_ns,
-            downlink_packet_loss_ppm: self.downlink_packet_loss_ppm,
-            downlink_burst_loss_len: self.downlink_burst_loss_len,
-            downlink_bandwidth_bps: self.downlink_bandwidth_bps,
-            ge_enabled: self.ge_enabled,
-            ge_p_good_to_bad_ppm: self.ge_p_good_to_bad_ppm,
-            ge_p_bad_to_good_ppm: self.ge_p_bad_to_good_ppm,
-            ge_loss_good_ppm: self.ge_loss_good_ppm,
-            ge_loss_bad_ppm: self.ge_loss_bad_ppm,
-            conn_err_kind: self.conn_err_kind,
-            conn_err_prob_ppm: self.conn_err_prob_ppm,
-            half_open_after_bytes: self.half_open_after_bytes,
-            half_open_err_kind: self.half_open_err_kind,
-            dup_prob_ppm: self.dup_prob_ppm,
-            dup_max_extra: self.dup_max_extra,
-            reorder_prob_ppm: self.reorder_prob_ppm,
-            reorder_max_delay_ns: self.reorder_max_delay_ns,
-            reorder_window: self.reorder_window,
-            dns_delay_ns: self.dns_delay_ns,
-            dns_timeout_ms: self.dns_timeout_ms,
-            dns_nxdomain_ppm: self.dns_nxdomain_ppm,
-            target_enabled: self.target_enabled,
-            target_kind: self.target_kind,
-            target_ipv4: self.target_ipv4,
-            target_prefix_len: self.target_prefix_len,
-            target_port: self.target_port,
-            target_protocol: self.target_protocol,
-            schedule_type: self.schedule_type,
-            schedule_param_a_ns: self.schedule_param_a_ns,
-            schedule_param_b_ns: self.schedule_param_b_ns,
-            schedule_param_c_ns: self.schedule_param_c_ns,
-            schedule_started_monotonic_ns: self.schedule_started_monotonic_ns,
-        }
-    }
 }
 
 fn scale_u64(value: u64, factor: f64) -> u64 {

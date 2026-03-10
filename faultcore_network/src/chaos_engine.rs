@@ -1,8 +1,3 @@
-//! FaultOSI orchestration engine.
-//!
-//! This module owns the strict L1..L7 pipeline execution order and merges all
-//! layer decisions into a single runtime decision for the interceptor.
-
 use crate::{
     Config, Layer,
     layers::{
