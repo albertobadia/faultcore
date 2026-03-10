@@ -82,6 +82,40 @@ class TestDecoratorIntegration:
         assert result == "result"
 
 
+class TestSessionBudgetSerialization:
+    def test_write_session_budget_serializes_all_fields(self):
+        name = f"faultcore_test_{uuid.uuid4().hex}"
+        fd = create_test_shm(name)
+        os.close(fd)
+        writer = SHMWriter(name)
+        tid = 4242
+
+        try:
+            writer.write_session_budget(
+                tid,
+                max_bytes_tx=1024,
+                max_bytes_rx=2048,
+                max_ops=12,
+                max_duration_ms=5000,
+                action=2,
+                budget_timeout_ms=150,
+                error_kind=None,
+            )
+
+            offset = writer._get_offset(tid)
+            assert struct.unpack_from("<Q", writer._mmap, offset + 472)[0] == 1
+            assert struct.unpack_from("<Q", writer._mmap, offset + 480)[0] == 1024
+            assert struct.unpack_from("<Q", writer._mmap, offset + 488)[0] == 2048
+            assert struct.unpack_from("<Q", writer._mmap, offset + 496)[0] == 12
+            assert struct.unpack_from("<Q", writer._mmap, offset + 504)[0] == 5000
+            assert struct.unpack_from("<Q", writer._mmap, offset + 512)[0] == 2
+            assert struct.unpack_from("<Q", writer._mmap, offset + 520)[0] == 150
+            assert struct.unpack_from("<Q", writer._mmap, offset + 528)[0] == 0
+        finally:
+            writer.close()
+            cleanup_test_shm(name)
+
+
 class TestTargetRulesValidation:
     @pytest.mark.parametrize(
         ("rule", "expected"),

@@ -761,6 +761,41 @@ class TestPolicyRegistry:
                     )
                     mock_shm.clear.assert_called_once_with(896)
 
+    def test_register_policy_with_session_budget(self):
+        faultcore.register_policy(
+            "session_budgeted",
+            session_budget={
+                "max_bytes_tx": 1024,
+                "max_ops": 2,
+                "action": "timeout",
+                "budget_timeout_ms": 15,
+            },
+        )
+
+        mock_shm = MagicMock()
+        mock_shm.write_session_budget = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=926):
+
+                @faultcore.apply_policy("session_budgeted")
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_session_budget.assert_called_once_with(
+                    926,
+                    max_bytes_tx=1024,
+                    max_bytes_rx=None,
+                    max_ops=2,
+                    max_duration_ms=None,
+                    action=2,
+                    budget_timeout_ms=15,
+                    error_kind=None,
+                )
+                mock_shm.clear.assert_called_once_with(926)
+
     def test_register_policy_rejects_invalid_values(self):
         with pytest.raises(ValueError):
             faultcore.register_policy("", latency_ms=1)
@@ -804,6 +839,10 @@ class TestPolicyRegistry:
             faultcore.register_policy("bad19", target="tcp://10.1.2.3:443", targets=["10.0.0.1:80"])
         with pytest.raises(ValueError):
             faultcore.register_policy("bad20", targets="invalid")
+        with pytest.raises(ValueError):
+            faultcore.register_policy("bad21", session_budget="invalid")
+        with pytest.raises(ValueError):
+            faultcore.register_policy("bad22", session_budget={"action": "drop"})
 
     def test_registry_introspection_and_unregister(self):
         clear_policies()

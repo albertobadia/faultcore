@@ -69,6 +69,14 @@ pub struct FaultcoreConfig {
     pub target_addr: [u8; 16],
     pub target_hostname: [u8; 32],
     pub target_sni: [u8; 32],
+    pub session_budget_enabled: u64,
+    pub session_max_bytes_tx: u64,
+    pub session_max_bytes_rx: u64,
+    pub session_max_ops: u64,
+    pub session_max_duration_ms: u64,
+    pub session_action: u64,
+    pub session_budget_timeout_ms: u64,
+    pub session_error_kind: u64,
 }
 
 #[repr(C)]
@@ -136,6 +144,9 @@ impl FaultcoreConfig {
             && self.target_protocol <= 2
             && self.target_address_family <= 2
             && self.schedule_type <= 3
+            && self.session_budget_enabled <= 1
+            && self.session_action <= 3
+            && self.session_error_kind <= 3
     }
 
     pub fn into_network_config(self) -> Config {
@@ -184,6 +195,14 @@ impl FaultcoreConfig {
             target_addr: self.target_addr,
             target_hostname: self.target_hostname,
             target_sni: self.target_sni,
+            session_budget_enabled: self.session_budget_enabled,
+            session_max_bytes_tx: self.session_max_bytes_tx,
+            session_max_bytes_rx: self.session_max_bytes_rx,
+            session_max_ops: self.session_max_ops,
+            session_max_duration_ms: self.session_max_duration_ms,
+            session_action: self.session_action,
+            session_budget_timeout_ms: self.session_budget_timeout_ms,
+            session_error_kind: self.session_error_kind,
             ruleset_generation: self.ruleset_generation,
             schedule_type: self.schedule_type,
             schedule_param_a_ns: self.schedule_param_a_ns,

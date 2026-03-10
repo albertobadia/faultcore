@@ -32,7 +32,7 @@ flowchart LR
 
 Diagram focus: top-level SHM memory regions consumed by writer/runtime.
 
-## FaultcoreConfig (472 bytes)
+## FaultcoreConfig (536 bytes)
 - Endianness: little-endian
 - Fixed packed layout
 
@@ -91,10 +91,18 @@ Diagram focus: top-level SHM memory regions consumed by writer/runtime.
 | `target_addr` | 392 | 16 | `[u8;16]` |
 | `target_hostname` | 408 | 32 | `[u8;32]` (tamaño final del ciclo vNext) |
 | `target_sni` | 440 | 32 | `[u8;32]` (tamaño final del ciclo vNext) |
+| `session_budget_enabled` | 472 | 8 | `u64` (`0/1`) |
+| `session_max_bytes_tx` | 480 | 8 | `u64` (`0` deshabilitado) |
+| `session_max_bytes_rx` | 488 | 8 | `u64` (`0` deshabilitado) |
+| `session_max_ops` | 496 | 8 | `u64` (`0` deshabilitado) |
+| `session_max_duration_ms` | 504 | 8 | `u64` (`0` deshabilitado) |
+| `session_action` | 512 | 8 | `u64` (`1=drop`, `2=timeout`, `3=connection_error`) |
+| `session_budget_timeout_ms` | 520 | 8 | `u64` (`action=timeout`) |
+| `session_error_kind` | 528 | 8 | `u64` (`1=reset`, `2=refused`, `3=unreachable`) |
 
 Constants:
 - `FAULTCORE_MAGIC = 0xFACC0DE`
-- `CONFIG_SIZE = 472`
+- `CONFIG_SIZE = 536`
 - `MAX_FDS = 131072`
 - `MAX_TIDS = 65536`
 - `MAX_TARGET_RULES_PER_TID = 8`

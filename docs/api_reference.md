@@ -258,6 +258,7 @@ register_policy(
     target: str | dict[str, Any] | None = None,
     targets: list[str | dict[str, Any]] | None = None,
     schedule: dict[str, Any] | None = None,
+    session_budget: dict[str, Any] | None = None,
 ) -> None
 ```
 
@@ -277,6 +278,11 @@ Notes:
   - `{"kind": "spike", "every_s": ..., "duration_s": ...}`
   - `{"kind": "flapping", "on_s": ..., "off_s": ...}`
   - `{"kind": "ramp", "ramp_s": ...}`
+- `session_budget` mapping accepts:
+  - limits: `max_bytes_tx`, `max_bytes_rx`, `max_ops`, `max_duration_ms` (at least one required)
+  - action: `drop | timeout | connection_error`
+  - `budget_timeout_ms` required when `action="timeout"`
+  - `error` optional (`reset | refused | unreachable`) when `action="connection_error"`
 
 ### `list_policies() -> list[str]`
 

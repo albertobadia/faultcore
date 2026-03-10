@@ -405,3 +405,67 @@ def build_schedule_profile(
         return {"schedule_type": 1, "param_a_ns": ramp_ns, "param_b_ns": 0, "param_c_ns": 0}
 
     raise ValueError("schedule kind must be one of: ramp, spike, flapping")
+
+
+def build_session_budget_profile(
+    *,
+    max_bytes_tx: int | None = None,
+    max_bytes_rx: int | None = None,
+    max_ops: int | None = None,
+    max_duration_ms: int | None = None,
+    action: str = "drop",
+    budget_timeout_ms: int | None = None,
+    error: str | None = None,
+) -> dict[str, int]:
+    profile: dict[str, int] = {}
+
+    if max_bytes_tx is not None:
+        max_bytes_tx = int(max_bytes_tx)
+        if max_bytes_tx <= 0:
+            raise ValueError("session_budget max_bytes_tx must be > 0")
+        profile["max_bytes_tx"] = max_bytes_tx
+    if max_bytes_rx is not None:
+        max_bytes_rx = int(max_bytes_rx)
+        if max_bytes_rx <= 0:
+            raise ValueError("session_budget max_bytes_rx must be > 0")
+        profile["max_bytes_rx"] = max_bytes_rx
+    if max_ops is not None:
+        max_ops = int(max_ops)
+        if max_ops <= 0:
+            raise ValueError("session_budget max_ops must be > 0")
+        profile["max_ops"] = max_ops
+    if max_duration_ms is not None:
+        max_duration_ms = int(max_duration_ms)
+        if max_duration_ms <= 0:
+            raise ValueError("session_budget max_duration_ms must be > 0")
+        profile["max_duration_ms"] = max_duration_ms
+
+    if not profile:
+        raise ValueError("session_budget requires at least one limit")
+
+    normalized_action = action.strip().lower()
+    if normalized_action == "drop":
+        profile["action"] = 1
+        if budget_timeout_ms is not None:
+            raise ValueError("session_budget budget_timeout_ms only applies to action=timeout")
+        if error is not None:
+            raise ValueError("session_budget error only applies to action=connection_error")
+    elif normalized_action == "timeout":
+        profile["action"] = 2
+        if budget_timeout_ms is None:
+            raise ValueError("session_budget budget_timeout_ms is required for action=timeout")
+        timeout_ms = int(budget_timeout_ms)
+        if timeout_ms <= 0:
+            raise ValueError("session_budget budget_timeout_ms must be > 0")
+        profile["budget_timeout_ms"] = timeout_ms
+        if error is not None:
+            raise ValueError("session_budget error only applies to action=connection_error")
+    elif normalized_action == "connection_error":
+        profile["action"] = 3
+        profile["error_kind"] = parse_error_kind(error or "reset")
+        if budget_timeout_ms is not None:
+            raise ValueError("session_budget budget_timeout_ms only applies to action=timeout")
+    else:
+        raise ValueError("session_budget action must be one of: drop, timeout, connection_error")
+
+    return profile

@@ -124,3 +124,15 @@ def apply_fault_profiles(shm: Any, tid: int, wrapper: Any, *, started_monotonic_
             param_c_ns=wrapper._schedule_profile.get("param_c_ns", 0),
             started_monotonic_ns=started_monotonic_ns,
         )
+
+    if wrapper._session_budget_profile:
+        shm.write_session_budget(
+            tid,
+            max_bytes_tx=wrapper._session_budget_profile.get("max_bytes_tx"),
+            max_bytes_rx=wrapper._session_budget_profile.get("max_bytes_rx"),
+            max_ops=wrapper._session_budget_profile.get("max_ops"),
+            max_duration_ms=wrapper._session_budget_profile.get("max_duration_ms"),
+            action=wrapper._session_budget_profile.get("action", 0),
+            budget_timeout_ms=wrapper._session_budget_profile.get("budget_timeout_ms"),
+            error_kind=wrapper._session_budget_profile.get("error_kind"),
+        )

@@ -192,6 +192,14 @@ pub struct Config {
     pub target_addr: [u8; 16],
     pub target_hostname: [u8; 32],
     pub target_sni: [u8; 32],
+    pub session_budget_enabled: u64,
+    pub session_max_bytes_tx: u64,
+    pub session_max_bytes_rx: u64,
+    pub session_max_ops: u64,
+    pub session_max_duration_ms: u64,
+    pub session_action: u64,
+    pub session_budget_timeout_ms: u64,
+    pub session_error_kind: u64,
     pub ruleset_generation: u64,
     pub schedule_type: u64,
     pub schedule_param_a_ns: u64,
@@ -229,6 +237,7 @@ impl Config {
             || self.dns_timeout_ms > 0
             || self.dns_nxdomain_ppm > 0
             || self.target_enabled > 0
+            || self.session_budget_enabled > 0
             || self.schedule_type > 0
     }
 

@@ -1,6 +1,6 @@
 import pytest
 
-from faultcore.profile_parsers import build_target_profile
+from faultcore.profile_parsers import build_session_budget_profile, build_target_profile
 
 
 def test_build_target_profile_includes_unified_fields_for_ipv4_host():
@@ -116,3 +116,40 @@ def test_build_target_profile_rejects_hostname_and_sni_together():
 def test_build_target_profile_rejects_mixed_ip_and_semantic_targeting():
     with pytest.raises(ValueError, match=r"(?i)mix host/cidr with hostname/sni"):
         build_target_profile(host="10.1.2.3", hostname="api.foo.com")
+
+
+def test_build_session_budget_profile_accepts_timeout_action():
+    profile = build_session_budget_profile(
+        max_bytes_tx=100,
+        max_ops=2,
+        action="timeout",
+        budget_timeout_ms=25,
+    )
+    assert profile == {
+        "max_bytes_tx": 100,
+        "max_ops": 2,
+        "action": 2,
+        "budget_timeout_ms": 25,
+    }
+
+
+def test_build_session_budget_profile_accepts_connection_error_action():
+    profile = build_session_budget_profile(
+        max_duration_ms=1000,
+        action="connection_error",
+        error="unreachable",
+    )
+    assert profile == {
+        "max_duration_ms": 1000,
+        "action": 3,
+        "error_kind": 3,
+    }
+
+
+def test_build_session_budget_profile_rejects_invalid_combinations():
+    with pytest.raises(ValueError, match=r"(?i)at least one limit"):
+        build_session_budget_profile(action="drop")
+    with pytest.raises(ValueError, match=r"(?i)required.*action=timeout"):
+        build_session_budget_profile(max_ops=1, action="timeout")
+    with pytest.raises(ValueError, match=r"(?i)only applies to action=timeout"):
+        build_session_budget_profile(max_ops=1, action="drop", budget_timeout_ms=5)

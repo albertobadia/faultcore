@@ -86,7 +86,7 @@ Diagram focus: runtime interaction order from Python write to syscall result.
 - `layers/l2_qos.rs`: bandwidth/token-bucket shaping.
 - `layers/l3_routing.rs`: jitter/routing variance.
 - `layers/l4_transport.rs`: connect/recv timeouts and transport-level error injection.
-- `layers/l5_session.rs`: session-level placeholder.
+- `layers/l5_session.rs`: session-level budget pre-checks (`max_bytes_tx/rx`, `max_ops`, `max_duration_ms`) with terminal actions.
 - `layers/l6_presentation.rs`: presentation-level placeholder.
 - `layers/l7_resolver.rs`: DNS delay/timeout/NXDOMAIN decisions.
 - `chaos_engine.rs`: strict L1..L7 orchestration and stage metrics.

@@ -266,6 +266,13 @@ impl ChaosEngine {
             Direction::Uplink => config.effective_for_send(),
             Direction::Downlink => config.effective_for_recv(),
         };
+        let session_precheck = self
+            .l5
+            .precheck(fd, bytes, direction, &effective, crate::monotonic_now_ns());
+        if !matches!(session_precheck, LayerDecision::Continue) {
+            self.metrics[Self::stage_index(LayerStage::L5)].record_decision(&session_precheck);
+            return session_precheck;
+        }
         let operation = match direction {
             Direction::Uplink => Operation::Send,
             Direction::Downlink => Operation::Recv,
@@ -319,6 +326,7 @@ impl ChaosEngine {
 
     pub fn clear_fd_state(&self, fd: i32) {
         self.l4.clear_fd_state(fd);
+        self.l5.clear_fd_state(fd);
     }
 }
 
@@ -437,5 +445,27 @@ mod tests {
 
         let metrics = engine.metrics_snapshot();
         assert!(metrics[6].1.skipped_count > 0);
+    }
+
+    #[test]
+    fn session_budget_precheck_runs_before_fault_pipeline() {
+        let engine = ChaosEngine::new();
+        let cfg = Config {
+            session_budget_enabled: 1,
+            session_max_ops: 1,
+            session_action: 2,
+            session_budget_timeout_ms: 7,
+            packet_loss_ppm: 1_000_000,
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            engine.evaluate_stream_pre(55, &cfg, 1, Direction::Uplink),
+            LayerDecision::Drop
+        ));
+        assert!(matches!(
+            engine.evaluate_stream_pre(55, &cfg, 1, Direction::Uplink),
+            LayerDecision::TimeoutMs(7)
+        ));
     }
 }

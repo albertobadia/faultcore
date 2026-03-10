@@ -419,6 +419,14 @@ mod tests {
             target_addr: [0; 16],
             target_hostname: [0; 32],
             target_sni: [0; 32],
+            session_budget_enabled: 0,
+            session_max_bytes_tx: 0,
+            session_max_bytes_rx: 0,
+            session_max_ops: 0,
+            session_max_duration_ms: 0,
+            session_action: 0,
+            session_budget_timeout_ms: 0,
+            session_error_kind: 0,
         };
         assert!(config.is_valid());
     }
@@ -479,6 +487,14 @@ mod tests {
             target_addr: [0; 16],
             target_hostname: [0; 32],
             target_sni: [0; 32],
+            session_budget_enabled: 0,
+            session_max_bytes_tx: 0,
+            session_max_bytes_rx: 0,
+            session_max_ops: 0,
+            session_max_duration_ms: 0,
+            session_action: 0,
+            session_budget_timeout_ms: 0,
+            session_error_kind: 0,
         };
         assert!(!config.is_valid());
     }
@@ -584,6 +600,14 @@ mod tests {
                 target_addr: [0; 16],
                 target_hostname: [0; 32],
                 target_sni: [0; 32],
+                session_budget_enabled: 0,
+                session_max_bytes_tx: 0,
+                session_max_bytes_rx: 0,
+                session_max_ops: 0,
+                session_max_duration_ms: 0,
+                session_action: 0,
+                session_budget_timeout_ms: 0,
+                session_error_kind: 0,
             });
         }
 

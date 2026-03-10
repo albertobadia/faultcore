@@ -99,6 +99,7 @@ class FaultWrapper:
         target_profile: dict[str, Any] | None = None,
         target_profiles: list[dict[str, Any]] | None = None,
         schedule_profile: dict[str, int] | None = None,
+        session_budget_profile: dict[str, int] | None = None,
     ):
         functools.update_wrapper(self, func)
         self._func = func
@@ -119,6 +120,7 @@ class FaultWrapper:
         self._target_profile = target_profile or {}
         self._target_profiles = target_profiles or []
         self._schedule_profile = schedule_profile or {}
+        self._session_budget_profile = session_budget_profile or {}
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._func, name)
@@ -200,7 +202,8 @@ class FaultWrapper:
             f"packet_reorder={self._packet_reorder_profile}, "
             f"dns={self._dns_profile}, "
             f"target={self._target_profile}, "
-            f"schedule={self._schedule_profile}) for {self._func!r}>"
+            f"schedule={self._schedule_profile}, "
+            f"session_budget={self._session_budget_profile}) for {self._func!r}>"
         )
 
 
@@ -513,6 +516,7 @@ def apply_policy(_key: str):
             target_profile=policy.get("target_profile"),
             target_profiles=policy.get("target_profiles"),
             schedule_profile=policy.get("schedule_profile"),
+            session_budget_profile=policy.get("session_budget_profile"),
         )
 
     return decorator

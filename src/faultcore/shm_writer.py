@@ -17,7 +17,7 @@ MAX_FDS = 131072
 MAX_TIDS = 65536
 MAX_POLICIES = 1024
 MAX_TARGET_RULES_PER_TID = 8
-CONFIG_SIZE = 472
+CONFIG_SIZE = 536
 POLICY_STATE_SIZE = 56
 TARGET_RULE_SIZE = 152
 SHM_SIZE = (
@@ -89,6 +89,14 @@ _OFFSET_TARGET_ADDRESS_FAMILY = 384
 _OFFSET_TARGET_ADDR = 392
 _OFFSET_TARGET_HOSTNAME = 408
 _OFFSET_TARGET_SNI = 440
+_OFFSET_SESSION_BUDGET_ENABLED = 472
+_OFFSET_SESSION_MAX_BYTES_TX = 480
+_OFFSET_SESSION_MAX_BYTES_RX = 488
+_OFFSET_SESSION_MAX_OPS = 496
+_OFFSET_SESSION_MAX_DURATION_MS = 504
+_OFFSET_SESSION_ACTION = 512
+_OFFSET_SESSION_BUDGET_TIMEOUT_MS = 520
+_OFFSET_SESSION_ERROR_KIND = 528
 
 _UPLINK_DIRECTION_OFFSETS: DirectionOffsets = (
     _OFFSET_UPLINK_LATENCY_NS,
@@ -550,6 +558,47 @@ class SHMWriter:
                 (_OFFSET_SCHEDULE_PARAM_B, param_b_ns),
                 (_OFFSET_SCHEDULE_PARAM_C, param_c_ns),
                 (_OFFSET_SCHEDULE_STARTED_MONOTONIC_NS, started_monotonic_ns),
+            ),
+        )
+
+    def write_session_budget(
+        self,
+        tid: int,
+        *,
+        max_bytes_tx: int | None = None,
+        max_bytes_rx: int | None = None,
+        max_ops: int | None = None,
+        max_duration_ms: int | None = None,
+        action: int,
+        budget_timeout_ms: int | None = None,
+        error_kind: int | None = None,
+    ) -> None:
+        if action < 1 or action > 3:
+            raise ValueError("session_budget action must be between 1 and 3")
+        if budget_timeout_ms is not None and int(budget_timeout_ms) <= 0:
+            raise ValueError("session_budget budget_timeout_ms must be > 0")
+        if error_kind is not None and (int(error_kind) < 1 or int(error_kind) > 3):
+            raise ValueError("session_budget error_kind must be between 1 and 3")
+        if max_bytes_tx is not None and int(max_bytes_tx) <= 0:
+            raise ValueError("session_budget max_bytes_tx must be > 0")
+        if max_bytes_rx is not None and int(max_bytes_rx) <= 0:
+            raise ValueError("session_budget max_bytes_rx must be > 0")
+        if max_ops is not None and int(max_ops) <= 0:
+            raise ValueError("session_budget max_ops must be > 0")
+        if max_duration_ms is not None and int(max_duration_ms) <= 0:
+            raise ValueError("session_budget max_duration_ms must be > 0")
+
+        self._write_fields(
+            tid,
+            (
+                (_OFFSET_SESSION_BUDGET_ENABLED, 1),
+                (_OFFSET_SESSION_MAX_BYTES_TX, int(max_bytes_tx or 0)),
+                (_OFFSET_SESSION_MAX_BYTES_RX, int(max_bytes_rx or 0)),
+                (_OFFSET_SESSION_MAX_OPS, int(max_ops or 0)),
+                (_OFFSET_SESSION_MAX_DURATION_MS, int(max_duration_ms or 0)),
+                (_OFFSET_SESSION_ACTION, int(action)),
+                (_OFFSET_SESSION_BUDGET_TIMEOUT_MS, int(budget_timeout_ms or 0)),
+                (_OFFSET_SESSION_ERROR_KIND, int(error_kind or 0)),
             ),
         )
 

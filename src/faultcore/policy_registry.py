@@ -14,6 +14,7 @@ from faultcore.profile_parsers import (
     build_packet_duplicate_profile,
     build_packet_reorder_profile,
     build_schedule_profile,
+    build_session_budget_profile,
     build_target_profile,
     parse_packet_loss,
     parse_rate,
@@ -49,6 +50,7 @@ _REGISTERABLE_FIELDS = (
     "target",
     "targets",
     "schedule",
+    "session_budget",
 )
 
 
@@ -159,6 +161,7 @@ def register_policy(
     target: str | dict[str, Any] | None = None,
     targets: list[str | dict[str, Any]] | None = None,
     schedule: dict[str, Any] | None = None,
+    session_budget: dict[str, Any] | None = None,
 ) -> None:
     if not name:
         raise ValueError("policy name must be non-empty")
@@ -245,6 +248,17 @@ def register_policy(
             on_s=schedule.get("on_s"),
             off_s=schedule.get("off_s"),
             ramp_s=schedule.get("ramp_s"),
+        )
+    if session_budget is not None:
+        session_budget = _require_mapping(session_budget, "session_budget")
+        policy["session_budget_profile"] = build_session_budget_profile(
+            max_bytes_tx=session_budget.get("max_bytes_tx"),
+            max_bytes_rx=session_budget.get("max_bytes_rx"),
+            max_ops=session_budget.get("max_ops"),
+            max_duration_ms=session_budget.get("max_duration_ms"),
+            action=session_budget.get("action", "drop"),
+            budget_timeout_ms=session_budget.get("budget_timeout_ms"),
+            error=session_budget.get("error"),
         )
     with _POLICY_LOCK:
         _POLICY_REGISTRY[name] = policy
