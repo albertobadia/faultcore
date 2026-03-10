@@ -180,6 +180,32 @@ def parse_target_protocol(protocol: str | None) -> int:
     raise ValueError("target protocol must be one of: tcp, udp")
 
 
+def _parse_target_host_port(raw: str) -> tuple[str, int]:
+    if not raw:
+        raise ValueError("target must be non-empty")
+
+    if raw.startswith("["):
+        end = raw.find("]")
+        if end == -1:
+            raise ValueError("target IPv6 host must close bracket with ']'")
+        host = raw[1:end]
+        tail = raw[end + 1 :]
+        if not tail:
+            return host, 0
+        if not tail.startswith(":"):
+            raise ValueError("target must use [host]:port format for bracketed hosts")
+        return host, int(tail[1:])
+
+    colon_count = raw.count(":")
+    if colon_count > 1:
+        # Keep string-target parsing unambiguous: IPv6 + port requires brackets.
+        raise ValueError("target IPv6 must use brackets in string format, e.g. tcp://[2001:db8::1]:443")
+    if colon_count == 1:
+        host, port_str = raw.rsplit(":", 1)
+        return host, int(port_str)
+    return raw, 0
+
+
 def build_target_profile(
     *,
     target: str | None = None,
@@ -188,7 +214,7 @@ def build_target_profile(
     port: int | None = None,
     protocol: str | None = None,
     priority: int | None = None,
-) -> dict[str, int]:
+) -> dict[str, int | list[int]]:
     parsed_protocol = parse_target_protocol(protocol)
     parsed_host = host
     parsed_port = int(port) if port is not None else 0
@@ -207,13 +233,12 @@ def build_target_profile(
         if "/" in raw:
             parsed_cidr = raw
         else:
-            if ":" in raw:
-                host_part, port_part = raw.rsplit(":", 1)
-                raw = host_part
-                if parsed_port != 0 and parsed_port != int(port_part):
-                    raise ValueError("target port conflicts with port parameter")
-                parsed_port = int(port_part)
-            parsed_host = raw
+            host_part, port_from_target = _parse_target_host_port(raw)
+            if parsed_port != 0 and port_from_target != 0 and parsed_port != port_from_target:
+                raise ValueError("target port conflicts with port parameter")
+            if port_from_target != 0:
+                parsed_port = port_from_target
+            parsed_host = host_part
 
     if parsed_port < 0 or parsed_port > 65535:
         raise ValueError("target port must be between 0 and 65535")
@@ -228,28 +253,60 @@ def build_target_profile(
 
     if parsed_host:
         try:
-            ipv4 = int(ipaddress.IPv4Address(parsed_host))
-        except ipaddress.AddressValueError as exc:
-            raise ValueError("target host must be a valid IPv4 address (IPv6 is not supported)") from exc
-        return {
+            address = ipaddress.ip_address(parsed_host)
+        except ValueError as exc:
+            raise ValueError("target host must be a valid IPv4 or IPv6 address") from exc
+        if isinstance(address, ipaddress.IPv4Address):
+            address_family = 1
+            ipv4 = int(address)
+            prefix_len = 32
+        else:
+            address_family = 2
+            ipv4 = 0
+            prefix_len = 128
+        addr = list(address.packed)
+        if len(addr) < 16:
+            addr = addr + ([0] * (16 - len(addr)))
+        profile = {
             "enabled": 1,
             "kind": 1,
             "ipv4": ipv4,
-            "prefix_len": 32,
+            "prefix_len": prefix_len,
             "port": parsed_port,
             "protocol": parsed_protocol,
             "priority": parsed_priority,
+            "address_family": address_family,
+            "addr": addr,
         }
+        return profile
 
-    network = ipaddress.IPv4Network(parsed_cidr, strict=False)
+    try:
+        network = ipaddress.ip_network(parsed_cidr, strict=False)
+    except ValueError as exc:
+        raise ValueError("target cidr must be a valid IPv4 or IPv6 CIDR") from exc
+    if isinstance(network, ipaddress.IPv4Network):
+        address_family = 1
+        ipv4 = int(network.network_address)
+        max_prefix_len = 32
+    else:
+        address_family = 2
+        ipv4 = 0
+        max_prefix_len = 128
+    addr = list(network.network_address.packed)
+    if len(addr) < 16:
+        addr = addr + ([0] * (16 - len(addr)))
+    if network.prefixlen < 0 or network.prefixlen > max_prefix_len:
+        raise ValueError(f"target prefix_len must be between 0 and {max_prefix_len}")
     return {
         "enabled": 1,
         "kind": 2,
-        "ipv4": int(network.network_address),
+        "ipv4": ipv4,
         "prefix_len": int(network.prefixlen),
         "port": parsed_port,
         "protocol": parsed_protocol,
         "priority": parsed_priority,
+        "address_family": address_family,
+        "addr": addr,
     }
 
 

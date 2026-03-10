@@ -2,7 +2,8 @@ import mmap
 import os
 import struct
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from typing import Any
 
 FAULTCORE_MAGIC = 0xFACC0DE
 MAX_FDS = 131072
@@ -173,9 +174,29 @@ class SHMWriter:
             b"\x00" * _TARGET_RULES_REGION_SIZE
         )
 
-    def _write_target_rule_row(self, target_rules_offset: int, idx: int, rule: dict[str, int]) -> None:
+    def _addr16_from_rule(self, rule: dict[str, Any], idx: int) -> bytes:
+        raw = rule.get("addr")
+        if raw is None:
+            return b"\x00" * 16
+        if isinstance(raw, (bytes, bytearray)):
+            if len(raw) != 16:
+                raise ValueError(f"targets[{idx}].addr must contain exactly 16 bytes")
+            return bytes(raw)
+        if isinstance(raw, Sequence):
+            values = list(raw)
+            if len(values) != 16:
+                raise ValueError(f"targets[{idx}].addr must contain exactly 16 bytes")
+            try:
+                out = bytes(int(v) & 0xFF for v in values)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"targets[{idx}].addr must contain integer byte values") from exc
+            return out
+        raise ValueError(f"targets[{idx}].addr must be bytes-like or a 16-item sequence")
+
+    def _write_target_rule_row(self, target_rules_offset: int, idx: int, rule: dict[str, Any]) -> None:
         base = target_rules_offset + (idx * TARGET_RULE_SIZE)
         self._mmap[base : base + TARGET_RULE_SIZE] = b"\x00" * TARGET_RULE_SIZE
+        addr = self._addr16_from_rule(rule, idx)
         self._pack_u64_fields(
             base,
             (
@@ -190,8 +211,10 @@ class SHMWriter:
                 (64, int(rule.get("address_family", 0))),
             ),
         )
+        self._mmap[base + 72 : base + 88] = addr
 
-    def _write_single_target_fields(self, offset: int, rule: dict[str, int]) -> None:
+    def _write_single_target_fields(self, offset: int, rule: dict[str, Any], idx: int = 0) -> None:
+        addr = self._addr16_from_rule(rule, idx)
         self._pack_u64_fields(
             offset,
             (
@@ -200,8 +223,10 @@ class SHMWriter:
                 (_OFFSET_TARGET_PREFIX_LEN, int(rule.get("prefix_len", 0))),
                 (_OFFSET_TARGET_PORT, int(rule.get("port", 0))),
                 (_OFFSET_TARGET_PROTOCOL, int(rule.get("protocol", 0))),
+                (_OFFSET_TARGET_ADDRESS_FAMILY, int(rule.get("address_family", 0))),
             ),
         )
+        self._mmap[offset + _OFFSET_TARGET_ADDR : offset + _OFFSET_TARGET_ADDR + 16] = addr
 
     def _clear_single_target_fields(self, offset: int) -> None:
         self._pack_u64_fields(
@@ -212,8 +237,10 @@ class SHMWriter:
                 (_OFFSET_TARGET_PREFIX_LEN, 0),
                 (_OFFSET_TARGET_PORT, 0),
                 (_OFFSET_TARGET_PROTOCOL, 0),
+                (_OFFSET_TARGET_ADDRESS_FAMILY, 0),
             ),
         )
+        self._mmap[offset + _OFFSET_TARGET_ADDR : offset + _OFFSET_TARGET_ADDR + 16] = b"\x00" * 16
 
     def _write_fields(self, tid: int, fields: tuple[U64Field, ...]) -> None:
         def writer(offset: int) -> None:
@@ -277,13 +304,13 @@ class SHMWriter:
 
         self._write_versioned(tid, writer)
 
-    def _rule_int(self, rule: dict[str, int], key: str, default: int, idx: int) -> int:
+    def _rule_int(self, rule: dict[str, Any], key: str, default: int, idx: int) -> int:
         try:
             return int(rule.get(key, default))
         except (TypeError, ValueError) as exc:
             raise ValueError(f"targets[{idx}].{key} must be an integer") from exc
 
-    def _validate_target_rule(self, rule: dict[str, int], idx: int) -> None:
+    def _validate_target_rule(self, rule: dict[str, Any], idx: int) -> None:
         enabled = self._rule_int(rule, "enabled", 0, idx)
         if enabled not in (0, 1):
             raise ValueError(f"targets[{idx}].enabled must be 0 or 1")
@@ -296,9 +323,14 @@ class SHMWriter:
         if kind not in (0, 1, 2):
             raise ValueError(f"targets[{idx}].kind must be one of 0, 1, 2")
 
+        address_family = self._rule_int(rule, "address_family", 0, idx)
+        if address_family not in (0, 1, 2):
+            raise ValueError(f"targets[{idx}].address_family must be one of 0, 1, 2")
+
         prefix_len = self._rule_int(rule, "prefix_len", 0, idx)
-        if not 0 <= prefix_len <= 32:
-            raise ValueError(f"targets[{idx}].prefix_len must be between 0 and 32")
+        max_prefix = 128 if address_family == 2 else 32
+        if not 0 <= prefix_len <= max_prefix:
+            raise ValueError(f"targets[{idx}].prefix_len must be between 0 and {max_prefix}")
 
         port = self._rule_int(rule, "port", 0, idx)
         if not 0 <= port <= 65535:
@@ -311,10 +343,7 @@ class SHMWriter:
         ipv4 = self._rule_int(rule, "ipv4", 0, idx)
         if not 0 <= ipv4 <= _U32_MAX:
             raise ValueError(f"targets[{idx}].ipv4 must be a valid u32 value")
-
-        address_family = self._rule_int(rule, "address_family", 0, idx)
-        if address_family not in (0, 1, 2):
-            raise ValueError(f"targets[{idx}].address_family must be one of 0, 1, 2")
+        self._addr16_from_rule(rule, idx)
 
     def write_latency(self, tid: int, latency_ms: int) -> None:
         self._write_fields(tid, ((_OFFSET_LATENCY_NS, self._ms_to_ns(latency_ms)),))
@@ -475,8 +504,13 @@ class SHMWriter:
         prefix_len: int,
         port: int,
         protocol: int,
+        address_family: int = 0,
+        addr: bytes | bytearray | Sequence[int] | None = None,
     ) -> None:
         def writer(offset: int) -> None:
+            addr_value = b"\x00" * 16
+            if addr is not None:
+                addr_value = self._addr16_from_rule({"addr": addr}, 0)
             self._pack_u64_fields(
                 offset,
                 (
@@ -486,13 +520,15 @@ class SHMWriter:
                     (_OFFSET_TARGET_PREFIX_LEN, prefix_len),
                     (_OFFSET_TARGET_PORT, port),
                     (_OFFSET_TARGET_PROTOCOL, protocol),
+                    (_OFFSET_TARGET_ADDRESS_FAMILY, address_family),
                 ),
             )
+            self._mmap[offset + _OFFSET_TARGET_ADDR : offset + _OFFSET_TARGET_ADDR + 16] = addr_value
             self._bump_ruleset_generation(offset)
 
         self._write_versioned(tid, writer)
 
-    def write_targets(self, tid: int, rules: list[dict[str, int]]) -> None:
+    def write_targets(self, tid: int, rules: list[dict[str, Any]]) -> None:
         if not self._is_available():
             return
         rule_count = len(rules)
@@ -513,7 +549,7 @@ class SHMWriter:
 
             struct.pack_into("<Q", self._mmap, offset + _OFFSET_TARGET_ENABLED, rule_count)
             if rule_count == 1:
-                self._write_single_target_fields(offset, rules[0])
+                self._write_single_target_fields(offset, rules[0], idx=0)
             else:
                 self._clear_single_target_fields(offset)
             self._bump_ruleset_generation(offset)

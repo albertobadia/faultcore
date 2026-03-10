@@ -95,8 +95,8 @@ class FaultWrapper:
         packet_duplicate_profile: dict[str, int] | None = None,
         packet_reorder_profile: dict[str, int] | None = None,
         dns_profile: dict[str, int] | None = None,
-        target_profile: dict[str, int] | None = None,
-        target_profiles: list[dict[str, int]] | None = None,
+        target_profile: dict[str, Any] | None = None,
+        target_profiles: list[dict[str, Any]] | None = None,
         schedule_profile: dict[str, int] | None = None,
     ):
         functools.update_wrapper(self, func)
@@ -230,6 +230,8 @@ class FaultWrapper:
                     prefix_len=self._target_profile.get("prefix_len", 0),
                     port=self._target_profile.get("port", 0),
                     protocol=self._target_profile.get("protocol", 0),
+                    address_family=self._target_profile.get("address_family", 0),
+                    addr=self._target_profile.get("addr"),
                 )
 
             if self._schedule_profile:

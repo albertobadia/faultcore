@@ -620,12 +620,36 @@ class TestTargetDecorators:
                     prefix_len=32,
                     port=443,
                     protocol=1,
+                    address_family=1,
+                    addr=[10, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                 )
                 mock_shm.clear.assert_called_once_with(977)
 
-    def test_for_target_ipv6_reports_explicit_ipv4_only_error(self):
-        with pytest.raises(ValueError, match=r"(?i)ipv4"):
-            faultcore.for_target("tcp://[::1]:443")
+    def test_for_target_ipv6_is_accepted(self):
+        mock_shm = MagicMock()
+        mock_shm.write_target = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=978):
+
+                @faultcore.for_target("tcp://[::1]:443")
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_target.assert_called_once_with(
+                    978,
+                    enabled=True,
+                    kind=1,
+                    ipv4=0,
+                    prefix_len=128,
+                    port=443,
+                    protocol=1,
+                    address_family=2,
+                    addr=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+                )
+                mock_shm.clear.assert_called_once_with(978)
 
 
 class TestTemporalProfiles:
@@ -945,6 +969,8 @@ class TestPolicyRegistry:
                     prefix_len=8,
                     port=53,
                     protocol=2,
+                    address_family=1,
+                    addr=[10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                 )
                 mock_shm.clear.assert_called_once_with(895)
 
@@ -983,6 +1009,8 @@ class TestPolicyRegistry:
                             "port": 443,
                             "protocol": 1,
                             "priority": 200,
+                            "address_family": 1,
+                            "addr": [10, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                         },
                         {
                             "enabled": 1,
@@ -992,6 +1020,8 @@ class TestPolicyRegistry:
                             "port": 53,
                             "protocol": 2,
                             "priority": 10,
+                            "address_family": 1,
+                            "addr": [10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                         },
                     ],
                 )
@@ -1032,6 +1062,8 @@ class TestPolicyRegistry:
                             "port": 443,
                             "protocol": 1,
                             "priority": 100,
+                            "address_family": 1,
+                            "addr": [10, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                         },
                         {
                             "enabled": 1,
@@ -1041,6 +1073,8 @@ class TestPolicyRegistry:
                             "port": 443,
                             "protocol": 1,
                             "priority": 100,
+                            "address_family": 1,
+                            "addr": [10, 1, 2, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                         },
                     ],
                 )
@@ -1081,6 +1115,8 @@ class TestPolicyRegistry:
                             "port": 443,
                             "protocol": 1,
                             "priority": 200,
+                            "address_family": 1,
+                            "addr": [10, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                         },
                         {
                             "enabled": 1,
@@ -1090,6 +1126,8 @@ class TestPolicyRegistry:
                             "port": 0,
                             "protocol": 0,
                             "priority": 100,
+                            "address_family": 1,
+                            "addr": [10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                         },
                     ],
                 )

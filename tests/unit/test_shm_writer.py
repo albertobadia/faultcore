@@ -147,6 +147,42 @@ class TestTargetRulesValidation:
             writer.close()
             cleanup_test_shm(name)
 
+    def test_write_targets_serializes_address_family_and_addr(self):
+        name = f"faultcore_test_{uuid.uuid4().hex}"
+        fd = create_test_shm(name)
+        os.close(fd)
+        writer = SHMWriter(name)
+        tid = 4242
+        addr = [0x20, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10]
+
+        try:
+            rule = {
+                "enabled": 1,
+                "kind": 1,
+                "ipv4": 0,
+                "prefix_len": 128,
+                "port": 443,
+                "protocol": 1,
+                "address_family": 2,
+                "addr": addr,
+            }
+            writer.write_targets(tid, [rule])
+
+            cfg_offset = writer._get_offset(tid)
+            target_addr_family = struct.unpack_from("<Q", writer._mmap, cfg_offset + 384)[0]
+            target_addr = bytes(writer._mmap[cfg_offset + 392 : cfg_offset + 408])
+            assert target_addr_family == 2
+            assert target_addr == bytes(addr)
+
+            rules_offset = writer._target_rules_offset(tid)
+            rule_addr_family = struct.unpack_from("<Q", writer._mmap, rules_offset + 64)[0]
+            rule_addr = bytes(writer._mmap[rules_offset + 72 : rules_offset + 88])
+            assert rule_addr_family == 2
+            assert rule_addr == bytes(addr)
+        finally:
+            writer.close()
+            cleanup_test_shm(name)
+
     def test_write_targets_rejects_non_mapping_rule(self):
         name = f"faultcore_test_{uuid.uuid4().hex}"
         fd = create_test_shm(name)

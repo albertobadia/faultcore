@@ -172,7 +172,7 @@ def register_policy(
     if targets is not None:
         if not isinstance(targets, list) or not targets:
             raise ValueError("targets must be a non-empty list when provided")
-        built_rules: list[dict[str, int]] = []
+        built_rules: list[dict[str, Any]] = []
         for entry in targets:
             if isinstance(entry, str):
                 built_rules.append(build_target_profile(target=entry))
