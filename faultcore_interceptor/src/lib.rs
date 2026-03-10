@@ -684,190 +684,192 @@ pub extern "C" fn faultcore_metrics_reset() {
     reset_global_fault_osi_metrics();
 }
 
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    
     #[test]
     fn connect_timeout_maps_to_etimedout() {
-        let directive =
-            global_interceptor_runtime().map_connect_decision(LayerDecision::TimeoutMs(10));
-        assert_eq!(
-            directive,
-            faultcore_network::ConnectDirective::ReturnErrno {
-                errno: libc::ETIMEDOUT,
-                ret: -1,
-            }
-        );
+       let directive =
+           global_interceptor_runtime().map_connect_decision(LayerDecision::TimeoutMs(10));
+       assert_eq!(
+           directive,
+           faultcore_network::ConnectDirective::ReturnErrno {
+               errno: libc::ETIMEDOUT,
+               ret: -1,
+           }
+       );
     }
-
+    
     #[test]
     fn connect_error_kind_maps_to_errno() {
-        let directive = global_interceptor_runtime()
-            .map_connect_decision(LayerDecision::ConnectionErrorKind(1));
-        assert_eq!(
-            directive,
-            faultcore_network::ConnectDirective::ReturnErrno {
-                errno: libc::ECONNRESET,
-                ret: -1,
-            }
-        );
+       let directive = global_interceptor_runtime()
+           .map_connect_decision(LayerDecision::ConnectionErrorKind(1));
+       assert_eq!(
+           directive,
+           faultcore_network::ConnectDirective::ReturnErrno {
+               errno: libc::ECONNRESET,
+               ret: -1,
+           }
+       );
     }
-
+    
     #[test]
     fn stream_drop_maps_to_errno() {
-        let directive =
-            global_interceptor_runtime().map_stream_decision(1, LayerDecision::Drop, false);
-        assert_eq!(
-            directive,
-            faultcore_network::StreamDirective::ReturnErrno {
-                errno: libc::EIO,
-                ret: -1,
-            }
-        );
+       let directive =
+           global_interceptor_runtime().map_stream_decision(1, LayerDecision::Drop, false);
+       assert_eq!(
+           directive,
+           faultcore_network::StreamDirective::ReturnErrno {
+               errno: libc::EIO,
+               ret: -1,
+           }
+       );
     }
-
+    
     #[test]
     fn stream_drop_must_not_look_like_successful_zero_byte_io() {
-        let directive =
-            global_interceptor_runtime().map_stream_decision(1, LayerDecision::Drop, false);
-        assert!(
-            !matches!(
-                directive,
-                faultcore_network::StreamDirective::ReturnValue(0)
-            ),
-            "drop for stream I/O should not be mapped as a successful zero-byte operation"
-        );
+       let directive =
+           global_interceptor_runtime().map_stream_decision(1, LayerDecision::Drop, false);
+       assert!(
+           !matches!(
+               directive,
+               faultcore_network::StreamDirective::ReturnValue(0)
+           ),
+           "drop for stream I/O should not be mapped as a successful zero-byte operation"
+       );
     }
-
+    
     #[test]
     fn stream_timeout_maps_to_etimedout() {
-        let directive = global_interceptor_runtime().map_stream_decision(
-            1,
-            LayerDecision::TimeoutMs(50),
-            false,
-        );
-        assert_eq!(
-            directive,
-            faultcore_network::StreamDirective::ReturnErrno {
-                errno: libc::ETIMEDOUT,
-                ret: -1,
-            }
-        );
+       let directive = global_interceptor_runtime().map_stream_decision(
+           1,
+           LayerDecision::TimeoutMs(50),
+           false,
+       );
+       assert_eq!(
+           directive,
+           faultcore_network::StreamDirective::ReturnErrno {
+               errno: libc::ETIMEDOUT,
+               ret: -1,
+           }
+       );
     }
-
+    
     #[test]
     fn stream_stage_reorder_is_non_terminal() {
-        let directive =
-            global_interceptor_runtime().map_stream_decision(1, LayerDecision::StageReorder, false);
-        assert_eq!(directive, faultcore_network::StreamDirective::Continue);
+       let directive =
+           global_interceptor_runtime().map_stream_decision(1, LayerDecision::StageReorder, false);
+       assert_eq!(directive, faultcore_network::StreamDirective::Continue);
     }
-
+    
     #[test]
     fn dns_mapping_contract_is_stable() {
-        assert_eq!(
-            global_interceptor_runtime().map_dns_decision_to_eai(&LayerDecision::TimeoutMs(1)),
-            Some(libc::EAI_AGAIN)
-        );
-        assert_eq!(
-            global_interceptor_runtime().map_dns_decision_to_eai(&LayerDecision::NxDomain),
-            Some(libc::EAI_NONAME)
-        );
-        assert_eq!(
-            global_interceptor_runtime()
-                .map_dns_decision_to_eai(&LayerDecision::ConnectionErrorKind(1)),
-            Some(libc::EAI_FAIL)
-        );
-        assert_eq!(
-            global_interceptor_runtime().map_dns_decision_to_eai(&LayerDecision::DelayNs(1)),
-            None
-        );
+       assert_eq!(
+           global_interceptor_runtime().map_dns_decision_to_eai(&LayerDecision::TimeoutMs(1)),
+           Some(libc::EAI_AGAIN)
+       );
+       assert_eq!(
+           global_interceptor_runtime().map_dns_decision_to_eai(&LayerDecision::NxDomain),
+           Some(libc::EAI_NONAME)
+       );
+       assert_eq!(
+           global_interceptor_runtime()
+               .map_dns_decision_to_eai(&LayerDecision::ConnectionErrorKind(1)),
+           Some(libc::EAI_FAIL)
+       );
+       assert_eq!(
+           global_interceptor_runtime().map_dns_decision_to_eai(&LayerDecision::DelayNs(1)),
+           None
+       );
     }
-
+    
     #[test]
     fn metrics_snapshot_null_pointer_returns_false() {
-        let ok = unsafe { faultcore_metrics_snapshot(std::ptr::null_mut()) };
-        assert!(!ok);
+       let ok = unsafe { faultcore_metrics_snapshot(std::ptr::null_mut()) };
+       assert!(!ok);
     }
-
+    
     #[test]
     fn setpriority_hook_must_check_dlsym_pointer_before_transmute() {
-        let src = include_str!("lib.rs");
-        let setpriority_block = src
-            .split("pub extern \"C\" fn setpriority")
-            .nth(1)
-            .expect("setpriority hook must exist");
-        assert!(setpriority_block.contains("is_null"));
+       let src = include_str!("lib.rs");
+       let setpriority_block = src
+           .split("pub extern \"C\" fn setpriority")
+           .nth(1)
+           .expect("setpriority hook must exist");
+       assert!(setpriority_block.contains("is_null"));
     }
-
+    
     #[test]
     fn setpriority_faultcore_failure_must_return_errno_without_libc_fallback() {
-        let src = include_str!("lib.rs");
-        let setpriority_block = src
-            .split("pub extern \"C\" fn setpriority")
-            .nth(1)
-            .expect("setpriority hook must exist");
-        assert!(setpriority_block.contains("SetpriorityCompatOutcome::FaultcoreError"));
-        assert!(setpriority_block.contains("set_errno_value(errno)"));
+       let src = include_str!("lib.rs");
+       let setpriority_block = src
+           .split("pub extern \"C\" fn setpriority")
+           .nth(1)
+           .expect("setpriority hook must exist");
+       assert!(setpriority_block.contains("SetpriorityCompatOutcome::FaultcoreError"));
+       assert!(setpriority_block.contains("set_errno_value(errno)"));
     }
-
+    
     #[test]
     fn send_hooks_share_uplink_helper_flow() {
-        let src = include_str!("lib.rs");
-        let send_block = src
-            .split("pub unsafe extern \"C\" fn send(")
-            .nth(1)
-            .expect("send hook must exist");
-        let sendto_block = src
-            .split("pub unsafe extern \"C\" fn sendto(")
-            .nth(1)
-            .expect("sendto hook must exist");
-        assert!(send_block.contains("handle_uplink_send("));
-        assert!(sendto_block.contains("handle_uplink_send("));
+       let src = include_str!("lib.rs");
+       let send_block = src
+           .split("pub unsafe extern \"C\" fn send(")
+           .nth(1)
+           .expect("send hook must exist");
+       let sendto_block = src
+           .split("pub unsafe extern \"C\" fn sendto(")
+           .nth(1)
+           .expect("sendto hook must exist");
+       assert!(send_block.contains("handle_uplink_send("));
+       assert!(sendto_block.contains("handle_uplink_send("));
     }
-
+    
     #[test]
     fn recv_hooks_share_downlink_helper_flow() {
-        let src = include_str!("lib.rs");
-        let recv_block = src
-            .split("pub unsafe extern \"C\" fn recv(")
-            .nth(1)
-            .expect("recv hook must exist");
-        let recvfrom_block = src
-            .split("pub unsafe extern \"C\" fn recvfrom(")
-            .nth(1)
-            .expect("recvfrom hook must exist");
-        assert!(recv_block.contains("handle_downlink_recv("));
-        assert!(recvfrom_block.contains("handle_downlink_recv("));
+       let src = include_str!("lib.rs");
+       let recv_block = src
+           .split("pub unsafe extern \"C\" fn recv(")
+           .nth(1)
+           .expect("recv hook must exist");
+       let recvfrom_block = src
+           .split("pub unsafe extern \"C\" fn recvfrom(")
+           .nth(1)
+           .expect("recvfrom hook must exist");
+       assert!(recv_block.contains("handle_downlink_recv("));
+       assert!(recvfrom_block.contains("handle_downlink_recv("));
     }
-
+    
     #[test]
     fn aliasing_hooks_propagate_fd_binding() {
-        let src = include_str!("lib.rs");
-        let dup_block = src
-            .split("pub extern \"C\" fn dup(")
-            .nth(1)
-            .expect("dup hook must exist");
-        let dup2_block = src
-            .split("pub extern \"C\" fn dup2(")
-            .nth(1)
-            .expect("dup2 hook must exist");
-        let dup3_block = src
-            .split("pub extern \"C\" fn dup3(")
-            .nth(1)
-            .expect("dup3 hook must exist");
-        let accept_block = src
-            .split("pub unsafe extern \"C\" fn accept(")
-            .nth(1)
-            .expect("accept hook must exist");
-        let accept4_block = src
-            .split("pub unsafe extern \"C\" fn accept4(")
-            .nth(1)
-            .expect("accept4 hook must exist");
-        assert!(dup_block.contains("clone_fd_binding(oldfd, newfd)"));
-        assert!(dup2_block.contains("clone_fd_binding(oldfd, out)"));
-        assert!(dup3_block.contains("clone_fd_binding(oldfd, out)"));
-        assert!(accept_block.contains("clone_fd_binding(s, newfd)"));
-        assert!(accept4_block.contains("clone_fd_binding(s, newfd)"));
+       let src = include_str!("lib.rs");
+       let dup_block = src
+           .split("pub extern \"C\" fn dup(")
+           .nth(1)
+           .expect("dup hook must exist");
+       let dup2_block = src
+           .split("pub extern \"C\" fn dup2(")
+           .nth(1)
+           .expect("dup2 hook must exist");
+       let dup3_block = src
+           .split("pub extern \"C\" fn dup3(")
+           .nth(1)
+           .expect("dup3 hook must exist");
+       let accept_block = src
+           .split("pub unsafe extern \"C\" fn accept(")
+           .nth(1)
+           .expect("accept hook must exist");
+       let accept4_block = src
+           .split("pub unsafe extern \"C\" fn accept4(")
+           .nth(1)
+           .expect("accept4 hook must exist");
+       assert!(dup_block.contains("clone_fd_binding(oldfd, newfd)"));
+       assert!(dup2_block.contains("clone_fd_binding(oldfd, out)"));
+       assert!(dup3_block.contains("clone_fd_binding(oldfd, out)"));
+       assert!(accept_block.contains("clone_fd_binding(s, newfd)"));
+       assert!(accept4_block.contains("clone_fd_binding(s, newfd)"));
     }
 }

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from faultcore import metrics_runtime as _metrics_runtime, policy_registry as _policy_registry
+from faultcore.decorator_helpers import apply_fault_profiles
 from faultcore.metrics_runtime import (
     capture_metrics_context as _capture_metrics_context,
     restore_metrics_context as _restore_metrics_context,
@@ -133,120 +134,7 @@ class FaultWrapper:
         metrics_token = _capture_metrics_context()
         async_handoff = False
         try:
-            if self._latency_ms:
-                shm.write_latency(tid, self._latency_ms)
-
-            if self._jitter_ms:
-                shm.write_jitter(tid, self._jitter_ms)
-
-            if self._packet_loss_ppm is not None:
-                shm.write_packet_loss(tid, self._packet_loss_ppm)
-
-            if self._burst_loss_len is not None:
-                shm.write_burst_loss(tid, self._burst_loss_len)
-
-            if self._bandwidth_bps:
-                shm.write_bandwidth(tid, self._bandwidth_bps)
-
-            if self._timeouts:
-                connect_ms, recv_ms = self._timeouts
-                shm.write_timeouts(tid, connect_ms, recv_ms)
-
-            if self._uplink_profile:
-                shm.write_uplink(
-                    tid,
-                    latency_ms=self._uplink_profile.get("latency_ms"),
-                    jitter_ms=self._uplink_profile.get("jitter_ms"),
-                    packet_loss_ppm=self._uplink_profile.get("packet_loss_ppm"),
-                    burst_loss_len=self._uplink_profile.get("burst_loss_len"),
-                    bandwidth_bps=self._uplink_profile.get("bandwidth_bps"),
-                )
-
-            if self._downlink_profile:
-                shm.write_downlink(
-                    tid,
-                    latency_ms=self._downlink_profile.get("latency_ms"),
-                    jitter_ms=self._downlink_profile.get("jitter_ms"),
-                    packet_loss_ppm=self._downlink_profile.get("packet_loss_ppm"),
-                    burst_loss_len=self._downlink_profile.get("burst_loss_len"),
-                    bandwidth_bps=self._downlink_profile.get("bandwidth_bps"),
-                )
-
-            if self._correlated_loss_profile:
-                shm.write_correlated_loss(
-                    tid,
-                    enabled=bool(self._correlated_loss_profile.get("enabled", 0)),
-                    p_good_to_bad_ppm=self._correlated_loss_profile.get("p_good_to_bad_ppm", 0),
-                    p_bad_to_good_ppm=self._correlated_loss_profile.get("p_bad_to_good_ppm", 0),
-                    loss_good_ppm=self._correlated_loss_profile.get("loss_good_ppm", 0),
-                    loss_bad_ppm=self._correlated_loss_profile.get("loss_bad_ppm", 0),
-                )
-
-            if self._connection_error_profile:
-                shm.write_connection_error(
-                    tid,
-                    kind=self._connection_error_profile.get("kind", 0),
-                    prob_ppm=self._connection_error_profile.get("prob_ppm", 0),
-                )
-
-            if self._half_open_profile:
-                shm.write_half_open(
-                    tid,
-                    after_bytes=self._half_open_profile.get("after_bytes", 0),
-                    err_kind=self._half_open_profile.get("err_kind", 0),
-                )
-
-            if self._packet_duplicate_profile:
-                shm.write_packet_duplicate(
-                    tid,
-                    prob_ppm=self._packet_duplicate_profile.get("prob_ppm", 0),
-                    max_extra=self._packet_duplicate_profile.get("max_extra", 1),
-                )
-
-            if self._packet_reorder_profile:
-                shm.write_packet_reorder(
-                    tid,
-                    prob_ppm=self._packet_reorder_profile.get("prob_ppm", 0),
-                    max_delay_ns=self._packet_reorder_profile.get("max_delay_ns", 0),
-                    window=self._packet_reorder_profile.get("window", 1),
-                )
-
-            if self._dns_profile:
-                shm.write_dns(
-                    tid,
-                    delay_ms=self._dns_profile.get("delay_ms"),
-                    timeout_ms=self._dns_profile.get("timeout_ms"),
-                    nxdomain_ppm=self._dns_profile.get("nxdomain_ppm"),
-                )
-
-            if self._target_profiles:
-                shm.write_targets(tid, self._target_profiles)
-            elif self._target_profile:
-                target_kwargs: dict[str, Any] = {
-                    "enabled": bool(self._target_profile.get("enabled", 0)),
-                    "kind": self._target_profile.get("kind", 0),
-                    "ipv4": self._target_profile.get("ipv4", 0),
-                    "prefix_len": self._target_profile.get("prefix_len", 0),
-                    "port": self._target_profile.get("port", 0),
-                    "protocol": self._target_profile.get("protocol", 0),
-                    "address_family": self._target_profile.get("address_family", 0),
-                    "addr": self._target_profile.get("addr"),
-                }
-                if self._target_profile.get("port_start") is not None:
-                    target_kwargs["port_start"] = self._target_profile.get("port_start")
-                if self._target_profile.get("port_end") is not None:
-                    target_kwargs["port_end"] = self._target_profile.get("port_end")
-                shm.write_target(tid, **target_kwargs)
-
-            if self._schedule_profile:
-                shm.write_schedule(
-                    tid,
-                    schedule_type=self._schedule_profile.get("schedule_type", 0),
-                    param_a_ns=self._schedule_profile.get("param_a_ns", 0),
-                    param_b_ns=self._schedule_profile.get("param_b_ns", 0),
-                    param_c_ns=self._schedule_profile.get("param_c_ns", 0),
-                    started_monotonic_ns=time.monotonic_ns(),
-                )
+            apply_fault_profiles(shm, tid, self, started_monotonic_ns=time.monotonic_ns())
 
             timeout_ms = self._timeouts[0] if self._timeouts else None
 

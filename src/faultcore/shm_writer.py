@@ -5,6 +5,12 @@ import threading
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from faultcore.target_rule_helpers import (
+    normalize_target_address,
+    resolve_port_range,
+    validate_target_rule,
+)
+
 FAULTCORE_MAGIC = 0xFACC0DE
 MAX_FDS = 131072
 MAX_TIDS = 65536
@@ -25,8 +31,6 @@ _POLICY_REGION_OFFSET = _CONFIG_REGION_SIZE
 _POLICY_REGION_SIZE = MAX_POLICIES * POLICY_STATE_SIZE
 _TARGET_RULES_REGION_OFFSET = _POLICY_REGION_OFFSET + _POLICY_REGION_SIZE
 _TARGET_RULES_REGION_SIZE = MAX_TARGET_RULES_PER_TID * TARGET_RULE_SIZE
-_U64_MAX = 0xFFFFFFFFFFFFFFFF
-_U32_MAX = 0xFFFFFFFF
 _NS_PER_MS = 1_000_000
 
 U64Field = tuple[int, int]
@@ -169,80 +173,11 @@ class SHMWriter:
             b"\x00" * _TARGET_RULES_REGION_SIZE
         )
 
-    def _addr16_from_rule(self, rule: dict[str, Any], idx: int) -> bytes:
-        raw = rule.get("addr")
-        if raw is None:
-            return b"\x00" * 16
-        if isinstance(raw, (bytes, bytearray)):
-            if len(raw) != 16:
-                raise ValueError(f"targets[{idx}].addr must contain exactly 16 bytes")
-            return bytes(raw)
-        if isinstance(raw, Sequence):
-            values = list(raw)
-            if len(values) != 16:
-                raise ValueError(f"targets[{idx}].addr must contain exactly 16 bytes")
-            try:
-                out = bytes(int(v) & 0xFF for v in values)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"targets[{idx}].addr must contain integer byte values") from exc
-            return out
-        raise ValueError(f"targets[{idx}].addr must be bytes-like or a 16-item sequence")
-
-    def _normalize_target_address(self, rule: dict[str, Any], idx: int) -> tuple[int, bytes]:
-        ipv4 = self._rule_int(rule, "ipv4", 0, idx)
-        if not 0 <= ipv4 <= _U32_MAX:
-            raise ValueError(f"targets[{idx}].ipv4 must be a valid u32 value")
-
-        kind = self._rule_int(rule, "kind", 0, idx)
-        family = self._rule_int(rule, "address_family", 0, idx)
-        if family not in (0, 1, 2):
-            raise ValueError(f"targets[{idx}].address_family must be one of 0, 1, 2")
-
-        has_addr = rule.get("addr") is not None
-        if family == 0 and kind in (1, 2) and not has_addr:
-            # Backward compatibility for rules that only provide legacy IPv4 fields.
-            family = 1
-
-        if family == 1:
-            if has_addr:
-                return family, self._addr16_from_rule(rule, idx)
-            return family, ipv4.to_bytes(4, "big") + (b"\x00" * 12)
-        if family == 2:
-            return family, self._addr16_from_rule(rule, idx)
-        return 0, b"\x00" * 16
-
-    def _resolve_port_range(self, rule: dict[str, Any], idx: int) -> tuple[int, int]:
-        has_port = rule.get("port") is not None
-        has_start = rule.get("port_start") is not None
-        has_end = rule.get("port_end") is not None
-
-        if has_port and (has_start or has_end):
-            raise ValueError(f"targets[{idx}] cannot define both port and port_start/port_end")
-        if has_start != has_end:
-            raise ValueError(f"targets[{idx}] requires both port_start and port_end")
-
-        if has_start and has_end:
-            start = self._rule_int(rule, "port_start", 0, idx)
-            end = self._rule_int(rule, "port_end", 0, idx)
-        else:
-            port = self._rule_int(rule, "port", 0, idx)
-            if port == 0:
-                return 0, 0
-            start, end = port, port
-
-        if not 0 <= start <= 65535:
-            raise ValueError(f"targets[{idx}].port_start must be between 0 and 65535")
-        if not 0 <= end <= 65535:
-            raise ValueError(f"targets[{idx}].port_end must be between 0 and 65535")
-        if start > end:
-            raise ValueError(f"targets[{idx}].port_start must be <= port_end")
-        return start, end
-
     def _write_target_rule_row(self, target_rules_offset: int, idx: int, rule: dict[str, Any]) -> None:
         base = target_rules_offset + (idx * TARGET_RULE_SIZE)
         self._mmap[base : base + TARGET_RULE_SIZE] = b"\x00" * TARGET_RULE_SIZE
-        address_family, addr = self._normalize_target_address(rule, idx)
-        port_start, port_end = self._resolve_port_range(rule, idx)
+        address_family, addr = normalize_target_address(rule, idx)
+        port_start, port_end = resolve_port_range(rule, idx)
         self._pack_u64_fields(
             base,
             (
@@ -260,7 +195,7 @@ class SHMWriter:
         self._mmap[base + 72 : base + 88] = addr
 
     def _write_single_target_fields(self, offset: int, rule: dict[str, Any], idx: int = 0) -> None:
-        address_family, addr = self._normalize_target_address(rule, idx)
+        address_family, addr = normalize_target_address(rule, idx)
         self._pack_u64_fields(
             offset,
             (
@@ -349,39 +284,6 @@ class SHMWriter:
             )
 
         self._write_with_generation_publish(tid, writer)
-
-    def _rule_int(self, rule: dict[str, Any], key: str, default: int, idx: int) -> int:
-        try:
-            return int(rule.get(key, default))
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"targets[{idx}].{key} must be an integer") from exc
-
-    def _validate_target_rule(self, rule: dict[str, Any], idx: int) -> None:
-        enabled = self._rule_int(rule, "enabled", 0, idx)
-        if enabled not in (0, 1):
-            raise ValueError(f"targets[{idx}].enabled must be 0 or 1")
-
-        priority = self._rule_int(rule, "priority", 100, idx)
-        if not 0 <= priority <= _U64_MAX:
-            raise ValueError(f"targets[{idx}].priority must be between 0 and 18446744073709551615")
-
-        kind = self._rule_int(rule, "kind", 0, idx)
-        if kind not in (0, 1, 2):
-            raise ValueError(f"targets[{idx}].kind must be one of 0, 1, 2")
-
-        address_family, _ = self._normalize_target_address(rule, idx)
-
-        prefix_len = self._rule_int(rule, "prefix_len", 0, idx)
-        max_prefix = 128 if address_family == 2 else 32
-        if not 0 <= prefix_len <= max_prefix:
-            raise ValueError(f"targets[{idx}].prefix_len must be between 0 and {max_prefix}")
-
-        protocol = self._rule_int(rule, "protocol", 0, idx)
-        if protocol not in (0, 1, 2):
-            raise ValueError(f"targets[{idx}].protocol must be one of 0, 1, 2")
-
-        _ = self._normalize_target_address(rule, idx)
-        _ = self._resolve_port_range(rule, idx)
 
     def write_latency(self, tid: int, latency_ms: int) -> None:
         self._write_fields(tid, ((_OFFSET_LATENCY_NS, self._ms_to_ns(latency_ms)),))
@@ -564,17 +466,11 @@ class SHMWriter:
                 "address_family": address_family,
                 "addr": addr,
             }
-            self._validate_target_rule(rule, 0)
-            normalized_family, addr_value = self._normalize_target_address(
-                {
-                    "kind": kind,
-                    "ipv4": ipv4,
-                    "address_family": address_family,
-                    "addr": addr,
-                },
-                0,
+            validate_target_rule(rule, 0)
+            normalized_family, addr_value = normalize_target_address(
+                {"kind": kind, "ipv4": ipv4, "address_family": address_family, "addr": addr}, 0
             )
-            port_start_value, _port_end_value = self._resolve_port_range(rule, 0)
+            port_start_value, _port_end_value = resolve_port_range(rule, 0)
             self._pack_u64_fields(
                 offset,
                 (
@@ -603,7 +499,7 @@ class SHMWriter:
         for idx, rule in enumerate(rules):
             if not isinstance(rule, dict):
                 raise ValueError(f"targets[{idx}] must be a mapping")
-            self._validate_target_rule(rule, idx)
+            validate_target_rule(rule, idx)
 
         tid_slot = self._tid_slot(tid)
         target_rules_offset = self._target_rules_offset_for_slot(tid_slot)
