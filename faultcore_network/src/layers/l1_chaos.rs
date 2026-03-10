@@ -2,13 +2,14 @@ use crate::{
     Config,
     layers::{Layer, LayerDecision, LayerStage, PacketContext},
 };
+use std::collections::HashMap;
 use parking_lot::Mutex;
 use rand::{Rng, SeedableRng, random, rngs::StdRng};
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 pub struct L1Chaos {
     seeded_rng: Option<Mutex<StdRng>>,
-    burst_remaining: AtomicU64,
+    burst_remaining_by_fd: Mutex<HashMap<i32, u64>>,
     ge_state: AtomicU8,
 }
 
@@ -20,7 +21,7 @@ impl L1Chaos {
             .map(|seed| Mutex::new(StdRng::seed_from_u64(seed)));
         Self {
             seeded_rng,
-            burst_remaining: AtomicU64::new(0),
+            burst_remaining_by_fd: Mutex::new(HashMap::new()),
             ge_state: AtomicU8::new(0),
         }
     }
@@ -28,7 +29,7 @@ impl L1Chaos {
     pub fn with_seed(seed: u64) -> Self {
         Self {
             seeded_rng: Some(Mutex::new(StdRng::seed_from_u64(seed))),
-            burst_remaining: AtomicU64::new(0),
+            burst_remaining_by_fd: Mutex::new(HashMap::new()),
             ge_state: AtomicU8::new(0),
         }
     }
@@ -135,18 +136,17 @@ impl Layer for L1Chaos {
 
     fn process(&self, ctx: &PacketContext<'_>) -> LayerDecision {
         let config = ctx.config;
-        if self
-            .burst_remaining
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-                if current > 0 {
-                    Some(current - 1)
-                } else {
-                    None
-                }
-            })
-            .is_ok()
         {
-            return LayerDecision::Drop;
+            let mut map = self.burst_remaining_by_fd.lock();
+            if let Some(current) = map.get_mut(&ctx.fd)
+                && *current > 0
+            {
+                *current -= 1;
+                if *current == 0 {
+                    map.remove(&ctx.fd);
+                }
+                return LayerDecision::Drop;
+            }
         }
 
         let effective_loss = self
@@ -154,8 +154,9 @@ impl Layer for L1Chaos {
             .unwrap_or(config.packet_loss_ppm);
         if self.event_happens(effective_loss) {
             if config.burst_loss_len > 0 {
-                self.burst_remaining
-                    .store(config.burst_loss_len.saturating_sub(1), Ordering::Release);
+                self.burst_remaining_by_fd
+                    .lock()
+                    .insert(ctx.fd, config.burst_loss_len.saturating_sub(1));
             }
             return LayerDecision::Drop;
         }
@@ -246,7 +247,7 @@ mod tests {
     #[test]
     fn burst_loss_drops_remaining_packets() {
         let layer = L1Chaos::with_seed(1);
-        layer.burst_remaining.store(2, Ordering::Release);
+        layer.burst_remaining_by_fd.lock().insert(1, 2);
         let cfg = Config::default();
         let ctx = PacketContext {
             fd: 1,
@@ -278,7 +279,13 @@ mod tests {
         };
 
         assert!(matches!(layer.process(&ctx), LayerDecision::Drop));
-        assert_eq!(layer.burst_remaining.load(Ordering::Acquire), 3);
+        let remaining = layer
+            .burst_remaining_by_fd
+            .lock()
+            .get(&1)
+            .copied()
+            .unwrap_or(0);
+        assert_eq!(remaining, 3);
     }
 
     #[test]
@@ -323,5 +330,34 @@ mod tests {
         };
 
         assert!(matches!(layer.process(&ctx), LayerDecision::Continue));
+    }
+
+    #[test]
+    fn burst_state_must_not_leak_between_fds() {
+        let layer = L1Chaos::with_seed(1);
+        let cfg_trigger = Config {
+            packet_loss_ppm: 1_000_000,
+            burst_loss_len: 2,
+            ..Default::default()
+        };
+        let cfg_clean = Config::default();
+
+        let ctx_fd1 = PacketContext {
+            fd: 10,
+            bytes: 1,
+            operation: Operation::Recv,
+            direction: None,
+            config: &cfg_trigger,
+        };
+        let ctx_fd2 = PacketContext {
+            fd: 11,
+            bytes: 1,
+            operation: Operation::Recv,
+            direction: None,
+            config: &cfg_clean,
+        };
+
+        assert!(matches!(layer.process(&ctx_fd1), LayerDecision::Drop));
+        assert!(matches!(layer.process(&ctx_fd2), LayerDecision::Continue));
     }
 }

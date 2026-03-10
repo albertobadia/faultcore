@@ -132,7 +132,7 @@ pub fn get_tid_slot_for_fd(fd: c_int) -> Option<usize> {
     if !is_shm_open() || fd < 0 {
         try_open_shm();
     }
-    if fd < 0 {
+    if fd < 0 || (fd as usize) >= MAX_FDS {
         return None;
     }
     unsafe {
@@ -267,7 +267,7 @@ pub fn get_config_for_tid_slot(slot: usize) -> Option<FaultcoreConfig> {
 }
 
 pub fn assign_rule_to_fd(fd: c_int, tid: usize) {
-    if fd < 0 {
+    if fd < 0 || (fd as usize) >= MAX_FDS {
         return;
     }
     unsafe {
@@ -278,7 +278,7 @@ pub fn assign_rule_to_fd(fd: c_int, tid: usize) {
 }
 
 pub fn clear_rule_for_fd(fd: c_int) {
-    if fd < 0 {
+    if fd < 0 || (fd as usize) >= MAX_FDS {
         return;
     }
     unsafe {
@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn test_tid_collision() {
-        let _guard = TEST_LOCK.lock().expect("test lock poisoned");
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut table = vec![0u64; FAULTCORE_SHM_SIZE.div_ceil(core::mem::size_of::<u64>())];
 
         let prev_ptr = *SHM_POINTER.read();
@@ -453,7 +453,7 @@ mod tests {
 
     #[test]
     fn test_clear_rule_for_fd_resets_fd_slot() {
-        let _guard = TEST_LOCK.lock().expect("test lock poisoned");
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut table = vec![0u64; FAULTCORE_SHM_SIZE.div_ceil(core::mem::size_of::<u64>())];
 
         let prev_ptr = *SHM_POINTER.read();
@@ -626,7 +626,7 @@ mod tests {
 
     #[test]
     fn test_get_config_for_tid_slot_reads_tid_region() {
-        let _guard = TEST_LOCK.lock().expect("test lock poisoned");
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut table = vec![0u64; FAULTCORE_SHM_SIZE.div_ceil(core::mem::size_of::<u64>())];
 
         let prev_ptr = *SHM_POINTER.read();
@@ -653,6 +653,71 @@ mod tests {
         let reorder_window = cfg.reorder_window;
         assert_eq!(reorder_prob_ppm, 1_000_000);
         assert_eq!(reorder_window, 2);
+
+        *SHM_POINTER.write() = prev_ptr;
+        SHM_OPEN.store(prev_open, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn test_assign_rule_to_fd_ignores_out_of_range_fd() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut table = vec![0u64; FAULTCORE_SHM_SIZE.div_ceil(core::mem::size_of::<u64>()) + 1];
+
+        let prev_ptr = *SHM_POINTER.read();
+        let prev_open = SHM_OPEN.load(Ordering::SeqCst);
+
+        *SHM_POINTER.write() = table.as_mut_ptr().cast::<u8>() as usize;
+        SHM_OPEN.store(1, Ordering::SeqCst);
+
+        let guard_idx = FAULTCORE_SHM_SIZE / core::mem::size_of::<u64>();
+        table[guard_idx] = 0xABCD_EF01;
+
+        assign_rule_to_fd(MAX_FDS as c_int, 1234);
+
+        assert_eq!(table[guard_idx], 0xABCD_EF01);
+
+        *SHM_POINTER.write() = prev_ptr;
+        SHM_OPEN.store(prev_open, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn test_clear_rule_for_fd_ignores_out_of_range_fd() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut table = vec![0u64; FAULTCORE_SHM_SIZE.div_ceil(core::mem::size_of::<u64>()) + 1];
+
+        let prev_ptr = *SHM_POINTER.read();
+        let prev_open = SHM_OPEN.load(Ordering::SeqCst);
+
+        *SHM_POINTER.write() = table.as_mut_ptr().cast::<u8>() as usize;
+        SHM_OPEN.store(1, Ordering::SeqCst);
+
+        let guard_idx = FAULTCORE_SHM_SIZE / core::mem::size_of::<u64>();
+        table[guard_idx] = 0x1234_5678;
+
+        clear_rule_for_fd(MAX_FDS as c_int);
+
+        assert_eq!(table[guard_idx], 0x1234_5678);
+
+        *SHM_POINTER.write() = prev_ptr;
+        SHM_OPEN.store(prev_open, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn test_get_tid_slot_for_fd_out_of_range_returns_none() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut table = vec![0u64; FAULTCORE_SHM_SIZE.div_ceil(core::mem::size_of::<u64>()) + 1];
+
+        let prev_ptr = *SHM_POINTER.read();
+        let prev_open = SHM_OPEN.load(Ordering::SeqCst);
+
+        *SHM_POINTER.write() = table.as_mut_ptr().cast::<u8>() as usize;
+        SHM_OPEN.store(1, Ordering::SeqCst);
+
+        let guard_idx = FAULTCORE_SHM_SIZE / core::mem::size_of::<u64>();
+        table[guard_idx] = 1;
+
+        let slot = get_tid_slot_for_fd(MAX_FDS as c_int);
+        assert!(slot.is_none());
 
         *SHM_POINTER.write() = prev_ptr;
         SHM_OPEN.store(prev_open, Ordering::SeqCst);

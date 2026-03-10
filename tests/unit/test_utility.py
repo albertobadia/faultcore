@@ -210,3 +210,32 @@ def test_get_fault_metrics_context_scope_returns_delta(monkeypatch):
     ]
     assert metrics["totals"]["continue"] == 6
     assert metrics["totals"]["delay"] == 6
+
+
+def test_get_fault_metrics_ignores_len_over_contract_limit(monkeypatch):
+    import ctypes
+
+    class FakeSnapshotFn:
+        def __init__(self):
+            self.argtypes = None
+            self.restype = None
+
+        def __call__(self, ptr):
+            snapshot = ptr._obj
+            snapshot.len = 8
+            for idx in range(7):
+                layer = snapshot.layers[idx]
+                layer.stage = idx + 1
+                layer.continue_count = idx + 1
+            return True
+
+    class FakeLib:
+        def __init__(self):
+            self.faultcore_metrics_snapshot = FakeSnapshotFn()
+
+    monkeypatch.setattr(ctypes, "CDLL", lambda *_args, **_kwargs: FakeLib())
+
+    metrics = faultcore.get_fault_metrics()
+    assert len(metrics["layers"]) == 7
+    assert metrics["layers"][0]["stage"] == "L1"
+    assert metrics["layers"][6]["stage"] == "L7"

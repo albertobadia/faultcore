@@ -527,6 +527,10 @@ pub extern "C" fn setpriority(which: c_int, who: c_int, prio: c_int) -> c_int {
 
     unsafe {
         let orig = libc::dlsym(libc::RTLD_NEXT, c"setpriority".as_ptr());
+        if orig.is_null() {
+            set_errno_value(libc::ENOSYS);
+            return -1;
+        }
         let orig_func: extern "C" fn(c_int, c_int, c_int) -> c_int = std::mem::transmute(orig);
         orig_func(which, who, prio)
     }
@@ -629,5 +633,15 @@ mod tests {
     fn metrics_snapshot_null_pointer_returns_false() {
         let ok = unsafe { faultcore_metrics_snapshot(std::ptr::null_mut()) };
         assert!(!ok);
+    }
+
+    #[test]
+    fn setpriority_hook_must_check_dlsym_pointer_before_transmute() {
+        let src = include_str!("lib.rs");
+        let setpriority_block = src
+            .split("pub extern \"C\" fn setpriority")
+            .nth(1)
+            .expect("setpriority hook must exist");
+        assert!(setpriority_block.contains("is_null"));
     }
 }

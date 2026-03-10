@@ -3,6 +3,9 @@ import contextvars
 import functools
 import ipaddress
 import json
+import os
+import pickle
+import select
 import signal
 import threading
 import time
@@ -86,7 +89,7 @@ def _read_fault_metrics_snapshot() -> dict[str, Any] | None:
         7: "L7",
     }
     layers: list[dict[str, Any]] = []
-    for idx in range(int(snapshot.len)):
+    for idx in range(min(int(snapshot.len), 7)):
         layer = snapshot.layers[idx]
         layers.append(
             {
@@ -1239,21 +1242,44 @@ def _run_sync_with_timeout(
             signal.setitimer(signal.ITIMER_REAL, *previous_timer)
             signal.signal(signal.SIGALRM, previous_handler)
 
-    outcome: dict[str, Any] = {}
-    completed = threading.Event()
-
-    def run_target() -> None:
+    read_fd, write_fd = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        os.close(read_fd)
+        payload: bytes
         try:
-            outcome["result"] = func(*args, **kwargs)
+            result = func(*args, **kwargs)
+            payload = pickle.dumps(("result", result), protocol=pickle.HIGHEST_PROTOCOL)
         except BaseException as exc:  # noqa: BLE001
-            outcome["error"] = exc
+            payload = pickle.dumps(("error", exc), protocol=pickle.HIGHEST_PROTOCOL)
+        try:
+            os.write(write_fd, payload)
         finally:
-            completed.set()
+            os.close(write_fd)
+        os._exit(0)
 
-    worker = threading.Thread(target=run_target, daemon=True)
-    worker.start()
-    if not completed.wait(timeout_ms / 1000):
+    os.close(write_fd)
+    timeout_s = timeout_ms / 1000
+    ready, _, _ = select.select([read_fd], [], [], timeout_s)
+    if not ready:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        os.waitpid(pid, 0)
+        os.close(read_fd)
         raise TimeoutError(f"Function execution exceeded {timeout_ms}ms")
-    if "error" in outcome:
-        raise outcome["error"]
-    return outcome.get("result")
+
+    data = b""
+    while True:
+        chunk = os.read(read_fd, 65536)
+        if not chunk:
+            break
+        data += chunk
+    os.close(read_fd)
+    os.waitpid(pid, 0)
+
+    kind, value = pickle.loads(data)
+    if kind == "error":
+        raise value
+    return value

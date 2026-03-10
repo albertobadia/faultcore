@@ -1318,6 +1318,33 @@ class TestTimeoutContract:
         assert outcome["raised"] is True
         assert float(outcome["elapsed_ms"]) < 30
 
+    def test_timeout_in_worker_thread_does_not_allow_post_timeout_side_effects(self):
+        side_effect = threading.Event()
+
+        @faultcore.timeout(5)
+        def slow_operation():
+            time.sleep(0.05)
+            side_effect.set()
+
+        outcome: dict[str, object] = {}
+
+        def worker() -> None:
+            try:
+                slow_operation()
+                outcome["raised"] = False
+            except TimeoutError:
+                outcome["raised"] = True
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        thread.join(timeout=1)
+
+        assert thread.is_alive() is False
+        assert outcome["raised"] is True
+
+        time.sleep(0.07)
+        assert side_effect.is_set() is False
+
 
 class TestTimeoutShmLifecycle:
     def test_sync_timeout_clears_shm_on_timeout_error(self):
