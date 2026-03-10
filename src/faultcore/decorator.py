@@ -222,17 +222,21 @@ class FaultWrapper:
             if self._target_profiles:
                 shm.write_targets(tid, self._target_profiles)
             elif self._target_profile:
-                shm.write_target(
-                    tid,
-                    enabled=bool(self._target_profile.get("enabled", 0)),
-                    kind=self._target_profile.get("kind", 0),
-                    ipv4=self._target_profile.get("ipv4", 0),
-                    prefix_len=self._target_profile.get("prefix_len", 0),
-                    port=self._target_profile.get("port", 0),
-                    protocol=self._target_profile.get("protocol", 0),
-                    address_family=self._target_profile.get("address_family", 0),
-                    addr=self._target_profile.get("addr"),
-                )
+                target_kwargs: dict[str, Any] = {
+                    "enabled": bool(self._target_profile.get("enabled", 0)),
+                    "kind": self._target_profile.get("kind", 0),
+                    "ipv4": self._target_profile.get("ipv4", 0),
+                    "prefix_len": self._target_profile.get("prefix_len", 0),
+                    "port": self._target_profile.get("port", 0),
+                    "protocol": self._target_profile.get("protocol", 0),
+                    "address_family": self._target_profile.get("address_family", 0),
+                    "addr": self._target_profile.get("addr"),
+                }
+                if self._target_profile.get("port_start") is not None:
+                    target_kwargs["port_start"] = self._target_profile.get("port_start")
+                if self._target_profile.get("port_end") is not None:
+                    target_kwargs["port_end"] = self._target_profile.get("port_end")
+                shm.write_target(tid, **target_kwargs)
 
             if self._schedule_profile:
                 shm.write_schedule(
@@ -529,6 +533,8 @@ def for_target(
     host: str | None = None,
     cidr: str | None = None,
     port: int | None = None,
+    port_start: int | None = None,
+    port_end: int | None = None,
     protocol: str | None = None,
 ):
     target_profile = _build_target_profile(
@@ -536,6 +542,8 @@ def for_target(
         host=host,
         cidr=cidr,
         port=port,
+        port_start=port_start,
+        port_end=port_end,
         protocol=protocol,
     )
 

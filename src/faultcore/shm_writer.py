@@ -211,10 +211,38 @@ class SHMWriter:
             return family, self._addr16_from_rule(rule, idx)
         return 0, b"\x00" * 16
 
+    def _resolve_port_range(self, rule: dict[str, Any], idx: int) -> tuple[int, int]:
+        has_port = rule.get("port") is not None
+        has_start = rule.get("port_start") is not None
+        has_end = rule.get("port_end") is not None
+
+        if has_port and (has_start or has_end):
+            raise ValueError(f"targets[{idx}] cannot define both port and port_start/port_end")
+        if has_start != has_end:
+            raise ValueError(f"targets[{idx}] requires both port_start and port_end")
+
+        if has_start and has_end:
+            start = self._rule_int(rule, "port_start", 0, idx)
+            end = self._rule_int(rule, "port_end", 0, idx)
+        else:
+            port = self._rule_int(rule, "port", 0, idx)
+            if port == 0:
+                return 0, 0
+            start, end = port, port
+
+        if not 0 <= start <= 65535:
+            raise ValueError(f"targets[{idx}].port_start must be between 0 and 65535")
+        if not 0 <= end <= 65535:
+            raise ValueError(f"targets[{idx}].port_end must be between 0 and 65535")
+        if start > end:
+            raise ValueError(f"targets[{idx}].port_start must be <= port_end")
+        return start, end
+
     def _write_target_rule_row(self, target_rules_offset: int, idx: int, rule: dict[str, Any]) -> None:
         base = target_rules_offset + (idx * TARGET_RULE_SIZE)
         self._mmap[base : base + TARGET_RULE_SIZE] = b"\x00" * TARGET_RULE_SIZE
         address_family, addr = self._normalize_target_address(rule, idx)
+        port_start, port_end = self._resolve_port_range(rule, idx)
         self._pack_u64_fields(
             base,
             (
@@ -223,9 +251,9 @@ class SHMWriter:
                 (16, int(rule.get("kind", 0))),
                 (24, int(rule.get("ipv4", 0))),
                 (32, int(rule.get("prefix_len", 0))),
-                (40, int(rule.get("port", 0))),
+                (40, port_start),
                 (48, int(rule.get("protocol", 0))),
-                (56, 0),
+                (56, port_end),
                 (64, address_family),
             ),
         )
@@ -348,15 +376,12 @@ class SHMWriter:
         if not 0 <= prefix_len <= max_prefix:
             raise ValueError(f"targets[{idx}].prefix_len must be between 0 and {max_prefix}")
 
-        port = self._rule_int(rule, "port", 0, idx)
-        if not 0 <= port <= 65535:
-            raise ValueError(f"targets[{idx}].port must be between 0 and 65535")
-
         protocol = self._rule_int(rule, "protocol", 0, idx)
         if protocol not in (0, 1, 2):
             raise ValueError(f"targets[{idx}].protocol must be one of 0, 1, 2")
 
         _ = self._normalize_target_address(rule, idx)
+        _ = self._resolve_port_range(rule, idx)
 
     def write_latency(self, tid: int, latency_ms: int) -> None:
         self._write_fields(tid, ((_OFFSET_LATENCY_NS, self._ms_to_ns(latency_ms)),))
@@ -516,11 +541,30 @@ class SHMWriter:
         ipv4: int,
         prefix_len: int,
         port: int,
+        port_start: int | None = None,
+        port_end: int | None = None,
         protocol: int,
         address_family: int = 0,
         addr: bytes | bytearray | Sequence[int] | None = None,
     ) -> None:
+        tid_slot = self._tid_slot(tid)
+        target_rules_offset = self._target_rules_offset_for_slot(tid_slot)
+
         def writer(offset: int) -> None:
+            rule = {
+                "enabled": 1 if enabled else 0,
+                "priority": 100,
+                "kind": kind,
+                "ipv4": ipv4,
+                "prefix_len": prefix_len,
+                "port": port,
+                "port_start": port_start,
+                "port_end": port_end,
+                "protocol": protocol,
+                "address_family": address_family,
+                "addr": addr,
+            }
+            self._validate_target_rule(rule, 0)
             normalized_family, addr_value = self._normalize_target_address(
                 {
                     "kind": kind,
@@ -530,6 +574,7 @@ class SHMWriter:
                 },
                 0,
             )
+            port_start_value, _port_end_value = self._resolve_port_range(rule, 0)
             self._pack_u64_fields(
                 offset,
                 (
@@ -537,12 +582,15 @@ class SHMWriter:
                     (_OFFSET_TARGET_KIND, kind),
                     (_OFFSET_TARGET_IPV4, ipv4),
                     (_OFFSET_TARGET_PREFIX_LEN, prefix_len),
-                    (_OFFSET_TARGET_PORT, port),
+                    (_OFFSET_TARGET_PORT, port_start_value),
                     (_OFFSET_TARGET_PROTOCOL, protocol),
                     (_OFFSET_TARGET_ADDRESS_FAMILY, normalized_family),
                 ),
             )
             self._mmap[offset + _OFFSET_TARGET_ADDR : offset + _OFFSET_TARGET_ADDR + 16] = addr_value
+            self._clear_target_rules_table(tid_slot)
+            if enabled:
+                self._write_target_rule_row(target_rules_offset, 0, rule)
 
         self._write_with_generation_publish(tid, writer)
 

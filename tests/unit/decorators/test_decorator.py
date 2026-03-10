@@ -677,6 +677,34 @@ class TestTargetDecorators:
                 )
                 mock_shm.clear.assert_called_once_with(979)
 
+    def test_for_target_accepts_port_range(self):
+        mock_shm = MagicMock()
+        mock_shm.write_target = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=980):
+
+                @faultcore.for_target(host="10.1.2.3", port_start=8000, port_end=9000)
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_target.assert_called_once_with(
+                    980,
+                    enabled=True,
+                    kind=1,
+                    ipv4=167838211,
+                    prefix_len=32,
+                    port=0,
+                    port_start=8000,
+                    port_end=9000,
+                    protocol=0,
+                    address_family=1,
+                    addr=[10, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                )
+                mock_shm.clear.assert_called_once_with(980)
+
 
 class TestTemporalProfiles:
     def test_profile_spike_writes_schedule_to_shm(self):
@@ -1033,6 +1061,42 @@ class TestPolicyRegistry:
                     addr=[10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
                 )
                 mock_shm.clear.assert_called_once_with(989)
+
+    def test_register_policy_target_filter_accepts_port_range(self):
+        faultcore.register_policy(
+            "target_policy_range",
+            latency_ms=10,
+            target={"host": "10.1.2.3", "port_start": 8000, "port_end": 9000},
+        )
+
+        mock_shm = MagicMock()
+        mock_shm.write_latency = MagicMock()
+        mock_shm.write_target = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=990):
+
+                @faultcore.apply_policy("target_policy_range")
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_latency.assert_called_once_with(990, 10)
+                mock_shm.write_target.assert_called_once_with(
+                    990,
+                    enabled=True,
+                    kind=1,
+                    ipv4=167838211,
+                    prefix_len=32,
+                    port=0,
+                    port_start=8000,
+                    port_end=9000,
+                    protocol=0,
+                    address_family=1,
+                    addr=[10, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                )
+                mock_shm.clear.assert_called_once_with(990)
 
     def test_register_policy_with_multiple_targets(self):
         faultcore.register_policy(

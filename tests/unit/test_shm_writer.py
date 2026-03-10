@@ -119,6 +119,30 @@ class TestTargetRulesValidation:
                 {"enabled": 1, "kind": 1, "ipv4": 0x1_0000_0000, "prefix_len": 32, "port": 80, "protocol": 1},
                 "ipv4",
             ),
+            (
+                {
+                    "enabled": 1,
+                    "kind": 1,
+                    "ipv4": 0x7F000001,
+                    "prefix_len": 32,
+                    "port": 80,
+                    "port_start": 70,
+                    "port_end": 90,
+                    "protocol": 1,
+                },
+                "both port and port_start/port_end",
+            ),
+            (
+                {
+                    "enabled": 1,
+                    "kind": 1,
+                    "ipv4": 0x7F000001,
+                    "prefix_len": 32,
+                    "port_start": 90,
+                    "protocol": 1,
+                },
+                "requires both port_start and port_end",
+            ),
         ],
     )
     def test_write_targets_rejects_invalid_rule_fields(self, rule, expected):
@@ -187,6 +211,34 @@ class TestTargetRulesValidation:
             rule_addr = bytes(writer._mmap[rules_offset + 72 : rules_offset + 88])
             assert rule_addr_family == 2
             assert rule_addr == bytes(addr)
+        finally:
+            writer.close()
+            cleanup_test_shm(name)
+
+    def test_write_targets_serializes_port_range(self):
+        name = f"faultcore_test_{uuid.uuid4().hex}"
+        fd = create_test_shm(name)
+        os.close(fd)
+        writer = SHMWriter(name)
+        tid = 4242
+
+        try:
+            rule = {
+                "enabled": 1,
+                "kind": 1,
+                "ipv4": 0x7F000001,
+                "prefix_len": 32,
+                "port_start": 8000,
+                "port_end": 9000,
+                "protocol": 1,
+            }
+            writer.write_targets(tid, [rule])
+
+            rules_offset = writer._target_rules_offset(tid)
+            rule_port_start = struct.unpack_from("<Q", writer._mmap, rules_offset + 40)[0]
+            rule_port_end = struct.unpack_from("<Q", writer._mmap, rules_offset + 56)[0]
+            assert rule_port_start == 8000
+            assert rule_port_end == 9000
         finally:
             writer.close()
             cleanup_test_shm(name)

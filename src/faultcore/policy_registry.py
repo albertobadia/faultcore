@@ -165,6 +165,8 @@ def register_policy(
                 host=target.get("host"),
                 cidr=target.get("cidr"),
                 port=target.get("port"),
+                port_start=target.get("port_start"),
+                port_end=target.get("port_end"),
                 protocol=target.get("protocol"),
             )
         else:
@@ -183,6 +185,8 @@ def register_policy(
                         host=entry.get("host"),
                         cidr=entry.get("cidr"),
                         port=entry.get("port"),
+                        port_start=entry.get("port_start"),
+                        port_end=entry.get("port_end"),
                         protocol=entry.get("protocol"),
                         priority=entry.get("priority"),
                     )

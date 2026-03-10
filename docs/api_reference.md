@@ -160,11 +160,13 @@ Accepted forms:
 - `for_target("10.1.2.3:443")`
 - `for_target("10.0.0.0/8", protocol="udp", port=53)`
 - `for_target(host="10.1.2.3", port=443, protocol="tcp")`
+- `for_target(host="10.1.2.3", port_start=8000, port_end=9000, protocol="any")`
 - `for_target(cidr="10.0.0.0/8", port=53)`
 
 Current scope:
 - IPv4/IPv6 targets.
 - Protocol can be `any`, `tcp` or `udp`.
+- Ports accept either `port` (single value) or `port_start` + `port_end` (closed range).
 
 ### `profile(...)`
 

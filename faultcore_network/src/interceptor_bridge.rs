@@ -16,7 +16,11 @@ fn endpoint_matches_rule(endpoint: Endpoint, rule: &TargetRule) -> bool {
     if rule.protocol > 0 && rule.protocol != endpoint.protocol {
         return false;
     }
-    if rule.port > 0 && rule.port != u64::from(endpoint.port) {
+    let endpoint_port = u64::from(endpoint.port);
+    let port_start = rule.port;
+    let port_end = if rule.reserved > 0 { rule.reserved } else { rule.port };
+    if (port_start > 0 || port_end > 0) && (endpoint_port < port_start || endpoint_port > port_end)
+    {
         return false;
     }
     let family = rule.address_family;
@@ -77,7 +81,7 @@ fn apply_multi_target_for_tid(
     tid_slot: usize,
     endpoint: Option<Endpoint>,
 ) -> Option<Config> {
-    if cfg.target_enabled <= 1 {
+    if cfg.target_enabled == 0 {
         return cfg.runtime_filtered(endpoint, monotonic_now_ns());
     }
     let endpoint = endpoint?;
@@ -100,7 +104,7 @@ where
     FCfg: FnMut() -> Option<Config>,
 {
     for _ in 0..RULESET_READ_RETRY_LIMIT {
-        if cfg.target_enabled <= 1 {
+        if cfg.target_enabled == 0 {
             return cfg.runtime_filtered(Some(endpoint), monotonic_now_ns());
         }
 
@@ -114,7 +118,7 @@ where
 
         let count = usize::min(cfg.target_enabled as usize, rules.len());
         let rule = select_best_target_rule(endpoint, &rules, count)?;
-        cfg.target_enabled = 1;
+        cfg.target_enabled = 0;
         cfg.target_kind = rule.kind;
         cfg.target_prefix_len = rule.prefix_len;
         cfg.target_port = rule.port;
@@ -452,6 +456,47 @@ mod tests {
     }
 
     #[test]
+    fn select_rule_respects_port_range() {
+        let endpoint = endpoint_v4(0x0A010203, 8080, 1);
+        let rules = [TargetRule {
+            enabled: 1,
+            priority: 70,
+            kind: 1,
+            ipv4: endpoint.ipv4 as u64,
+            prefix_len: 32,
+            port: 8000,
+            protocol: endpoint.protocol,
+            reserved: 9000,
+            address_family: 1,
+            addr: endpoint.addr,
+            hostname: [0; 32],
+            sni: [0; 32],
+        }];
+        let selected = select_best_target_rule(endpoint, &rules, rules.len()).expect("must select");
+        assert_eq!(selected.priority, 70);
+    }
+
+    #[test]
+    fn select_rule_rejects_port_range_miss() {
+        let endpoint = endpoint_v4(0x0A010203, 9100, 1);
+        let rules = [TargetRule {
+            enabled: 1,
+            priority: 70,
+            kind: 1,
+            ipv4: endpoint.ipv4 as u64,
+            prefix_len: 32,
+            port: 8000,
+            protocol: endpoint.protocol,
+            reserved: 9000,
+            address_family: 1,
+            addr: endpoint.addr,
+            hostname: [0; 32],
+            sni: [0; 32],
+        }];
+        assert!(select_best_target_rule(endpoint, &rules, rules.len()).is_none());
+    }
+
+    #[test]
     fn select_rule_cidr_zero_prefix_matches_any_ipv4() {
         let endpoint = endpoint_v4(0xC0A8010A, 8080, 1);
         let rules = [TargetRule {
@@ -543,7 +588,8 @@ mod tests {
         .expect("rule should apply after generation stabilizes");
 
         assert_eq!(cfg_reads.get(), 2);
-        assert_eq!(result.target_enabled, 1);
+        // Rule-table selection already matched the endpoint, so single-target filtering is disabled.
+        assert_eq!(result.target_enabled, 0);
         assert_eq!(result.target_kind, 1);
         assert_eq!(result.target_address_family, 1);
         assert_eq!(result.target_addr, endpoint.addr);

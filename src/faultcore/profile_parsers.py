@@ -214,12 +214,16 @@ def build_target_profile(
     host: str | None = None,
     cidr: str | None = None,
     port: int | None = None,
+    port_start: int | None = None,
+    port_end: int | None = None,
     protocol: str | None = None,
     priority: int | None = None,
 ) -> dict[str, int | list[int]]:
     parsed_protocol = parse_target_protocol(protocol)
     parsed_host = host
     parsed_port = int(port) if port is not None else 0
+    parsed_port_start = int(port_start) if port_start is not None else None
+    parsed_port_end = int(port_end) if port_end is not None else None
     parsed_cidr = cidr
 
     if target is not None:
@@ -238,12 +242,25 @@ def build_target_profile(
             host_part, port_from_target = _parse_target_host_port(raw)
             if parsed_port != 0 and port_from_target != 0 and parsed_port != port_from_target:
                 raise ValueError("target port conflicts with port parameter")
+            if port_from_target != 0 and (parsed_port_start is not None or parsed_port_end is not None):
+                raise ValueError("target port conflicts with port_start/port_end parameters")
             if port_from_target != 0:
                 parsed_port = port_from_target
             parsed_host = host_part
 
     if parsed_port < 0 or parsed_port > 65535:
         raise ValueError("target port must be between 0 and 65535")
+    if parsed_port != 0 and (parsed_port_start is not None or parsed_port_end is not None):
+        raise ValueError("target cannot define both port and port_start/port_end")
+    if (parsed_port_start is None) != (parsed_port_end is None):
+        raise ValueError("target requires both port_start and port_end when using port ranges")
+    if parsed_port_start is not None and parsed_port_end is not None:
+        if parsed_port_start < 0 or parsed_port_start > 65535:
+            raise ValueError("target port_start must be between 0 and 65535")
+        if parsed_port_end < 0 or parsed_port_end > 65535:
+            raise ValueError("target port_end must be between 0 and 65535")
+        if parsed_port_start > parsed_port_end:
+            raise ValueError("target port_start must be <= port_end")
     parsed_priority = 100 if priority is None else int(priority)
     if parsed_priority < 0 or parsed_priority > 65535:
         raise ValueError("target priority must be between 0 and 65535")
@@ -280,6 +297,9 @@ def build_target_profile(
             "address_family": address_family,
             "addr": addr,
         }
+        if parsed_port_start is not None and parsed_port_end is not None:
+            profile["port_start"] = parsed_port_start
+            profile["port_end"] = parsed_port_end
         return profile
 
     try:
@@ -299,7 +319,7 @@ def build_target_profile(
         addr = addr + ([0] * (16 - len(addr)))
     if network.prefixlen < 0 or network.prefixlen > max_prefix_len:
         raise ValueError(f"target prefix_len must be between 0 and {max_prefix_len}")
-    return {
+    profile = {
         "enabled": 1,
         "kind": 2,
         "ipv4": ipv4,
@@ -310,6 +330,10 @@ def build_target_profile(
         "address_family": address_family,
         "addr": addr,
     }
+    if parsed_port_start is not None and parsed_port_end is not None:
+        profile["port_start"] = parsed_port_start
+        profile["port_end"] = parsed_port_end
+    return profile
 
 
 def build_schedule_profile(
