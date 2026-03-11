@@ -39,6 +39,12 @@ sh tests.sh
 - Python unit tests with interceptor preloaded;
 - integration CLI scripts in `tests/integration/`.
 
+Includes `record/replay` integration coverage via:
+
+```bash
+tests/integration/test_record_replay.py
+```
+
 ## Long Stress Entry Point
 
 Run:
@@ -59,6 +65,12 @@ Tune with environment variables:
 - `STRESS_WORKERS` (default `24`)
 - `STRESS_MAX_ERROR_RATE` (default `0.02`)
 - `STRESS_MAX_RSS_DELTA_KB` (default `131072`)
+
+Reference run on **2026-03-11**:
+- `stress integration: PASS`
+- `baseline`: `206676 ops`, `avg_ms=2.36`
+- `policy_latency`: `3420 ops`, `avg_ms=140.75`
+- `rss_delta_kb=49936`
 
 ## Integration CLI Scripts
 

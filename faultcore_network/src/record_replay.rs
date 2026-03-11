@@ -1,11 +1,12 @@
 use crate::LayerDecision;
 use flate2::Compression;
-use flate2::read::GzDecoder;
+use flate2::read::MultiGzDecoder;
 use flate2::write::GzEncoder;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::fs::OpenOptions;
+use std::io::{BufRead, BufReader, Write};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecordReplayMode {
@@ -116,7 +117,7 @@ impl RecordReplayCore {
 
 struct RecordReplaySession {
     core: RecordReplayCore,
-    writer: Option<BufWriter<GzEncoder<File>>>,
+    record_path: Option<String>,
 }
 
 impl RecordReplaySession {
@@ -142,7 +143,7 @@ impl RecordReplaySession {
         let Ok(file) = File::open(path) else {
             return out;
         };
-        let reader = BufReader::new(GzDecoder::new(file));
+        let reader = BufReader::new(MultiGzDecoder::new(file));
         for line in reader.lines().map_while(Result::ok) {
             if let Ok(event) = serde_json::from_str::<RecordReplayEvent>(&line) {
                 out.push_back(event);
@@ -158,36 +159,40 @@ impl RecordReplaySession {
         match mode {
             RecordReplayMode::Off => Self {
                 core: RecordReplayCore::new(mode, VecDeque::new()),
-                writer: None,
+                record_path: None,
             },
             RecordReplayMode::Record => {
-                let writer = File::create(path)
-                    .ok()
-                    .map(|file| GzEncoder::new(file, Compression::default()))
-                    .map(BufWriter::new);
+                let record_path = if File::create(&path).is_ok() {
+                    Some(path)
+                } else {
+                    None
+                };
                 Self {
                     core: RecordReplayCore::new(mode, VecDeque::new()),
-                    writer,
+                    record_path,
                 }
             }
             RecordReplayMode::Replay => Self {
                 core: RecordReplayCore::new(mode, Self::load_replay_events(&path)),
-                writer: None,
+                record_path: None,
             },
         }
     }
 
     fn persist_event(&mut self, event: RecordReplayEvent) {
-        let Some(writer) = self.writer.as_mut() else {
+        let Some(path) = self.record_path.as_ref() else {
             return;
         };
         let Ok(line) = serde_json::to_string(&event) else {
             return;
         };
-        if writer.write_all(line.as_bytes()).is_ok() {
-            let _ = writer.write_all(b"\n");
-            let _ = writer.flush();
-        }
+        let Ok(file) = OpenOptions::new().append(true).create(true).open(path) else {
+            return;
+        };
+        let mut encoder = GzEncoder::new(file, Compression::default());
+        let _ = encoder.write_all(line.as_bytes());
+        let _ = encoder.write_all(b"\n");
+        let _ = encoder.finish();
     }
 
     fn evaluate_or_replay<F>(&mut self, site: &str, evaluate: F) -> LayerDecision

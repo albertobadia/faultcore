@@ -59,6 +59,45 @@ def get_thread_policy() -> str | None:
     return _policy_registry.get_thread_policy()
 
 
+def _with_wrapper(**wrapper_kwargs: Any) -> Callable[[Callable[..., Any]], "FaultWrapper"]:
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
+        return FaultWrapper(func, **wrapper_kwargs)
+
+    return decorator
+
+
+def _with_parsed_wrapper_value(
+    field_name: str,
+    value: Any,
+    parser: Callable[[Any], Any],
+) -> Callable[[Callable[..., Any]], "FaultWrapper"]:
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
+        return FaultWrapper(func, **{field_name: parser(value)})
+
+    return decorator
+
+
+def _build_directional_profile_or_raise(
+    direction_name: str,
+    *,
+    latency_ms: int | None = None,
+    jitter_ms: int | None = None,
+    packet_loss: str | int | float | None = None,
+    burst_loss_len: int | None = None,
+    rate: str | int | float | None = None,
+) -> dict[str, int]:
+    direction_profile = _build_direction_profile(
+        latency_ms=latency_ms,
+        jitter_ms=jitter_ms,
+        packet_loss=packet_loss,
+        burst_loss_len=burst_loss_len,
+        rate=rate,
+    )
+    if not direction_profile:
+        raise ValueError(f"{direction_name} requires at least one directional field")
+    return direction_profile
+
+
 class FaultWrapper:
     def __init__(
         self,
@@ -142,7 +181,7 @@ class FaultWrapper:
         finally:
             shm.clear(tid)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return (
             "<FaultWrapper("
             f"seed={self._seed}, "
@@ -166,63 +205,39 @@ class FaultWrapper:
         )
 
 
-def latency(latency_ms: int):
+def latency(latency_ms: int) -> Callable[[Callable[..., Any]], FaultWrapper]:
     if latency_ms < 0:
         raise ValueError("latency must be >= 0")
-
-    def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        return FaultWrapper(func, latency_ms=latency_ms)
-
-    return decorator
+    return _with_wrapper(latency_ms=latency_ms)
 
 
-def jitter(jitter_ms: int):
+def jitter(jitter_ms: int) -> Callable[[Callable[..., Any]], FaultWrapper]:
     if jitter_ms < 0:
         raise ValueError("jitter must be >= 0")
-
-    def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        return FaultWrapper(func, jitter_ms=jitter_ms)
-
-    return decorator
+    return _with_wrapper(jitter_ms=jitter_ms)
 
 
-def connect_timeout(timeout_ms: int):
+def connect_timeout(timeout_ms: int) -> Callable[[Callable[..., Any]], FaultWrapper]:
     if timeout_ms < 0:
         raise ValueError("connect_timeout must be >= 0")
-
-    def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        return FaultWrapper(func, timeouts=(timeout_ms, 0))
-
-    return decorator
+    return _with_wrapper(timeouts=(timeout_ms, 0))
 
 
-def recv_timeout(timeout_ms: int):
+def recv_timeout(timeout_ms: int) -> Callable[[Callable[..., Any]], FaultWrapper]:
     if timeout_ms < 0:
         raise ValueError("recv_timeout must be >= 0")
-
-    def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        return FaultWrapper(func, timeouts=(0, timeout_ms))
-
-    return decorator
+    return _with_wrapper(timeouts=(0, timeout_ms))
 
 
-def rate_limit(rate: str | int):
-    def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        bps = _parse_rate(rate)
-        return FaultWrapper(func, bandwidth_bps=bps)
-
-    return decorator
+def rate_limit(rate: str | int) -> Callable[[Callable[..., Any]], FaultWrapper]:
+    return _with_parsed_wrapper_value("bandwidth_bps", rate, _parse_rate)
 
 
-def packet_loss(loss: str | int | float):
-    def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        ppm = _parse_packet_loss(loss)
-        return FaultWrapper(func, packet_loss_ppm=ppm)
-
-    return decorator
+def packet_loss(loss: str | int | float) -> Callable[[Callable[..., Any]], FaultWrapper]:
+    return _with_parsed_wrapper_value("packet_loss_ppm", loss, _parse_packet_loss)
 
 
-def burst_loss(length: int):
+def burst_loss(length: int) -> Callable[[Callable[..., Any]], FaultWrapper]:
     def decorator(func: Callable[..., Any]) -> FaultWrapper:
         if length < 0:
             raise ValueError("burst_loss length must be >= 0")
@@ -238,21 +253,16 @@ def uplink(
     packet_loss: str | int | float | None = None,
     burst_loss_len: int | None = None,
     rate: str | int | float | None = None,
-):
-    direction_profile = _build_direction_profile(
+) -> Callable[[Callable[..., Any]], FaultWrapper]:
+    direction_profile = _build_directional_profile_or_raise(
+        "uplink",
         latency_ms=latency_ms,
         jitter_ms=jitter_ms,
         packet_loss=packet_loss,
         burst_loss_len=burst_loss_len,
         rate=rate,
     )
-    if not direction_profile:
-        raise ValueError("uplink requires at least one directional field")
-
-    def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        return FaultWrapper(func, uplink_profile=direction_profile)
-
-    return decorator
+    return _with_wrapper(uplink_profile=direction_profile)
 
 
 def downlink(
@@ -262,21 +272,16 @@ def downlink(
     packet_loss: str | int | float | None = None,
     burst_loss_len: int | None = None,
     rate: str | int | float | None = None,
-):
-    direction_profile = _build_direction_profile(
+) -> Callable[[Callable[..., Any]], FaultWrapper]:
+    direction_profile = _build_directional_profile_or_raise(
+        "downlink",
         latency_ms=latency_ms,
         jitter_ms=jitter_ms,
         packet_loss=packet_loss,
         burst_loss_len=burst_loss_len,
         rate=rate,
     )
-    if not direction_profile:
-        raise ValueError("downlink requires at least one directional field")
-
-    def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        return FaultWrapper(func, downlink_profile=direction_profile)
-
-    return decorator
+    return _with_wrapper(downlink_profile=direction_profile)
 
 
 def correlated_loss(
@@ -285,45 +290,33 @@ def correlated_loss(
     p_bad_to_good: str | int | float,
     loss_good: str | int | float,
     loss_bad: str | int | float,
-):
+) -> Callable[[Callable[..., Any]], FaultWrapper]:
     correlated_profile = _build_correlated_loss_profile(
         p_good_to_bad=p_good_to_bad,
         p_bad_to_good=p_bad_to_good,
         loss_good=loss_good,
         loss_bad=loss_bad,
     )
-
-    def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        return FaultWrapper(func, correlated_loss_profile=correlated_profile)
-
-    return decorator
+    return _with_wrapper(correlated_loss_profile=correlated_profile)
 
 
-def connection_error(*, kind: str, prob: str | int | float = "100%"):
+def connection_error(*, kind: str, prob: str | int | float = "100%") -> Callable[[Callable[..., Any]], FaultWrapper]:
     connection_error_profile = _build_connection_error_profile(kind=kind, prob=prob)
-
-    def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        return FaultWrapper(func, connection_error_profile=connection_error_profile)
-
-    return decorator
+    return _with_wrapper(connection_error_profile=connection_error_profile)
 
 
-def half_open(*, after_bytes: int, error: str = "reset"):
+def half_open(*, after_bytes: int, error: str = "reset") -> Callable[[Callable[..., Any]], FaultWrapper]:
     half_open_profile = _build_half_open_profile(after_bytes=after_bytes, error=error)
-
-    def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        return FaultWrapper(func, half_open_profile=half_open_profile)
-
-    return decorator
+    return _with_wrapper(half_open_profile=half_open_profile)
 
 
-def packet_duplicate(*, prob: str | int | float = "100%", max_extra: int = 1):
+def packet_duplicate(
+    *,
+    prob: str | int | float = "100%",
+    max_extra: int = 1,
+) -> Callable[[Callable[..., Any]], FaultWrapper]:
     duplicate_profile = _build_packet_duplicate_profile(prob=prob, max_extra=max_extra)
-
-    def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        return FaultWrapper(func, packet_duplicate_profile=duplicate_profile)
-
-    return decorator
+    return _with_wrapper(packet_duplicate_profile=duplicate_profile)
 
 
 def packet_reorder(
@@ -331,40 +324,24 @@ def packet_reorder(
     prob: str | int | float = "100%",
     max_delay_ms: int = 0,
     window: int = 1,
-):
+) -> Callable[[Callable[..., Any]], FaultWrapper]:
     reorder_profile = _build_packet_reorder_profile(prob=prob, max_delay_ms=max_delay_ms, window=window)
-
-    def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        return FaultWrapper(func, packet_reorder_profile=reorder_profile)
-
-    return decorator
+    return _with_wrapper(packet_reorder_profile=reorder_profile)
 
 
-def dns_delay(delay_ms: int):
+def dns_delay(delay_ms: int) -> Callable[[Callable[..., Any]], FaultWrapper]:
     dns_profile = _build_dns_profile(delay_ms=delay_ms)
-
-    def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        return FaultWrapper(func, dns_profile=dns_profile)
-
-    return decorator
+    return _with_wrapper(dns_profile=dns_profile)
 
 
-def dns_timeout(timeout_ms: int):
+def dns_timeout(timeout_ms: int) -> Callable[[Callable[..., Any]], FaultWrapper]:
     dns_profile = _build_dns_profile(timeout_ms=timeout_ms)
-
-    def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        return FaultWrapper(func, dns_profile=dns_profile)
-
-    return decorator
+    return _with_wrapper(dns_profile=dns_profile)
 
 
-def dns_nxdomain(prob: str | int | float = "100%"):
+def dns_nxdomain(prob: str | int | float = "100%") -> Callable[[Callable[..., Any]], FaultWrapper]:
     dns_profile = _build_dns_profile(nxdomain=prob)
-
-    def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        return FaultWrapper(func, dns_profile=dns_profile)
-
-    return decorator
+    return _with_wrapper(dns_profile=dns_profile)
 
 
 def for_target(
@@ -378,7 +355,7 @@ def for_target(
     port_start: int | None = None,
     port_end: int | None = None,
     protocol: str | None = None,
-):
+) -> Callable[[Callable[..., Any]], FaultWrapper]:
     target_profile = _build_target_profile(
         target=target,
         host=host,
@@ -390,11 +367,7 @@ def for_target(
         port_end=port_end,
         protocol=protocol,
     )
-
-    def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        return FaultWrapper(func, target_profile=target_profile)
-
-    return decorator
+    return _with_wrapper(target_profile=target_profile)
 
 
 def profile(
@@ -410,7 +383,7 @@ def profile(
     packet_loss: str | int | float | None = None,
     burst_loss_len: int | None = None,
     rate: str | int | float | None = None,
-):
+) -> Callable[[Callable[..., Any]], FaultWrapper]:
     schedule_profile = _build_schedule_profile(
         kind=kind,
         every_s=every_s,
@@ -419,7 +392,7 @@ def profile(
         off_s=off_s,
         ramp_s=ramp_s,
     )
-    direction = _build_direction_profile(
+    direction_profile = _build_direction_profile(
         latency_ms=latency_ms,
         jitter_ms=jitter_ms,
         packet_loss=packet_loss,
@@ -430,20 +403,20 @@ def profile(
     def decorator(func: Callable[..., Any]) -> FaultWrapper:
         return FaultWrapper(
             func,
-            latency_ms=direction.get("latency_ms"),
-            jitter_ms=direction.get("jitter_ms"),
-            packet_loss_ppm=direction.get("packet_loss_ppm"),
-            burst_loss_len=direction.get("burst_loss_len"),
-            bandwidth_bps=direction.get("bandwidth_bps"),
+            latency_ms=direction_profile.get("latency_ms"),
+            jitter_ms=direction_profile.get("jitter_ms"),
+            packet_loss_ppm=direction_profile.get("packet_loss_ppm"),
+            burst_loss_len=direction_profile.get("burst_loss_len"),
+            bandwidth_bps=direction_profile.get("bandwidth_bps"),
             schedule_profile=schedule_profile,
         )
 
     return decorator
 
 
-def apply_policy(_key: str):
+def apply_policy(policy_name: str) -> Callable[[Callable[..., Any]], FaultWrapper]:
     def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        policy = get_policy_for_apply(_key)
+        policy = get_policy_for_apply(policy_name)
         if policy is None:
             return FaultWrapper(func)
         return FaultWrapper(
@@ -472,9 +445,9 @@ def apply_policy(_key: str):
     return decorator
 
 
-def fault(_policy_name: str = "auto"):
+def fault(policy_name: str = "auto") -> Callable[[Callable[..., Any]], FaultWrapper]:
     def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        name = _policy_name
+        name = policy_name
         if name == "auto":
             name = get_thread_policy() or ""
         if not name:

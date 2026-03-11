@@ -58,6 +58,36 @@ Helper script:
 examples/run_with_preload.sh 01_http_requests.py
 ```
 
+## Record/Replay Mode
+
+`faultcore_network` supports deterministic decision capture/replay at runtime.
+
+Environment variables:
+- `FAULTCORE_RECORD_REPLAY_MODE`: `off` (default), `record`, or `replay`.
+- `FAULTCORE_RECORD_REPLAY_PATH`: gzip JSONL path (default `/tmp/faultcore_record_replay.jsonl.gz`).
+
+Typical workflow:
+
+```bash
+# 1) Record a run
+LD_PRELOAD=./faultcore_interceptor/target/release/libfaultcore_interceptor.so \
+FAULTCORE_WRAPPER_MODE=shm \
+FAULTCORE_RECORD_REPLAY_MODE=record \
+FAULTCORE_RECORD_REPLAY_PATH=/tmp/faultcore_rr.jsonl.gz \
+python your_script.py
+
+# 2) Replay with the same policy/routing shape
+LD_PRELOAD=./faultcore_interceptor/target/release/libfaultcore_interceptor.so \
+FAULTCORE_WRAPPER_MODE=shm \
+FAULTCORE_RECORD_REPLAY_MODE=replay \
+FAULTCORE_RECORD_REPLAY_PATH=/tmp/faultcore_rr.jsonl.gz \
+python your_script.py
+```
+
+Notes:
+- Replay is fail-fast if event sequence diverges (`site` mismatch or missing events).
+- Record ownership lives in `faultcore_network`; interceptor stays a thin syscall adapter.
+
 ## Platform Notes
 
 - `LD_PRELOAD` interception is Linux-specific.

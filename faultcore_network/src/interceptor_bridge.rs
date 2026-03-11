@@ -136,8 +136,8 @@ pub fn clone_observed_semantic_for_fd(src_fd: c_int, dst_fd: c_int) {
     if src_fd < 0 || dst_fd < 0 {
         return;
     }
-    let cloned = observed_sni_by_fd().lock().get(&src_fd).cloned();
     let mut map = observed_sni_by_fd().lock();
+    let cloned = map.get(&src_fd).cloned();
     if let Some(sni) = cloned {
         map.insert(dst_fd, sni);
     } else {
@@ -1011,7 +1011,6 @@ mod tests {
        .expect("rule should apply after generation stabilizes");
     
        assert_eq!(cfg_reads.get(), 2);
-       // Rule-table selection already matched the endpoint, so single-target filtering is disabled.
        assert_eq!(result.target_enabled, 0);
        assert_eq!(result.target_kind, 1);
        assert_eq!(result.target_address_family, 1);
