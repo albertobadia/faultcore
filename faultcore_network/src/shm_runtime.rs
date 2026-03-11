@@ -427,6 +427,7 @@ mod tests {
             session_action: 0,
             session_budget_timeout_ms: 0,
             session_error_kind: 0,
+            policy_seed: 0,
         };
         assert!(config.is_valid());
     }
@@ -495,6 +496,7 @@ mod tests {
             session_action: 0,
             session_budget_timeout_ms: 0,
             session_error_kind: 0,
+            policy_seed: 0,
         };
         assert!(!config.is_valid());
     }
@@ -608,6 +610,7 @@ mod tests {
                 session_action: 0,
                 session_budget_timeout_ms: 0,
                 session_error_kind: 0,
+                policy_seed: 0,
             });
         }
 

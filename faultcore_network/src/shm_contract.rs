@@ -77,6 +77,7 @@ pub struct FaultcoreConfig {
     pub session_action: u64,
     pub session_budget_timeout_ms: u64,
     pub session_error_kind: u64,
+    pub policy_seed: u64,
 }
 
 #[repr(C)]
@@ -203,6 +204,7 @@ impl FaultcoreConfig {
             session_action: self.session_action,
             session_budget_timeout_ms: self.session_budget_timeout_ms,
             session_error_kind: self.session_error_kind,
+            policy_seed: self.policy_seed,
             ruleset_generation: self.ruleset_generation,
             schedule_type: self.schedule_type,
             schedule_param_a_ns: self.schedule_param_a_ns,

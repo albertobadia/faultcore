@@ -1,9 +1,11 @@
 use crate::layers::{Layer, LayerDecision, LayerStage, PacketContext};
 use parking_lot::Mutex;
 use rand::{Rng, SeedableRng, random, rngs::StdRng};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub struct L3Routing {
     seeded_rng: Option<Mutex<StdRng>>,
+    policy_counter: AtomicU64,
 }
 
 impl L3Routing {
@@ -12,16 +14,33 @@ impl L3Routing {
             .ok()
             .and_then(|raw| raw.parse::<u64>().ok())
             .map(|seed| Mutex::new(StdRng::seed_from_u64(seed)));
-        Self { seeded_rng }
+        Self {
+            seeded_rng,
+            policy_counter: AtomicU64::new(0),
+        }
     }
 
     pub fn with_seed(seed: u64) -> Self {
         Self {
             seeded_rng: Some(Mutex::new(StdRng::seed_from_u64(seed))),
+            policy_counter: AtomicU64::new(0),
         }
     }
 
-    fn random_u32(&self) -> u32 {
+    fn splitmix64(mut x: u64) -> u64 {
+        x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = x;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    fn random_u32(&self, policy_seed: u64) -> u32 {
+        if policy_seed > 0 {
+            let step = self.policy_counter.fetch_add(1, Ordering::Relaxed);
+            let mixed = Self::splitmix64(policy_seed ^ 0x4C33_0A05 ^ step);
+            return (mixed & 0xFFFF_FFFF) as u32;
+        }
         if let Some(rng) = &self.seeded_rng {
             rng.lock().next_u32()
         } else {
@@ -29,11 +48,11 @@ impl L3Routing {
         }
     }
 
-    fn random_u64_bounded(&self, upper_inclusive: u64) -> u64 {
+    fn random_u64_bounded(&self, upper_inclusive: u64, policy_seed: u64) -> u64 {
         if upper_inclusive == 0 {
             return 0;
         }
-        let v = self.random_u32() as u64;
+        let v = self.random_u32(policy_seed) as u64;
         v % (upper_inclusive + 1)
     }
 }
@@ -55,7 +74,7 @@ impl Layer for L3Routing {
 
     fn process(&self, ctx: &PacketContext<'_>) -> LayerDecision {
         if ctx.config.jitter_ns > 0 {
-            return LayerDecision::DelayNs(self.random_u64_bounded(ctx.config.jitter_ns));
+            return LayerDecision::DelayNs(self.random_u64_bounded(ctx.config.jitter_ns, ctx.config.policy_seed));
         }
         LayerDecision::Continue
     }
@@ -102,6 +121,38 @@ mod tests {
         };
         let a = L3Routing::with_seed(123);
         let b = L3Routing::with_seed(123);
+        let ctx = PacketContext {
+            fd: 1,
+            bytes: 1,
+            operation: crate::layers::Operation::Recv,
+            direction: None,
+            config: &cfg,
+        };
+
+        let s1: Vec<u64> = (0..128)
+            .map(|_| match a.process(&ctx) {
+                LayerDecision::DelayNs(ns) => ns,
+                _ => 0,
+            })
+            .collect();
+        let s2: Vec<u64> = (0..128)
+            .map(|_| match b.process(&ctx) {
+                LayerDecision::DelayNs(ns) => ns,
+                _ => 0,
+            })
+            .collect();
+        assert_eq!(s1, s2);
+    }
+
+    #[test]
+    fn policy_seed_produces_same_jitter_sequence_across_instances() {
+        let cfg = crate::Config {
+            jitter_ns: 10_000,
+            policy_seed: 777,
+            ..Default::default()
+        };
+        let a = L3Routing::new();
+        let b = L3Routing::new();
         let ctx = PacketContext {
             fd: 1,
             bytes: 1,

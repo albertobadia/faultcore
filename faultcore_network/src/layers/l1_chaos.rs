@@ -5,9 +5,11 @@ use crate::{
 use parking_lot::Mutex;
 use rand::{Rng, SeedableRng, random, rngs::StdRng};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub struct L1Chaos {
     seeded_rng: Option<Mutex<StdRng>>,
+    policy_counter: AtomicU64,
     burst_remaining_by_fd: Mutex<HashMap<i32, u64>>,
     ge_state_by_fd: Mutex<HashMap<i32, u8>>,
 }
@@ -20,6 +22,7 @@ impl L1Chaos {
             .map(|seed| Mutex::new(StdRng::seed_from_u64(seed)));
         Self {
             seeded_rng,
+            policy_counter: AtomicU64::new(0),
             burst_remaining_by_fd: Mutex::new(HashMap::new()),
             ge_state_by_fd: Mutex::new(HashMap::new()),
         }
@@ -28,6 +31,7 @@ impl L1Chaos {
     pub fn with_seed(seed: u64) -> Self {
         Self {
             seeded_rng: Some(Mutex::new(StdRng::seed_from_u64(seed))),
+            policy_counter: AtomicU64::new(0),
             burst_remaining_by_fd: Mutex::new(HashMap::new()),
             ge_state_by_fd: Mutex::new(HashMap::new()),
         }
@@ -37,7 +41,20 @@ impl L1Chaos {
         Self::new()
     }
 
-    fn random_u32(&self) -> u32 {
+    fn splitmix64(mut x: u64) -> u64 {
+        x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = x;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    fn random_u32(&self, config: &Config) -> u32 {
+        if config.policy_seed > 0 {
+            let step = self.policy_counter.fetch_add(1, Ordering::Relaxed);
+            let mixed = Self::splitmix64(config.policy_seed ^ 0x4C31_DA05 ^ step);
+            return (mixed & 0xFFFF_FFFF) as u32;
+        }
         if let Some(rng) = &self.seeded_rng {
             rng.lock().next_u32()
         } else {
@@ -45,14 +62,14 @@ impl L1Chaos {
         }
     }
 
-    fn event_happens(&self, probability_ppm: u64) -> bool {
+    fn event_happens(&self, probability_ppm: u64, config: &Config) -> bool {
         if probability_ppm == 0 {
             return false;
         }
         if probability_ppm >= 1_000_000 {
             return true;
         }
-        let random = self.random_u32() % 1_000_000;
+        let random = self.random_u32(config) % 1_000_000;
         random < probability_ppm as u32
     }
 
@@ -65,10 +82,10 @@ impl L1Chaos {
         let current_state = ge_state_by_fd.get(&fd).copied().unwrap_or(0);
         let mut next_state = current_state;
         if current_state == 0 {
-            if self.event_happens(config.ge_p_good_to_bad_ppm) {
+            if self.event_happens(config.ge_p_good_to_bad_ppm, config) {
                 next_state = 1;
             }
-        } else if self.event_happens(config.ge_p_bad_to_good_ppm) {
+        } else if self.event_happens(config.ge_p_bad_to_good_ppm, config) {
             next_state = 0;
         }
 
@@ -92,7 +109,7 @@ impl L1Chaos {
         };
         let mut count = 0;
         for _ in 0..max_extra {
-            if self.event_happens(config.dup_prob_ppm) {
+            if self.event_happens(config.dup_prob_ppm, config) {
                 count += 1;
             }
         }
@@ -100,7 +117,7 @@ impl L1Chaos {
     }
 
     pub fn should_reorder(&self, config: &Config) -> bool {
-        self.event_happens(config.reorder_prob_ppm)
+        self.event_happens(config.reorder_prob_ppm, config)
     }
 
     pub fn duplicate_decision(&self, config: &Config) -> LayerDecision {
@@ -154,7 +171,7 @@ impl Layer for L1Chaos {
         let effective_loss = self
             .correlated_loss_ppm(ctx.fd, config)
             .unwrap_or(config.packet_loss_ppm);
-        if self.event_happens(effective_loss) {
+        if self.event_happens(effective_loss, config) {
             if config.burst_loss_len > 0 {
                 self.burst_remaining_by_fd
                     .lock()
@@ -244,6 +261,33 @@ mod tests {
         unsafe {
             std::env::remove_var("FAULTCORE_SEED");
         }
+    }
+
+    #[test]
+    fn policy_seed_produces_deterministic_sequence_across_instances() {
+        let cfg = Config {
+            packet_loss_ppm: 250_000,
+            policy_seed: 1337,
+            ..Default::default()
+        };
+        let first = L1Chaos::new();
+        let second = L1Chaos::new();
+        let ctx = PacketContext {
+            fd: 1,
+            bytes: 1,
+            operation: Operation::Recv,
+            direction: None,
+            config: &cfg,
+        };
+
+        let seq1: Vec<bool> = (0..256)
+            .map(|_| matches!(first.process(&ctx), LayerDecision::Drop))
+            .collect();
+        let seq2: Vec<bool> = (0..256)
+            .map(|_| matches!(second.process(&ctx), LayerDecision::Drop))
+            .collect();
+
+        assert_eq!(seq1, seq2);
     }
 
     #[test]

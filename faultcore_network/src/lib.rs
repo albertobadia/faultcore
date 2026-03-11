@@ -208,6 +208,7 @@ pub struct Config {
     pub session_action: u64,
     pub session_budget_timeout_ms: u64,
     pub session_error_kind: u64,
+    pub policy_seed: u64,
     pub ruleset_generation: u64,
     pub schedule_type: u64,
     pub schedule_param_a_ns: u64,
@@ -246,6 +247,7 @@ impl Config {
             || self.dns_nxdomain_ppm > 0
             || self.target_enabled > 0
             || self.session_budget_enabled > 0
+            || self.policy_seed > 0
             || self.schedule_type > 0
     }
 

@@ -5,9 +5,11 @@ use crate::{
 use parking_lot::Mutex;
 use rand::{Rng, SeedableRng, random, rngs::StdRng};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub struct L4Transport {
     seeded_rng: Option<Mutex<StdRng>>,
+    policy_counter: AtomicU64,
     stream_bytes: Mutex<HashMap<i32, u64>>,
 }
 
@@ -19,11 +21,25 @@ impl L4Transport {
             .map(|seed| Mutex::new(StdRng::seed_from_u64(seed)));
         Self {
             seeded_rng,
+            policy_counter: AtomicU64::new(0),
             stream_bytes: Mutex::new(HashMap::new()),
         }
     }
 
-    fn random_u32(&self) -> u32 {
+    fn splitmix64(mut x: u64) -> u64 {
+        x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = x;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    fn random_u32(&self, config: &Config) -> u32 {
+        if config.policy_seed > 0 {
+            let step = self.policy_counter.fetch_add(1, Ordering::Relaxed);
+            let mixed = Self::splitmix64(config.policy_seed ^ 0x4C34_0A05 ^ step);
+            return (mixed & 0xFFFF_FFFF) as u32;
+        }
         if let Some(rng) = &self.seeded_rng {
             rng.lock().next_u32()
         } else {
@@ -31,14 +47,14 @@ impl L4Transport {
         }
     }
 
-    fn event_happens(&self, probability_ppm: u64) -> bool {
+    fn event_happens(&self, probability_ppm: u64, config: &Config) -> bool {
         if probability_ppm == 0 {
             return false;
         }
         if probability_ppm >= 1_000_000 {
             return true;
         }
-        let random = self.random_u32() % 1_000_000;
+        let random = self.random_u32(config) % 1_000_000;
         random < probability_ppm as u32
     }
 
@@ -70,7 +86,7 @@ impl L4Transport {
                 return Some(kind);
             }
         }
-        if config.conn_err_kind > 0 && self.event_happens(config.conn_err_prob_ppm) {
+        if config.conn_err_kind > 0 && self.event_happens(config.conn_err_prob_ppm, config) {
             return Some(config.conn_err_kind);
         }
         None

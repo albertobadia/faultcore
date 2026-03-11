@@ -115,6 +115,21 @@ class TestSessionBudgetSerialization:
             writer.close()
             cleanup_test_shm(name)
 
+    def test_write_policy_seed_serializes_field(self):
+        name = f"faultcore_test_{uuid.uuid4().hex}"
+        fd = create_test_shm(name)
+        os.close(fd)
+        writer = SHMWriter(name)
+        tid = 4242
+
+        try:
+            writer.write_policy_seed(tid, 987654321)
+            offset = writer._get_offset(tid)
+            assert struct.unpack_from("<Q", writer._mmap, offset + 536)[0] == 987654321
+        finally:
+            writer.close()
+            cleanup_test_shm(name)
+
 
 class TestTargetRulesValidation:
     @pytest.mark.parametrize(

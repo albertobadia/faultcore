@@ -188,6 +188,7 @@ class TestPolicyRegistry:
     def test_apply_policy_uses_registered_policy(self):
         faultcore.register_policy(
             "slow_link",
+            seed=2026,
             latency_ms=50,
             jitter_ms=10,
             packet_loss="1%",
@@ -199,6 +200,7 @@ class TestPolicyRegistry:
 
         mock_shm = MagicMock()
         mock_shm.write_latency = MagicMock()
+        mock_shm.write_policy_seed = MagicMock()
         mock_shm.write_jitter = MagicMock()
         mock_shm.write_packet_loss = MagicMock()
         mock_shm.write_burst_loss = MagicMock()
@@ -214,6 +216,7 @@ class TestPolicyRegistry:
                     return "ok"
 
                 assert op() == "ok"
+                mock_shm.write_policy_seed.assert_called_once_with(5150, 2026)
                 mock_shm.write_latency.assert_called_once_with(5150, 50)
                 mock_shm.write_jitter.assert_called_once_with(5150, 10)
                 mock_shm.write_packet_loss.assert_called_once_with(5150, 10_000)
@@ -879,6 +882,8 @@ class TestPolicyRegistry:
             faultcore.register_policy("bad21", session_budget="invalid")
         with pytest.raises(ValueError):
             faultcore.register_policy("bad22", session_budget={"action": "drop"})
+        with pytest.raises(ValueError):
+            faultcore.register_policy("bad23", seed=-1)
 
     def test_registry_introspection_and_unregister(self):
         clear_policies()

@@ -17,7 +17,7 @@ MAX_FDS = 131072
 MAX_TIDS = 65536
 MAX_POLICIES = 1024
 MAX_TARGET_RULES_PER_TID = 8
-CONFIG_SIZE = 536
+CONFIG_SIZE = 544
 POLICY_STATE_SIZE = 56
 TARGET_RULE_SIZE = 152
 SHM_SIZE = (
@@ -97,6 +97,7 @@ _OFFSET_SESSION_MAX_DURATION_MS = 504
 _OFFSET_SESSION_ACTION = 512
 _OFFSET_SESSION_BUDGET_TIMEOUT_MS = 520
 _OFFSET_SESSION_ERROR_KIND = 528
+_OFFSET_POLICY_SEED = 536
 
 _UPLINK_DIRECTION_OFFSETS: DirectionOffsets = (
     _OFFSET_UPLINK_LATENCY_NS,
@@ -601,6 +602,11 @@ class SHMWriter:
                 (_OFFSET_SESSION_ERROR_KIND, int(error_kind or 0)),
             ),
         )
+
+    def write_policy_seed(self, tid: int, seed: int) -> None:
+        if int(seed) < 0:
+            raise ValueError("policy seed must be >= 0")
+        self._write_fields(tid, ((_OFFSET_POLICY_SEED, int(seed)),))
 
     def clear(self, tid: int) -> None:
         tid_slot = self._tid_slot(tid)

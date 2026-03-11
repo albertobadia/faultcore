@@ -63,6 +63,7 @@ class FaultWrapper:
     def __init__(
         self,
         func: Callable[..., Any],
+        seed: int | None = None,
         latency_ms: int | None = None,
         jitter_ms: int | None = None,
         packet_loss_ppm: int | None = None,
@@ -84,6 +85,7 @@ class FaultWrapper:
     ):
         functools.update_wrapper(self, func)
         self._func = func
+        self._seed = seed
         self._latency_ms = latency_ms
         self._jitter_ms = jitter_ms
         self._packet_loss_ppm = packet_loss_ppm
@@ -143,6 +145,7 @@ class FaultWrapper:
     def __repr__(self):
         return (
             "<FaultWrapper("
+            f"seed={self._seed}, "
             f"latency={self._latency_ms}, "
             f"jitter={self._jitter_ms}, "
             f"packet_loss_ppm={self._packet_loss_ppm}, "
@@ -445,6 +448,7 @@ def apply_policy(_key: str):
             return FaultWrapper(func)
         return FaultWrapper(
             func,
+            seed=policy.get("seed"),
             latency_ms=policy.get("latency_ms"),
             jitter_ms=policy.get("jitter_ms"),
             packet_loss_ppm=policy.get("packet_loss_ppm"),

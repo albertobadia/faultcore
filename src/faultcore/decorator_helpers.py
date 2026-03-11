@@ -24,6 +24,9 @@ def _target_write_kwargs(target_profile: dict[str, Any]) -> dict[str, Any]:
 
 
 def apply_fault_profiles(shm: Any, tid: int, wrapper: Any, *, started_monotonic_ns: int) -> None:
+    if wrapper._seed is not None:
+        shm.write_policy_seed(tid, wrapper._seed)
+
     if wrapper._latency_ms:
         shm.write_latency(tid, wrapper._latency_ms)
 

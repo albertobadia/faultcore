@@ -29,6 +29,7 @@ _POLICY_LOCK = threading.RLock()
 
 
 _REGISTERABLE_FIELDS = (
+    "seed",
     "latency_ms",
     "jitter_ms",
     "packet_loss",
@@ -211,6 +212,7 @@ def get_policy_for_apply(name: str) -> dict[str, Any] | None:
 def register_policy(
     name: str,
     *,
+    seed: int | None = None,
     latency_ms: int | None = None,
     jitter_ms: int | None = None,
     packet_loss: str | int | float | None = None,
@@ -239,6 +241,8 @@ def register_policy(
     policy: dict[str, Any] = {}
     if target is not None and targets is not None:
         raise ValueError("target and targets are mutually exclusive")
+    if seed is not None:
+        policy["seed"] = _coerce_non_negative_int(seed, "seed must be >= 0")
     if latency_ms is not None:
         policy["latency_ms"] = _coerce_non_negative_int(latency_ms, "latency_ms must be >= 0")
     if jitter_ms is not None:
