@@ -43,10 +43,10 @@ def apply_fault_profiles(shm: Any, tid: int, wrapper: Any, *, started_monotonic_
     if wrapper._seed is not None:
         shm.write_policy_seed(tid, wrapper._seed)
 
-    if wrapper._latency_ms:
+    if wrapper._latency_ms is not None:
         shm.write_latency(tid, wrapper._latency_ms)
 
-    if wrapper._jitter_ms:
+    if wrapper._jitter_ms is not None:
         shm.write_jitter(tid, wrapper._jitter_ms)
 
     if wrapper._packet_loss_ppm is not None:
@@ -55,7 +55,7 @@ def apply_fault_profiles(shm: Any, tid: int, wrapper: Any, *, started_monotonic_
     if wrapper._burst_loss_len is not None:
         shm.write_burst_loss(tid, wrapper._burst_loss_len)
 
-    if wrapper._bandwidth_bps:
+    if wrapper._bandwidth_bps is not None:
         shm.write_bandwidth(tid, wrapper._bandwidth_bps)
 
     if wrapper._timeouts:

@@ -7,6 +7,7 @@ import pytest
 
 import faultcore
 from faultcore.decorator import _parse_packet_loss, get_thread_policy
+from faultcore.decorator_helpers import apply_fault_profiles
 
 
 class TestTimeoutDecorator:
@@ -71,6 +72,37 @@ class TestTimeoutDecorator:
 
         result = func_mixed(1, 2, x=3, y=4)
         assert result == 10
+
+
+class TestApplyFaultProfiles:
+    def test_apply_fault_profiles_writes_explicit_zero_values(self):
+        mock_shm = MagicMock()
+        wrapper = MagicMock()
+        wrapper._seed = None
+        wrapper._latency_ms = 0
+        wrapper._jitter_ms = 0
+        wrapper._packet_loss_ppm = None
+        wrapper._burst_loss_len = None
+        wrapper._bandwidth_bps = 0
+        wrapper._timeouts = None
+        wrapper._uplink_profile = {}
+        wrapper._downlink_profile = {}
+        wrapper._correlated_loss_profile = {}
+        wrapper._connection_error_profile = {}
+        wrapper._half_open_profile = {}
+        wrapper._packet_duplicate_profile = {}
+        wrapper._packet_reorder_profile = {}
+        wrapper._dns_profile = {}
+        wrapper._target_profiles = []
+        wrapper._target_profile = {}
+        wrapper._schedule_profile = {}
+        wrapper._session_budget_profile = {}
+
+        apply_fault_profiles(mock_shm, 321, wrapper, started_monotonic_ns=1)
+
+        mock_shm.write_latency.assert_called_once_with(321, 0)
+        mock_shm.write_jitter.assert_called_once_with(321, 0)
+        mock_shm.write_bandwidth.assert_called_once_with(321, 0)
 
 
 class TestLatencyDecorator:

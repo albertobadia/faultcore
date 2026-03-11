@@ -111,6 +111,11 @@ pub fn try_open_shm() -> bool {
             return false;
         }
 
+        if matches!(open_mode, ShmOpenMode::Creator) {
+            let owners_ptr = (addr as usize + FD_OWNER_REGION_OFFSET) as *mut u64;
+            ptr::write_bytes(owners_ptr, 0xFF, MAX_FDS);
+        }
+
         *SHM_POINTER.write() = addr as usize;
         SHM_OPEN.store(1, Ordering::SeqCst);
 
@@ -855,7 +860,34 @@ mod tests {
     }
 
     #[test]
+    fn test_get_tid_slot_for_unassigned_fd_requires_invalid_sentinel() {
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut table = vec![0u64; FAULTCORE_SHM_SIZE.div_ceil(core::mem::size_of::<u64>())];
+
+        let prev_ptr = *SHM_POINTER.read();
+        let prev_open = SHM_OPEN.load(Ordering::SeqCst);
+        *SHM_POINTER.write() = table.as_mut_ptr().cast::<u8>() as usize;
+        SHM_OPEN.store(1, Ordering::SeqCst);
+
+        let fd = 9 as c_int;
+        unsafe {
+            let owners = get_fd_owner_base_ptr().expect("owner table should be available");
+            ptr::write_unaligned(owners.add(fd as usize), INVALID_TID_SLOT);
+        }
+        let slot = get_tid_slot_for_fd(fd);
+        assert!(slot.is_none(), "unassigned fd must not resolve to a tid slot");
+
+        *SHM_POINTER.write() = prev_ptr;
+        SHM_OPEN.store(prev_open, Ordering::SeqCst);
+    }
+
+    #[test]
     fn test_shm_open_mode_defaults_to_consumer() {
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         unsafe {
             std::env::remove_var("FAULTCORE_SHM_OPEN_MODE");
         }
@@ -864,6 +896,9 @@ mod tests {
 
     #[test]
     fn test_shm_open_mode_accepts_creator() {
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         unsafe {
             std::env::set_var("FAULTCORE_SHM_OPEN_MODE", "creator");
         }
