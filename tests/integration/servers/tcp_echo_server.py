@@ -15,8 +15,12 @@ class EchoServer:
         self.client_count = 0
 
     def start(self):
-        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        family = socket.AF_INET6 if ":" in self.host else socket.AF_INET
+        self.server_socket = socket.socket(family, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if family == socket.AF_INET6:
+            # Keep behavior predictable: explicit IPv6 bind for ::1/:: hosts.
+            self.server_socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
         self.server_socket.bind((self.host, self.port))
         self.server_socket.listen(5)
         self.running = True

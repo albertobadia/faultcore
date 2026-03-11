@@ -23,12 +23,13 @@ def ensure_shm_ready() -> str:
     return name
 
 
-def start_tcp_push_server(host: str) -> tuple[int, threading.Thread]:
+def start_tcp_push_server(host: str) -> tuple[int, threading.Thread, threading.Event]:
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind((host, 0))
     server.listen(1)
     port = server.getsockname()[1]
+    sent_ready = threading.Event()
 
     def run() -> None:
         conn = None
@@ -36,6 +37,7 @@ def start_tcp_push_server(host: str) -> tuple[int, threading.Thread]:
             conn, _ = server.accept()
             conn.sendall(b"pkt00001")
             conn.sendall(b"pkt00002")
+            sent_ready.set()
         finally:
             if conn is not None:
                 conn.close()
@@ -43,7 +45,7 @@ def start_tcp_push_server(host: str) -> tuple[int, threading.Thread]:
 
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
-    return port, thread
+    return port, thread, sent_ready
 
 
 def start_udp_push_sender(host: str, client_port: int) -> threading.Thread:
@@ -98,11 +100,15 @@ def recv_many_udp(sock: socket.socket, count: int) -> list[bytes]:
 
 
 def run_tcp_case(host: str) -> None:
-    port, _ = start_tcp_push_server(host)
+    port, _, sent_ready = start_tcp_push_server(host)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(None)
     try:
         sock.connect((host, port))
+        # Avoid policy race with the in-process push server thread:
+        # make sure both packets are sent before enabling reorder on recv.
+        if not sent_ready.wait(timeout=1):
+            raise RuntimeError("tcp push server did not send packets in time")
         out1, out2 = recv_two_tcp(sock)
     finally:
         sock.close()

@@ -1,4 +1,7 @@
 use libc::{c_int, sockaddr, socklen_t};
+use parking_lot::Mutex;
+use std::collections::HashMap;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{
@@ -11,6 +14,56 @@ use crate::{
 const RULESET_READ_RETRY_LIMIT: usize = 3;
 static RELOAD_APPLIED_TOTAL: AtomicU64 = AtomicU64::new(0);
 static RELOAD_RETRY_TOTAL: AtomicU64 = AtomicU64::new(0);
+static OBSERVED_SNI_BY_FD: OnceLock<Mutex<HashMap<c_int, String>>> = OnceLock::new();
+
+fn observed_sni_by_fd() -> &'static Mutex<HashMap<c_int, String>> {
+    OBSERVED_SNI_BY_FD.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn normalize_semantic_name(value: &str) -> Option<String> {
+    let normalized = value.trim().trim_end_matches('.').to_ascii_lowercase();
+    if normalized.is_empty() {
+        return None;
+    }
+    Some(normalized)
+}
+
+fn observed_sni_for_fd(fd: c_int) -> Option<String> {
+    if fd < 0 {
+        return None;
+    }
+    observed_sni_by_fd().lock().get(&fd).cloned()
+}
+
+pub fn observe_sni_for_fd(fd: c_int, sni: &str) {
+    if fd < 0 {
+        return;
+    }
+    let Some(normalized) = normalize_semantic_name(sni) else {
+        return;
+    };
+    observed_sni_by_fd().lock().insert(fd, normalized);
+}
+
+pub fn clear_observed_semantic_for_fd(fd: c_int) {
+    if fd < 0 {
+        return;
+    }
+    observed_sni_by_fd().lock().remove(&fd);
+}
+
+pub fn clone_observed_semantic_for_fd(src_fd: c_int, dst_fd: c_int) {
+    if src_fd < 0 || dst_fd < 0 {
+        return;
+    }
+    let cloned = observed_sni_by_fd().lock().get(&src_fd).cloned();
+    let mut map = observed_sni_by_fd().lock();
+    if let Some(sni) = cloned {
+        map.insert(dst_fd, sni);
+    } else {
+        map.remove(&dst_fd);
+    }
+}
 
 pub fn runtime_reload_metrics_snapshot() -> (u64, u64) {
     (
@@ -188,6 +241,7 @@ fn apply_multi_target_for_tid(
     cfg: Config,
     tid_slot: usize,
     endpoint: Option<Endpoint>,
+    semantic: SemanticContext<'_>,
 ) -> Option<Config> {
     if cfg.target_enabled == 0 {
         return cfg.runtime_filtered(endpoint, monotonic_now_ns());
@@ -196,7 +250,7 @@ fn apply_multi_target_for_tid(
     apply_multi_target_for_tid_with_reader(
         cfg,
         Some(endpoint),
-        SemanticContext::default(),
+        semantic,
         || get_target_rules_for_tid_slot(tid_slot),
         || get_config_for_tid_slot(tid_slot).map(|item| item.into_network_config()),
     )
@@ -259,10 +313,12 @@ pub fn bind_fd_to_current_thread(fd: c_int) {
 
 pub fn clear_fd_binding(fd: c_int) {
     clear_rule_for_fd(fd);
+    clear_observed_semantic_for_fd(fd);
 }
 
 pub fn clone_fd_binding(src_fd: c_int, dst_fd: c_int) {
     clone_rule_for_fd(src_fd, dst_fd);
+    clone_observed_semantic_for_fd(src_fd, dst_fd);
 }
 
 fn resolve_runtime_config_for_endpoint(fd: c_int, endpoint: Option<Endpoint>) -> Option<Config> {
@@ -279,7 +335,12 @@ fn resolve_runtime_config_for_endpoint(fd: c_int, endpoint: Option<Endpoint>) ->
         (cfg, get_tid_slot_for_tid(tid))
     };
 
-    apply_multi_target_for_tid(base_cfg, slot, endpoint)
+    let observed_sni = observed_sni_for_fd(fd);
+    let semantic = SemanticContext {
+        hostname: None,
+        sni: observed_sni.as_deref(),
+    };
+    apply_multi_target_for_tid(base_cfg, slot, endpoint, semantic)
 }
 
 pub fn runtime_config_for_fd(fd: c_int) -> Option<Config> {
@@ -406,7 +467,7 @@ mod tests {
            (current_cfg?, get_tid_slot_for_tid(tid))
        };
        let _ = fd;
-       apply_multi_target_for_tid(base_cfg, slot, endpoint)
+       apply_multi_target_for_tid(base_cfg, slot, endpoint, SemanticContext::default())
     }
     
     #[test]
@@ -777,6 +838,20 @@ mod tests {
        )
        .expect("config should resolve from current tid");
        assert_eq!(selected.latency_ns, 111);
+    }
+
+    #[test]
+    fn observed_sni_state_clones_and_clears_by_fd() {
+       observe_sni_for_fd(12, "Api.Foo.com.");
+       assert_eq!(observed_sni_for_fd(12).as_deref(), Some("api.foo.com"));
+
+       clone_observed_semantic_for_fd(12, 13);
+       assert_eq!(observed_sni_for_fd(13).as_deref(), Some("api.foo.com"));
+
+       clear_observed_semantic_for_fd(12);
+       clear_observed_semantic_for_fd(13);
+       assert!(observed_sni_for_fd(12).is_none());
+       assert!(observed_sni_for_fd(13).is_none());
     }
     
     #[test]

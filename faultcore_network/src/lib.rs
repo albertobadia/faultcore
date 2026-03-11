@@ -13,7 +13,7 @@ pub type FaultOsiEngine = ChaosEngine;
 pub type FaultOsiDecisionCounters = DecisionCounters;
 pub use interceptor_bridge::{
     bind_fd_to_current_thread, clear_fd_binding, clone_fd_binding, init_runtime_shm,
-    reset_runtime_reload_metrics, runtime_reload_metrics_snapshot,
+    observe_sni_for_fd, reset_runtime_reload_metrics, runtime_reload_metrics_snapshot,
     runtime_config_for_addr_or_fd, runtime_config_for_fd, runtime_dns_config_for_current_thread,
     runtime_dns_config_for_query, uplink_duplicate_count_for_addr_or_fd,
     uplink_duplicate_count_for_fd,

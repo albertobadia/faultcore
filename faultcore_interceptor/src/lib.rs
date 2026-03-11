@@ -3,6 +3,7 @@ use faultcore_network::{
     SetpriorityCompatOutcome, apply_connect_directive, apply_stream_directive,
     bind_fd_to_current_thread, clear_fd_binding, clone_fd_binding, global_fault_osi_engine,
     global_interceptor_runtime, handle_setpriority_compat, init_runtime_shm,
+    observe_sni_for_fd,
     reset_global_fault_osi_metrics, runtime_config_for_addr_or_fd, runtime_config_for_fd,
     runtime_dns_config_for_current_thread, runtime_dns_config_for_query, set_errno_value,
     snapshot_recv_datagram,
@@ -11,14 +12,17 @@ use faultcore_network::{
     write_pending_recv_result, write_pending_recvfrom_result,
 };
 use libc::{addrinfo, c_char, c_int, c_void, size_t, sockaddr, socklen_t, ssize_t};
+use std::collections::{HashMap, VecDeque};
 use std::ffi::CStr;
-use std::collections::VecDeque;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 type SendFn = unsafe extern "C" fn(c_int, *const c_void, size_t, c_int) -> ssize_t;
 type RecvFn = unsafe extern "C" fn(c_int, *mut c_void, size_t, c_int) -> ssize_t;
+type WriteFn = unsafe extern "C" fn(c_int, *const c_void, size_t) -> ssize_t;
+type ReadFn = unsafe extern "C" fn(c_int, *mut c_void, size_t) -> ssize_t;
 type ConnectFn = unsafe extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int;
 type SocketFn = unsafe extern "C" fn(c_int, c_int, c_int) -> c_int;
 type CloseFn = unsafe extern "C" fn(c_int) -> c_int;
@@ -49,6 +53,13 @@ type GetAddrInfoFn = unsafe extern "C" fn(
     *const addrinfo,
     *mut *mut addrinfo,
 ) -> c_int;
+type SslCtrlFn = unsafe extern "C" fn(*mut c_void, c_int, libc::c_long, *mut c_void) -> libc::c_long;
+type SslSetFdFn = unsafe extern "C" fn(*mut c_void, c_int) -> c_int;
+type SslGetFdFn = unsafe extern "C" fn(*const c_void) -> c_int;
+type SslFreeFn = unsafe extern "C" fn(*mut c_void);
+
+const SSL_CTRL_SET_TLSEXT_HOSTNAME: c_int = 55;
+const TLSEXT_NAMETYPE_HOST_NAME: libc::c_long = 0;
 
 lazy_static::lazy_static! {
     pub static ref ORIG_SOCKET: SocketFn = unsafe { get_original_fn("socket") };
@@ -61,9 +72,17 @@ lazy_static::lazy_static! {
     pub static ref ORIG_CONNECT: ConnectFn = unsafe { get_original_fn("connect") };
     pub static ref ORIG_SEND: SendFn = unsafe { get_original_fn("send") };
     pub static ref ORIG_RECV: RecvFn = unsafe { get_original_fn("recv") };
+    pub static ref ORIG_WRITE: WriteFn = unsafe { get_original_fn("write") };
+    pub static ref ORIG_READ: ReadFn = unsafe { get_original_fn("read") };
     pub static ref ORIG_SENDTO: SendToFn = unsafe { get_original_fn("sendto") };
     pub static ref ORIG_RECVFROM: RecvFromFn = unsafe { get_original_fn("recvfrom") };
     pub static ref ORIG_GETADDRINFO: GetAddrInfoFn = unsafe { get_original_fn("getaddrinfo") };
+    pub static ref ORIG_SSL_CTRL: Option<SslCtrlFn> = unsafe { get_optional_original_fn("SSL_ctrl") };
+    pub static ref ORIG_SSL_SET_FD: Option<SslSetFdFn> = unsafe { get_optional_original_fn("SSL_set_fd") };
+    pub static ref ORIG_SSL_GET_FD: Option<SslGetFdFn> = unsafe { get_optional_original_fn("SSL_get_fd") };
+    pub static ref ORIG_SSL_FREE: Option<SslFreeFn> = unsafe { get_optional_original_fn("SSL_free") };
+    static ref SNI_BY_SSL: Mutex<HashMap<usize, String>> = Mutex::new(HashMap::new());
+    static ref FD_BY_SSL: Mutex<HashMap<usize, c_int>> = Mutex::new(HashMap::new());
 }
 
 unsafe fn get_original_fn<T>(name: &str) -> T {
@@ -73,6 +92,15 @@ unsafe fn get_original_fn<T>(name: &str) -> T {
         unsafe { libc::abort() };
     }
     unsafe { std::mem::transmute_copy(&fn_ptr) }
+}
+
+unsafe fn get_optional_original_fn<T>(name: &str) -> Option<T> {
+    let symbol_name = std::ffi::CString::new(name).unwrap();
+    let fn_ptr = unsafe { libc::dlsym(libc::RTLD_NEXT, symbol_name.as_ptr()) };
+    if fn_ptr.is_null() {
+        return None;
+    }
+    Some(unsafe { std::mem::transmute_copy(&fn_ptr) })
 }
 
 fn record_stream_bytes(fd: c_int, bytes: u64) {
@@ -87,6 +115,18 @@ fn maybe_duplicate_send(fd: c_int, b: *const c_void, sent: ssize_t, f: c_int) {
     for _ in 0..count {
         unsafe {
             let _ = (ORIG_SEND)(fd, b, sent as size_t, f);
+        }
+    }
+}
+
+fn maybe_duplicate_write(fd: c_int, b: *const c_void, sent: ssize_t) {
+    if sent <= 0 {
+        return;
+    }
+    let count = uplink_duplicate_count_for_fd(global_fault_osi_engine(), fd);
+    for _ in 0..count {
+        unsafe {
+            let _ = (ORIG_WRITE)(fd, b, sent as size_t);
         }
     }
 }
@@ -169,9 +209,15 @@ fn initialize() {
         lazy_static::initialize(&ORIG_CONNECT);
         lazy_static::initialize(&ORIG_SEND);
         lazy_static::initialize(&ORIG_RECV);
+        lazy_static::initialize(&ORIG_WRITE);
+        lazy_static::initialize(&ORIG_READ);
         lazy_static::initialize(&ORIG_SENDTO);
         lazy_static::initialize(&ORIG_RECVFROM);
         lazy_static::initialize(&ORIG_GETADDRINFO);
+        lazy_static::initialize(&ORIG_SSL_CTRL);
+        lazy_static::initialize(&ORIG_SSL_SET_FD);
+        lazy_static::initialize(&ORIG_SSL_GET_FD);
+        lazy_static::initialize(&ORIG_SSL_FREE);
         let _ = init_runtime_shm();
     }
 }
@@ -196,6 +242,194 @@ unsafe fn normalized_name_from_cstr(raw: *const c_char) -> Option<String> {
         return None;
     }
     Some(normalized)
+}
+
+fn lock_map<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|err| err.into_inner())
+}
+
+fn ssl_key(ssl: *mut c_void) -> Option<usize> {
+    (!ssl.is_null()).then_some(ssl as usize)
+}
+
+fn remember_ssl_sni(ssl: *mut c_void, sni: String) {
+    let Some(key) = ssl_key(ssl) else {
+        return;
+    };
+    lock_map(&SNI_BY_SSL).insert(key, sni);
+}
+
+fn forget_ssl_state(ssl: *mut c_void) {
+    let Some(key) = ssl_key(ssl) else {
+        return;
+    };
+    lock_map(&SNI_BY_SSL).remove(&key);
+    lock_map(&FD_BY_SSL).remove(&key);
+}
+
+fn forget_ssl_bindings_for_fd(fd: c_int) {
+    if fd < 0 {
+        return;
+    }
+    let keys: Vec<usize> = {
+        let map = lock_map(&FD_BY_SSL);
+        map.iter()
+            .filter_map(|(key, mapped_fd)| (*mapped_fd == fd).then_some(*key))
+            .collect()
+    };
+    if keys.is_empty() {
+        return;
+    }
+    {
+        let mut fd_map = lock_map(&FD_BY_SSL);
+        for key in &keys {
+            fd_map.remove(key);
+        }
+    }
+    let mut sni_map = lock_map(&SNI_BY_SSL);
+    for key in keys {
+        sni_map.remove(&key);
+    }
+}
+
+fn remember_ssl_fd(ssl: *mut c_void, fd: c_int) {
+    if fd < 0 {
+        return;
+    }
+    let Some(key) = ssl_key(ssl) else {
+        return;
+    };
+    lock_map(&FD_BY_SSL).insert(key, fd);
+    let sni = lock_map(&SNI_BY_SSL).get(&key).cloned();
+    if let Some(sni) = sni {
+        observe_sni_for_fd(fd, &sni);
+    }
+}
+
+fn bind_ssl_sni_if_possible(ssl: *mut c_void, sni: &str) {
+    let Some(key) = ssl_key(ssl) else {
+        return;
+    };
+    if let Some(get_fd) = *ORIG_SSL_GET_FD {
+        let fd = unsafe { get_fd(ssl.cast_const()) };
+        if fd >= 0 {
+            remember_ssl_fd(ssl, fd);
+            observe_sni_for_fd(fd, sni);
+            return;
+        }
+    }
+    if let Some(fd) = lock_map(&FD_BY_SSL).get(&key).copied() {
+        observe_sni_for_fd(fd, sni);
+    }
+}
+
+fn tls_client_hello_sni(payload: &[u8]) -> Option<String> {
+    if payload.len() < 5 || payload[0] != 22 {
+        return None;
+    }
+    let record_len = u16::from_be_bytes([payload[3], payload[4]]) as usize;
+    let record_end = 5usize.checked_add(record_len)?;
+    if record_end > payload.len() {
+        return None;
+    }
+    if payload.get(5).copied()? != 1 {
+        return None;
+    }
+    let hs_len = ((payload.get(6).copied()? as usize) << 16)
+        | ((payload.get(7).copied()? as usize) << 8)
+        | (payload.get(8).copied()? as usize);
+    let hs_start = 9usize;
+    let hs_end = hs_start.checked_add(hs_len)?;
+    if hs_end > record_end {
+        return None;
+    }
+    let mut p = hs_start;
+    if p + 34 > hs_end {
+        return None;
+    }
+    p += 34;
+
+    let session_len = payload.get(p).copied()? as usize;
+    p = p.checked_add(1 + session_len)?;
+    if p > hs_end {
+        return None;
+    }
+
+    if p + 2 > hs_end {
+        return None;
+    }
+    let suites_len = u16::from_be_bytes([payload[p], payload[p + 1]]) as usize;
+    p = p.checked_add(2 + suites_len)?;
+    if p > hs_end {
+        return None;
+    }
+
+    let compression_len = payload.get(p).copied()? as usize;
+    p = p.checked_add(1 + compression_len)?;
+    if p > hs_end {
+        return None;
+    }
+
+    if p + 2 > hs_end {
+        return None;
+    }
+    let extensions_len = u16::from_be_bytes([payload[p], payload[p + 1]]) as usize;
+    p += 2;
+    let ext_end = p.checked_add(extensions_len)?;
+    if ext_end > hs_end {
+        return None;
+    }
+
+    while p + 4 <= ext_end {
+        let ext_type = u16::from_be_bytes([payload[p], payload[p + 1]]);
+        let ext_len = u16::from_be_bytes([payload[p + 2], payload[p + 3]]) as usize;
+        p += 4;
+        let data_end = p.checked_add(ext_len)?;
+        if data_end > ext_end {
+            return None;
+        }
+        if ext_type == 0 {
+            if p + 2 > data_end {
+                return None;
+            }
+            let list_len = u16::from_be_bytes([payload[p], payload[p + 1]]) as usize;
+            let mut q = p + 2;
+            let list_end = q.checked_add(list_len)?;
+            if list_end > data_end {
+                return None;
+            }
+            while q + 3 <= list_end {
+                let name_type = payload[q];
+                let name_len = u16::from_be_bytes([payload[q + 1], payload[q + 2]]) as usize;
+                q += 3;
+                let name_end = q.checked_add(name_len)?;
+                if name_end > list_end {
+                    return None;
+                }
+                if name_type == 0 {
+                    let host = std::str::from_utf8(&payload[q..name_end]).ok()?;
+                    let normalized = host.trim().trim_end_matches('.').to_ascii_lowercase();
+                    return (!normalized.is_empty()).then_some(normalized);
+                }
+                q = name_end;
+            }
+            return None;
+        }
+        p = data_end;
+    }
+    None
+}
+
+/// # Safety
+/// `b` must be null or point to a readable buffer of `l` bytes.
+unsafe fn observe_tls_sni_from_send_buffer(fd: c_int, b: *const c_void, l: size_t) {
+    if fd < 0 || b.is_null() || l < 5 {
+        return;
+    }
+    let payload = unsafe { std::slice::from_raw_parts(b.cast::<u8>(), l) };
+    if let Some(sni) = tls_client_hello_sni(payload) {
+        observe_sni_for_fd(fd, &sni);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -358,6 +592,7 @@ pub extern "C" fn close(fd: c_int) -> c_int {
     initialize();
     global_fault_osi_engine().clear_fd_state(fd);
     global_interceptor_runtime().clear_fd_state(fd);
+    forget_ssl_bindings_for_fd(fd);
     clear_fd_binding(fd);
 
     let result = unsafe { (ORIG_CLOSE)(fd) };
@@ -465,12 +700,71 @@ pub unsafe extern "C" fn accept4(
 #[unsafe(no_mangle)]
 /// # Safety
 /// `b` must point to a readable buffer of `l` bytes.
+pub unsafe extern "C" fn write(s: c_int, b: *const c_void, l: size_t) -> ssize_t {
+    if !enter_hook() {
+        return unsafe { (ORIG_WRITE)(s, b, l) };
+    }
+
+    initialize();
+    unsafe { observe_tls_sni_from_send_buffer(s, b, l) };
+    let result = global_interceptor_runtime().with_reorder_pending(s, |pending| {
+        handle_uplink_send(
+            s,
+            l,
+            is_non_blocking(s),
+            pending,
+            || runtime_config_for_fd(s),
+            || unsafe { (ORIG_WRITE)(s, b, l) },
+            |pending| unsafe { stage_reorder_send(pending, b, l, 0) }.unwrap_or(l as ssize_t),
+            |sent| maybe_duplicate_write(s, b, sent),
+        )
+    });
+
+    exit_hook();
+    result
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// `b` must point to a writable buffer of `l` bytes.
+pub unsafe extern "C" fn read(s: c_int, b: *mut c_void, l: size_t) -> ssize_t {
+    if !enter_hook() {
+        return unsafe { (ORIG_READ)(s, b, l) };
+    }
+
+    initialize();
+    let non_blocking = is_non_blocking(s);
+    let (result, should_record) =
+        global_interceptor_runtime().with_reorder_pending_recv(s, |pending| {
+            handle_downlink_recv(
+                s,
+                l,
+                non_blocking,
+                pending,
+                || unsafe { (ORIG_READ)(s, b, l) },
+                |recv_result| unsafe { snapshot_recv_datagram(b, recv_result, 0) },
+                |pkt| unsafe { write_pending_recv_result(pkt, b, l) },
+            )
+        });
+
+    if should_record && result > 0 {
+        record_stream_bytes(s, result as u64);
+    }
+
+    exit_hook();
+    result
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// `b` must point to a readable buffer of `l` bytes.
 pub unsafe extern "C" fn send(s: c_int, b: *const c_void, l: size_t, f: c_int) -> ssize_t {
     if !enter_hook() {
         return unsafe { (ORIG_SEND)(s, b, l, f) };
     }
 
     initialize();
+    unsafe { observe_tls_sni_from_send_buffer(s, b, l) };
     let result = global_interceptor_runtime().with_reorder_pending(s, |pending| {
         handle_uplink_send(
             s,
@@ -563,6 +857,7 @@ pub unsafe extern "C" fn sendto(
     }
 
     initialize();
+    unsafe { observe_tls_sni_from_send_buffer(s, b, l) };
     let result = global_interceptor_runtime().with_reorder_pending(s, |pending| {
         handle_uplink_send(
             s,
@@ -660,6 +955,87 @@ pub unsafe extern "C" fn getaddrinfo(
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `ssl` and `parg` follow OpenSSL contracts for `SSL_ctrl`.
+pub unsafe extern "C" fn SSL_ctrl(
+    ssl: *mut c_void,
+    cmd: c_int,
+    larg: libc::c_long,
+    parg: *mut c_void,
+) -> libc::c_long {
+    if !enter_hook() {
+        return if let Some(orig) = *ORIG_SSL_CTRL {
+            unsafe { orig(ssl, cmd, larg, parg) }
+        } else {
+            0
+        };
+    }
+
+    initialize();
+    if cmd == SSL_CTRL_SET_TLSEXT_HOSTNAME && larg == TLSEXT_NAMETYPE_HOST_NAME {
+        let observed = unsafe { normalized_name_from_cstr(parg.cast::<c_char>().cast_const()) };
+        if let Some(sni) = observed {
+            remember_ssl_sni(ssl, sni.clone());
+            bind_ssl_sni_if_possible(ssl, &sni);
+        } else {
+            forget_ssl_state(ssl);
+        }
+    }
+
+    let result = if let Some(orig) = *ORIG_SSL_CTRL {
+        unsafe { orig(ssl, cmd, larg, parg) }
+    } else {
+        0
+    };
+    exit_hook();
+    result
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// `ssl` must be a valid OpenSSL handle when required by the original call.
+pub unsafe extern "C" fn SSL_set_fd(ssl: *mut c_void, fd: c_int) -> c_int {
+    if !enter_hook() {
+        return if let Some(orig) = *ORIG_SSL_SET_FD {
+            unsafe { orig(ssl, fd) }
+        } else {
+            0
+        };
+    }
+
+    initialize();
+    let out = if let Some(orig) = *ORIG_SSL_SET_FD {
+        unsafe { orig(ssl, fd) }
+    } else {
+        0
+    };
+    if out == 1 {
+        remember_ssl_fd(ssl, fd);
+    }
+    exit_hook();
+    out
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// `ssl` must be a valid OpenSSL handle when required by the original call.
+pub unsafe extern "C" fn SSL_free(ssl: *mut c_void) {
+    if !enter_hook() {
+        if let Some(orig) = *ORIG_SSL_FREE {
+            unsafe { orig(ssl) };
+        }
+        return;
+    }
+
+    initialize();
+    forget_ssl_state(ssl);
+    if let Some(orig) = *ORIG_SSL_FREE {
+        unsafe { orig(ssl) };
+    }
+    exit_hook();
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn setpriority(which: c_int, who: c_int, prio: c_int) -> c_int {
     match handle_setpriority_compat(which, who, prio) {
         SetpriorityCompatOutcome::Handled => return 0,
@@ -710,6 +1086,38 @@ pub extern "C" fn faultcore_metrics_reset() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn build_client_hello_record(server_name: &str) -> Vec<u8> {
+       let host = server_name.as_bytes();
+       let server_name_list_len = 1 + 2 + host.len();
+       let sni_ext_data_len = 2 + server_name_list_len;
+       let extensions_len = 4 + sni_ext_data_len;
+       let handshake_len = 2 + 32 + 1 + 2 + 2 + 1 + 1 + 2 + extensions_len;
+       let record_len = 4 + handshake_len;
+
+       let mut out = Vec::with_capacity(5 + record_len);
+       out.extend_from_slice(&[22, 0x03, 0x03]);
+       out.extend_from_slice(&(record_len as u16).to_be_bytes());
+       out.push(1);
+       out.push(((handshake_len >> 16) & 0xFF) as u8);
+       out.push(((handshake_len >> 8) & 0xFF) as u8);
+       out.push((handshake_len & 0xFF) as u8);
+       out.extend_from_slice(&[0x03, 0x03]);
+       out.extend_from_slice(&[0; 32]);
+       out.push(0);
+       out.extend_from_slice(&2u16.to_be_bytes());
+       out.extend_from_slice(&[0x00, 0x2F]);
+       out.push(1);
+       out.push(0);
+       out.extend_from_slice(&(extensions_len as u16).to_be_bytes());
+       out.extend_from_slice(&0u16.to_be_bytes());
+       out.extend_from_slice(&(sni_ext_data_len as u16).to_be_bytes());
+       out.extend_from_slice(&(server_name_list_len as u16).to_be_bytes());
+       out.push(0);
+       out.extend_from_slice(&(host.len() as u16).to_be_bytes());
+       out.extend_from_slice(host);
+       out
+    }
     
     #[test]
     fn connect_timeout_maps_to_etimedout() {
@@ -892,5 +1300,17 @@ mod tests {
        assert!(dup3_block.contains("clone_fd_binding(oldfd, out)"));
        assert!(accept_block.contains("clone_fd_binding(s, newfd)"));
        assert!(accept4_block.contains("clone_fd_binding(s, newfd)"));
+    }
+
+    #[test]
+    fn tls_client_hello_sni_parser_extracts_normalized_host() {
+       let payload = build_client_hello_record("Api.Foo.com.");
+       let observed = tls_client_hello_sni(&payload);
+       assert_eq!(observed.as_deref(), Some("api.foo.com"));
+    }
+
+    #[test]
+    fn tls_client_hello_sni_parser_returns_none_for_non_tls_payload() {
+       assert!(tls_client_hello_sni(b"plain-text").is_none());
     }
 }
