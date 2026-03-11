@@ -5,6 +5,7 @@ use faultcore_network::{
     bind_fd_to_current_thread, clear_fd_binding, clone_fd_binding, global_fault_osi_engine,
     global_interceptor_runtime, handle_setpriority_compat, init_runtime_shm,
     observe_hostname_for_current_thread_addr, observe_sni_for_fd,
+    record_replay_evaluate_or_replay,
     reset_global_fault_osi_metrics, runtime_config_for_addr_or_fd, runtime_config_for_fd,
     runtime_dns_config_for_current_thread, runtime_dns_config_for_query, set_errno_value,
     snapshot_recv_datagram,
@@ -112,7 +113,18 @@ fn maybe_duplicate_send(fd: c_int, b: *const c_void, sent: ssize_t, f: c_int) {
     if sent <= 0 {
         return;
     }
-    let count = uplink_duplicate_count_for_fd(global_fault_osi_engine(), fd);
+    let decision = record_replay_evaluate_or_replay("stream_uplink_post_send", || {
+        let count = uplink_duplicate_count_for_fd(global_fault_osi_engine(), fd);
+        if count > 0 {
+            LayerDecision::Duplicate(count)
+        } else {
+            LayerDecision::Continue
+        }
+    });
+    let count = match decision {
+        LayerDecision::Duplicate(n) => n,
+        _ => 0,
+    };
     for _ in 0..count {
         unsafe {
             let _ = (ORIG_SEND)(fd, b, sent as size_t, f);
@@ -124,7 +136,18 @@ fn maybe_duplicate_write(fd: c_int, b: *const c_void, sent: ssize_t) {
     if sent <= 0 {
         return;
     }
-    let count = uplink_duplicate_count_for_fd(global_fault_osi_engine(), fd);
+    let decision = record_replay_evaluate_or_replay("stream_uplink_post_write", || {
+        let count = uplink_duplicate_count_for_fd(global_fault_osi_engine(), fd);
+        if count > 0 {
+            LayerDecision::Duplicate(count)
+        } else {
+            LayerDecision::Continue
+        }
+    });
+    let count = match decision {
+        LayerDecision::Duplicate(n) => n,
+        _ => 0,
+    };
     for _ in 0..count {
         unsafe {
             let _ = (ORIG_WRITE)(fd, b, sent as size_t);
@@ -143,8 +166,19 @@ fn maybe_duplicate_sendto(
     if sent <= 0 {
         return;
     }
-    let count = unsafe {
-        uplink_duplicate_count_for_addr_or_fd(global_fault_osi_engine(), fd, addr, addr_len)
+    let decision = record_replay_evaluate_or_replay("stream_uplink_post_sendto", || {
+        let count = unsafe {
+            uplink_duplicate_count_for_addr_or_fd(global_fault_osi_engine(), fd, addr, addr_len)
+        };
+        if count > 0 {
+            LayerDecision::Duplicate(count)
+        } else {
+            LayerDecision::Continue
+        }
+    });
+    let count = match decision {
+        LayerDecision::Duplicate(n) => n,
+        _ => 0,
     };
     for _ in 0..count {
         unsafe {
@@ -435,6 +469,7 @@ unsafe fn observe_tls_sni_from_send_buffer(fd: c_int, b: *const c_void, l: size_
 
 #[allow(clippy::too_many_arguments)]
 fn handle_uplink_send<FConfig, FOrig, FStage, FDuplicate>(
+    site: &str,
     s: c_int,
     l: size_t,
     non_blocking: bool,
@@ -459,12 +494,14 @@ where
         {
             send_pending_datagram(s, &pkt);
         }
-        let decision = global_fault_osi_engine().evaluate_stream_pre(
-            s,
-            &network_cfg,
-            l as u64,
-            Direction::Uplink,
-        );
+        let decision = record_replay_evaluate_or_replay(site, || {
+            global_fault_osi_engine().evaluate_stream_pre(
+                s,
+                &network_cfg,
+                l as u64,
+                Direction::Uplink,
+            )
+        });
         let directive =
             global_interceptor_runtime().map_stream_decision(s, decision.clone(), non_blocking);
         if let Some(error) = apply_stream_directive(directive) {
@@ -501,7 +538,9 @@ where
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_downlink_recv<FOrig, FSnapshot, FWriteStaged>(
+    site: &str,
     s: c_int,
     l: size_t,
     non_blocking: bool,
@@ -520,12 +559,14 @@ where
             return (write_staged(&pkt), false);
         }
 
-        let decision = global_fault_osi_engine().evaluate_stream_pre(
-            s,
-            &network_cfg,
-            l as u64,
-            Direction::Downlink,
-        );
+        let decision = record_replay_evaluate_or_replay(site, || {
+            global_fault_osi_engine().evaluate_stream_pre(
+                s,
+                &network_cfg,
+                l as u64,
+                Direction::Downlink,
+            )
+        });
         let directive =
             global_interceptor_runtime().map_stream_decision(s, decision.clone(), non_blocking);
         let out = if let Some(error) = apply_stream_directive(directive) {
@@ -710,6 +751,7 @@ pub unsafe extern "C" fn write(s: c_int, b: *const c_void, l: size_t) -> ssize_t
     unsafe { observe_tls_sni_from_send_buffer(s, b, l) };
     let result = global_interceptor_runtime().with_reorder_pending(s, |pending| {
         handle_uplink_send(
+            "stream_uplink_pre_write",
             s,
             l,
             is_non_blocking(s),
@@ -738,6 +780,7 @@ pub unsafe extern "C" fn read(s: c_int, b: *mut c_void, l: size_t) -> ssize_t {
     let (result, should_record) =
         global_interceptor_runtime().with_reorder_pending_recv(s, |pending| {
             handle_downlink_recv(
+                "stream_downlink_pre_read",
                 s,
                 l,
                 non_blocking,
@@ -768,6 +811,7 @@ pub unsafe extern "C" fn send(s: c_int, b: *const c_void, l: size_t, f: c_int) -
     unsafe { observe_tls_sni_from_send_buffer(s, b, l) };
     let result = global_interceptor_runtime().with_reorder_pending(s, |pending| {
         handle_uplink_send(
+            "stream_uplink_pre_send",
             s,
             l,
             is_non_blocking(s),
@@ -796,6 +840,7 @@ pub unsafe extern "C" fn recv(s: c_int, b: *mut c_void, l: size_t, f: c_int) -> 
     let (result, should_record) =
         global_interceptor_runtime().with_reorder_pending_recv(s, |pending| {
             handle_downlink_recv(
+                "stream_downlink_pre_recv",
                 s,
                 l,
                 non_blocking,
@@ -826,7 +871,9 @@ pub unsafe extern "C" fn connect(s: c_int, a: *const sockaddr, l: socklen_t) -> 
     bind_fd_to_current_thread(s);
 
     let result = if let Some(network_cfg) = unsafe { runtime_config_for_addr_or_fd(s, a, l) } {
-        let decision = global_fault_osi_engine().evaluate_connect(s, &network_cfg);
+        let decision = record_replay_evaluate_or_replay("connect_pre", || {
+            global_fault_osi_engine().evaluate_connect(s, &network_cfg)
+        });
         let directive = global_interceptor_runtime().map_connect_decision(decision);
         if let Some(error) = apply_connect_directive(directive) {
             error
@@ -861,6 +908,7 @@ pub unsafe extern "C" fn sendto(
     unsafe { observe_tls_sni_from_send_buffer(s, b, l) };
     let result = global_interceptor_runtime().with_reorder_pending(s, |pending| {
         handle_uplink_send(
+            "stream_uplink_pre_sendto",
             s,
             l,
             is_non_blocking(s),
@@ -900,6 +948,7 @@ pub unsafe extern "C" fn recvfrom(
     let (result, should_record) =
         global_interceptor_runtime().with_reorder_pending_recv(s, |pending| {
             handle_downlink_recv(
+                "stream_downlink_pre_recvfrom",
                 s,
                 l,
                 non_blocking,
@@ -938,7 +987,9 @@ pub unsafe extern "C" fn getaddrinfo(
     let dns_cfg = runtime_dns_config_for_query(observed_hostname.as_deref(), None)
         .or_else(runtime_dns_config_for_current_thread);
     if let Some(network_cfg) = dns_cfg {
-        let decision = global_fault_osi_engine().evaluate_dns_lookup(&network_cfg);
+        let decision = record_replay_evaluate_or_replay("dns_lookup", || {
+            global_fault_osi_engine().evaluate_dns_lookup(&network_cfg)
+        });
         if let LayerDecision::DelayNs(ns) = &decision {
             std::thread::sleep(std::time::Duration::from_nanos(*ns));
         } else if let LayerDecision::TimeoutMs(ms) = &decision {

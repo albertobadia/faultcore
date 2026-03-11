@@ -3,6 +3,7 @@ pub mod interceptor_bridge;
 pub mod observability;
 pub mod layers;
 pub mod runtime;
+pub mod record_replay;
 pub mod setpriority_compat;
 pub mod shm_contract;
 pub mod shm_runtime;
@@ -34,6 +35,9 @@ pub use runtime::{
     apply_connect_directive, apply_stream_directive, set_errno_value, snapshot_recv_datagram,
     snapshot_recvfrom_datagram, stage_reorder_send, stage_reorder_sendto,
     write_pending_recv_result, write_pending_recvfrom_result,
+};
+pub use record_replay::{
+    RecordReplayCore, RecordReplayEvent, RecordReplayMode, record_replay_evaluate_or_replay,
 };
 pub use setpriority_compat::{
     FAULTCORE_SETPRIORITY_BANDWIDTH, FAULTCORE_SETPRIORITY_LATENCY, FAULTCORE_SETPRIORITY_TIMEOUT,
