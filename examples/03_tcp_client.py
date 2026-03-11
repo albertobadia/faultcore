@@ -2,7 +2,7 @@
 import socket
 import time
 
-from faultcore import rate_limit, timeout
+from faultcore import connect_timeout, rate_limit
 
 
 def start_echo_client(host: str, port: int, message: str):
@@ -22,7 +22,7 @@ def rate_limited_echo(host: str, port: int, message: str):
     return start_echo_client(host, port, message)
 
 
-@timeout(timeout_ms=200)
+@connect_timeout(timeout_ms=200)
 def slow_echo(host: str, port: int, message: str):
     return start_echo_client(host, port, message)
 

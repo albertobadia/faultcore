@@ -7,7 +7,7 @@ try:
 except ImportError:
     requests = None
 
-from faultcore import rate_limit, timeout
+from faultcore import connect_timeout, rate_limit
 
 
 def tcp_echo(host: str, port: int, message: str) -> str:
@@ -35,7 +35,7 @@ def rate_limited_http(url: str):
     return response.status_code
 
 
-@timeout(timeout_ms=250)
+@connect_timeout(timeout_ms=250)
 def latency_injected_call(callable_func, *args, **kwargs):
     return callable_func(*args, **kwargs)
 
@@ -103,7 +103,7 @@ def mixed_policy_scenario(host: str, tcp_port: int):
     print("\n--- Scenario 4: Mixed policies (rate limit + latency) ---")
 
     @rate_limit(rate=3)
-    @timeout(timeout_ms=150)
+    @connect_timeout(timeout_ms=150)
     def throttled_and_slow_call(msg: str):
         return tcp_echo(host, tcp_port, msg)
 

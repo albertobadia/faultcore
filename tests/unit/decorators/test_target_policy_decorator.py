@@ -193,7 +193,8 @@ class TestPolicyRegistry:
             packet_loss="1%",
             burst_loss_len=3,
             rate="2mbps",
-            timeout_ms=20,
+            connect_timeout_ms=20,
+            recv_timeout_ms=20,
         )
 
         mock_shm = MagicMock()
@@ -803,8 +804,8 @@ class TestPolicyRegistry:
             faultcore.register_policy("bad1", latency_ms=-1)
         with pytest.raises(ValueError):
             faultcore.register_policy("bad2", jitter_ms=-1)
-        with pytest.raises(ValueError):
-            faultcore.register_policy("bad3", timeout_ms=-1)
+        with pytest.raises(TypeError):
+            faultcore.register_policy("bad3", timeout_ms=-1)  # type: ignore[call-arg]
         with pytest.raises(ValueError):
             faultcore.register_policy("bad4", connect_timeout_ms=-1)
         with pytest.raises(ValueError):
@@ -903,7 +904,8 @@ class TestPolicyRegistry:
                         "packet_loss": "0.2%",
                         "burst_loss_len": 2,
                         "rate": "1mbps",
-                        "timeout_ms": 9,
+                        "connect_timeout_ms": 9,
+                        "recv_timeout_ms": 9,
                     }
                 }
             )

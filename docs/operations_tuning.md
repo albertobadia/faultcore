@@ -62,13 +62,6 @@ Recommended scripts:
 - Use `priority` to define deterministic resolution when rules overlap.
 - Keep rule sets focused; large broad CIDRs should have lower priority than exact host rules.
 
-## Metrics and Scope
-
-- Use `faultcore.get_fault_metrics()` for global counters.
-- Use `faultcore.get_fault_metrics(scope="context")` inside `fault_context(...)` for local deltas.
-- Reset global counters only between benchmark phases:
-  - `faultcore.get_fault_metrics(reset=True)`
-
 ## Stress Run Profiles
 
 - Smoke profile:

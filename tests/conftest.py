@@ -26,7 +26,8 @@ def mock_interceptor():
 @pytest.fixture
 def sample_policy_config():
     return {
-        "timeout_ms": 1000,
+        "connect_timeout_ms": 1000,
+        "recv_timeout_ms": 1000,
         "rate_limit_mbps": 10.0,
         "latency_injection_ms": 0,
     }

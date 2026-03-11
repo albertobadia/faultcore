@@ -34,7 +34,6 @@ _REGISTERABLE_FIELDS = (
     "packet_loss",
     "burst_loss_len",
     "rate",
-    "timeout_ms",
     "connect_timeout_ms",
     "recv_timeout_ms",
     "uplink",
@@ -145,7 +144,6 @@ def register_policy(
     packet_loss: str | int | float | None = None,
     burst_loss_len: int | None = None,
     rate: str | int | float | None = None,
-    timeout_ms: int | None = None,
     connect_timeout_ms: int | None = None,
     recv_timeout_ms: int | None = None,
     uplink: dict[str, Any] | None = None,
@@ -182,9 +180,6 @@ def register_policy(
         )
     if rate is not None:
         policy["bandwidth_bps"] = parse_rate(rate)
-    if timeout_ms is not None:
-        timeout = _coerce_non_negative_int(timeout_ms, "timeout_ms must be >= 0")
-        policy["timeouts"] = (timeout, timeout)
     if connect_timeout_ms is not None or recv_timeout_ms is not None:
         policy["timeouts"] = _coerce_timeout_pair(connect_timeout_ms, recv_timeout_ms)
     if uplink is not None:

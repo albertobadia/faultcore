@@ -1,23 +1,13 @@
-import asyncio
 import functools
-import os
-import pickle
-import select
-import signal
 import threading
 import time
-from asyncio import iscoroutine, wait_for
+from asyncio import iscoroutine
 from collections.abc import Callable
-from inspect import iscoroutinefunction
 from pathlib import Path
 from typing import Any
 
-from faultcore import metrics_runtime as _metrics_runtime, policy_registry as _policy_registry
+from faultcore import policy_registry as _policy_registry
 from faultcore.decorator_helpers import apply_fault_profiles
-from faultcore.metrics_runtime import (
-    capture_metrics_context as _capture_metrics_context,
-    restore_metrics_context as _restore_metrics_context,
-)
 from faultcore.policy_registry import (
     get_policy_for_apply,
 )
@@ -35,15 +25,6 @@ from faultcore.profile_parsers import (
     parse_rate as _parse_rate,
 )
 from faultcore.shm_writer import get_shm_writer
-from faultcore.wrapper_runtime import run_sync_with_timeout as _run_sync_with_timeout
-
-
-def _read_fault_metrics_snapshot() -> dict[str, Any] | None:
-    return _metrics_runtime.read_fault_metrics_snapshot()
-
-
-def _get_metrics_context_baseline() -> dict[str, Any] | None:
-    return _metrics_runtime.get_metrics_context_baseline()
 
 
 def register_policy(*args: Any, **kwargs: Any) -> None:
@@ -133,56 +114,31 @@ class FaultWrapper:
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         tid = threading.get_native_id()
         shm = get_shm_writer()
-        metrics_token = _capture_metrics_context()
         async_handoff = False
         try:
             apply_fault_profiles(shm, tid, self, started_monotonic_ns=time.monotonic_ns())
-
-            timeout_ms = self._timeouts[0] if self._timeouts else None
-
-            if timeout_ms and timeout_ms > 0 and not iscoroutinefunction(self._func):
-                return _run_sync_with_timeout(
-                    self._func,
-                    timeout_ms,
-                    args,
-                    kwargs,
-                    os_module=os,
-                    signal_module=signal,
-                    select_module=select,
-                    pickle_module=pickle,
-                )
 
             result = self._func(*args, **kwargs)
 
             if iscoroutine(result):
                 async_handoff = True
-                _restore_metrics_context(metrics_token)
-                return self._run_async(result, shm, tid, timeout_ms)
+                return self._run_async(result, shm, tid)
 
             return result
         finally:
             if not async_handoff:
                 shm.clear(tid)
-                _restore_metrics_context(metrics_token)
 
     async def _run_async(
         self,
         result: Any,
         shm: Any,
         tid: int,
-        timeout_ms: int | None,
     ) -> Any:
-        metrics_token = _capture_metrics_context()
         try:
-            if timeout_ms and timeout_ms > 0:
-                try:
-                    return await wait_for(result, timeout_ms / 1000)
-                except (asyncio.exceptions.TimeoutError, TimeoutError) as exc:
-                    raise TimeoutError(f"Function execution exceeded {timeout_ms}ms") from exc
             return await result
         finally:
             shm.clear(tid)
-            _restore_metrics_context(metrics_token)
 
     def __repr__(self):
         return (
@@ -223,16 +179,6 @@ def jitter(jitter_ms: int):
 
     def decorator(func: Callable[..., Any]) -> FaultWrapper:
         return FaultWrapper(func, jitter_ms=jitter_ms)
-
-    return decorator
-
-
-def timeout(timeout_ms: int):
-    if timeout_ms < 0:
-        raise ValueError("timeout must be >= 0")
-
-    def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        return FaultWrapper(func, timeouts=(timeout_ms, timeout_ms))
 
     return decorator
 

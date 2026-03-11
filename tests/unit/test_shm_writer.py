@@ -62,9 +62,9 @@ class TestSHMWriterGracefulDegradation:
 
 class TestDecoratorIntegration:
     def test_timeout_decorator_no_shm_no_error(self):
-        from faultcore import timeout
+        from faultcore import connect_timeout
 
-        @timeout(100)
+        @connect_timeout(100)
         def test_func():
             return "result"
 
@@ -354,10 +354,9 @@ class TestTargetRulesValidation:
 
 
 class TestExports:
-    def test_timeout_is_exported(self):
-        from faultcore import timeout
-
-        assert callable(timeout)
+    def test_timeout_is_not_exported(self):
+        with pytest.raises(ImportError):
+            from faultcore import timeout  # noqa: F401
 
     def test_connect_timeout_is_exported(self):
         from faultcore import connect_timeout
@@ -488,13 +487,3 @@ class TestExports:
         from faultcore import fault_context
 
         assert fault_context is not None
-
-    def test_is_interceptor_loaded_is_exported(self):
-        from faultcore import is_interceptor_loaded
-
-        assert callable(is_interceptor_loaded)
-
-    def test_get_fault_metrics_is_exported(self):
-        from faultcore import get_fault_metrics
-
-        assert callable(get_fault_metrics)

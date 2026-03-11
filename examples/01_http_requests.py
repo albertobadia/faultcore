@@ -7,7 +7,7 @@ except ImportError:
     print("requests not installed. Install with: pip install requests")
     raise
 
-from faultcore import rate_limit, timeout
+from faultcore import connect_timeout, rate_limit
 
 
 @rate_limit(rate=10)
@@ -22,7 +22,7 @@ def fetch_health():
     return response.status_code
 
 
-@timeout(timeout_ms=500)
+@connect_timeout(timeout_ms=500)
 def fetch_with_latency():
     response = requests.get("https://httpbin.org/delay/1", timeout=10)
     return response.status_code

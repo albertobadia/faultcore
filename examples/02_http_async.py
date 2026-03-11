@@ -8,7 +8,7 @@ except ImportError:
     print("aiohttp not installed. Install with: pip install aiohttp")
     raise
 
-from faultcore import rate_limit, timeout
+from faultcore import connect_timeout, rate_limit
 
 
 @rate_limit(rate=10)
@@ -17,7 +17,7 @@ async def fetch_url(session: aiohttp.ClientSession, url: str):
         return await response.json()
 
 
-@timeout(timeout_ms=300)
+@connect_timeout(timeout_ms=300)
 async def fetch_with_latency(session: aiohttp.ClientSession, url: str):
     async with session.get(url) as response:
         return await response.text()

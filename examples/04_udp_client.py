@@ -2,7 +2,7 @@
 import socket
 import time
 
-from faultcore import rate_limit, timeout
+from faultcore import connect_timeout, rate_limit
 
 
 def send_udp_message(host: str, port: int, message: str):
@@ -24,7 +24,7 @@ def rate_limited_udp(host: str, port: int, message: str):
     return send_udp_message(host, port, message)
 
 
-@timeout(timeout_ms=100)
+@connect_timeout(timeout_ms=100)
 def slow_udp(host: str, port: int, message: str):
     return send_udp_message(host, port, message)
 

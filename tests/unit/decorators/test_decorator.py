@@ -1,5 +1,4 @@
 import asyncio
-import os
 import threading
 import time
 from unittest.mock import MagicMock, patch
@@ -12,21 +11,21 @@ from faultcore.decorator import _parse_packet_loss, get_thread_policy
 
 class TestTimeoutDecorator:
     def test_timeout_decorator_basic(self):
-        @faultcore.timeout(1000)
+        @faultcore.connect_timeout(1000)
         def my_func():
             return "ok"
 
         assert my_func() == "ok"
 
     def test_timeout_decorator_zero(self):
-        @faultcore.timeout(1)
+        @faultcore.connect_timeout(1)
         def my_func():
             return "ok"
 
         assert my_func() == "ok"
 
     def test_timeout_passes_args(self):
-        @faultcore.timeout(1000)
+        @faultcore.connect_timeout(1000)
         def func_with_args(a, b):
             return a + b
 
@@ -34,7 +33,7 @@ class TestTimeoutDecorator:
         assert result == 3
 
     def test_timeout_passes_kwargs(self):
-        @faultcore.timeout(1000)
+        @faultcore.connect_timeout(1000)
         def func_with_kwargs(a=1, b=2):
             return a + b
 
@@ -42,7 +41,7 @@ class TestTimeoutDecorator:
         assert result == 15
 
     def test_timeout_passes_mixed_args(self):
-        @faultcore.timeout(1000)
+        @faultcore.connect_timeout(1000)
         def func_mixed(a, b=10, c=20):
             return a + b + c
 
@@ -50,7 +49,7 @@ class TestTimeoutDecorator:
         assert result == 115
 
     def test_timeout_decorator_with_varargs(self):
-        @faultcore.timeout(1000)
+        @faultcore.connect_timeout(1000)
         def func_with_varargs(*args):
             return sum(args)
 
@@ -58,7 +57,7 @@ class TestTimeoutDecorator:
         assert result == 15
 
     def test_timeout_decorator_with_kwargs(self):
-        @faultcore.timeout(1000)
+        @faultcore.connect_timeout(1000)
         def func_with_kwargs(**kwargs):
             return sum(kwargs.values())
 
@@ -66,7 +65,7 @@ class TestTimeoutDecorator:
         assert result == 6
 
     def test_timeout_decorator_with_args_and_kwargs(self):
-        @faultcore.timeout(1000)
+        @faultcore.connect_timeout(1000)
         def func_mixed(*args, **kwargs):
             return sum(args) + sum(kwargs.values())
 
@@ -155,13 +154,13 @@ class TestTimeoutDecoratorWritesCorrectFields:
         with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
             with patch("faultcore.decorator.threading.get_native_id", return_value=12345):
 
-                @faultcore.timeout(2000)
+                @faultcore.connect_timeout(2000)
                 def my_func():
                     return "ok"
 
                 result = my_func()
                 assert result == "ok"
-                mock_shm.write_timeouts.assert_called_once_with(12345, 2000, 2000)
+                mock_shm.write_timeouts.assert_called_once_with(12345, 2000, 0)
                 mock_shm.write_latency.assert_not_called()
                 mock_shm.clear.assert_called_once_with(12345)
 
@@ -599,14 +598,14 @@ class TestDnsDecorators:
 
 class TestDecoratorMetadata:
     def test_decorator_preserves_function_name(self):
-        @faultcore.timeout(1000)
+        @faultcore.connect_timeout(1000)
         def my_function():
             return "ok"
 
         assert my_function.__name__ == "my_function"
 
     def test_decorator_preserves_function_docstring(self):
-        @faultcore.timeout(1000)
+        @faultcore.connect_timeout(1000)
         def my_function():
             """This is my docstring."""
             return "ok"
@@ -614,7 +613,7 @@ class TestDecoratorMetadata:
         assert my_function.__doc__ == "This is my docstring."
 
     def test_decorator_preserves_function_module(self):
-        @faultcore.timeout(1000)
+        @faultcore.connect_timeout(1000)
         def my_function():
             return "ok"
 
@@ -623,7 +622,7 @@ class TestDecoratorMetadata:
 
 class TestAsyncTimeoutDecorator:
     async def test_async_timeout_passes_args(self):
-        @faultcore.timeout(1000)
+        @faultcore.connect_timeout(1000)
         async def async_func(a, b):
             return a + b
 
@@ -631,7 +630,7 @@ class TestAsyncTimeoutDecorator:
         assert result == 30
 
     async def test_async_timeout_passes_kwargs(self):
-        @faultcore.timeout(1000)
+        @faultcore.connect_timeout(1000)
         async def async_func(a=0, b=0):
             return a + b
 
@@ -639,7 +638,7 @@ class TestAsyncTimeoutDecorator:
         assert result == 300
 
     async def test_async_timeout_decorator_with_args(self):
-        @faultcore.timeout(1000)
+        @faultcore.connect_timeout(1000)
         async def func_with_varargs(*args):
             return sum(args)
 
@@ -647,7 +646,7 @@ class TestAsyncTimeoutDecorator:
         assert result == 15
 
     async def test_async_timeout_decorator_with_kwargs(self):
-        @faultcore.timeout(1000)
+        @faultcore.connect_timeout(1000)
         async def func_with_kwargs(**kwargs):
             return sum(kwargs.values())
 
@@ -656,17 +655,16 @@ class TestAsyncTimeoutDecorator:
 
 
 class TestTimeoutContract:
-    def test_timeout_enforces_function_execution_deadline(self):
-        @faultcore.timeout(5)
+    def test_timeout_does_not_enforce_application_deadline(self):
+        @faultcore.connect_timeout(5)
         def slow_operation():
             time.sleep(0.02)
             return "done"
 
-        with pytest.raises(TimeoutError):
-            slow_operation()
+        assert slow_operation() == "done"
 
-    def test_timeout_in_worker_thread_enforces_deadline_without_waiting_full_runtime(self):
-        @faultcore.timeout(5)
+    def test_timeout_in_worker_thread_does_not_interrupt_execution(self):
+        @faultcore.connect_timeout(5)
         def slow_operation():
             time.sleep(0.05)
             return "done"
@@ -674,27 +672,24 @@ class TestTimeoutContract:
         outcome: dict[str, object] = {}
 
         def worker() -> None:
-            started = time.perf_counter()
             try:
-                slow_operation()
-                outcome["raised"] = False
-            except TimeoutError:
-                outcome["raised"] = True
-            finally:
-                outcome["elapsed_ms"] = (time.perf_counter() - started) * 1000
+                outcome["result"] = slow_operation()
+                outcome["error"] = None
+            except Exception as exc:  # noqa: BLE001
+                outcome["error"] = exc
 
         thread = threading.Thread(target=worker)
         thread.start()
         thread.join(timeout=1)
 
         assert thread.is_alive() is False
-        assert outcome["raised"] is True
-        assert float(outcome["elapsed_ms"]) < 30
+        assert outcome["error"] is None
+        assert outcome["result"] == "done"
 
-    def test_timeout_in_worker_thread_does_not_allow_post_timeout_side_effects(self):
+    def test_timeout_in_worker_thread_allows_function_side_effects(self):
         side_effect = threading.Event()
 
-        @faultcore.timeout(5)
+        @faultcore.connect_timeout(5)
         def slow_operation():
             time.sleep(0.05)
             side_effect.set()
@@ -704,34 +699,31 @@ class TestTimeoutContract:
         def worker() -> None:
             try:
                 slow_operation()
-                outcome["raised"] = False
-            except TimeoutError:
-                outcome["raised"] = True
+                outcome["error"] = None
+            except Exception as exc:  # noqa: BLE001
+                outcome["error"] = exc
 
         thread = threading.Thread(target=worker)
         thread.start()
         thread.join(timeout=1)
 
         assert thread.is_alive() is False
-        assert outcome["raised"] is True
+        assert outcome["error"] is None
+        assert side_effect.is_set() is True
 
-        time.sleep(0.07)
-        assert side_effect.is_set() is False
-
-    def test_timeout_worker_thread_does_not_rely_on_fork(self):
-        @faultcore.timeout(50)
+    def test_timeout_worker_thread_runs_without_application_timeout_runtime(self):
+        @faultcore.connect_timeout(50)
         def fast_operation():
             return "ok"
 
         outcome: dict[str, object] = {}
 
         def worker() -> None:
-            with patch("faultcore.decorator.os.fork", side_effect=AssertionError("fork used")):
-                try:
-                    outcome["result"] = fast_operation()
-                    outcome["error"] = None
-                except Exception as exc:  # noqa: BLE001
-                    outcome["error"] = exc
+            try:
+                outcome["result"] = fast_operation()
+                outcome["error"] = None
+            except Exception as exc:  # noqa: BLE001
+                outcome["error"] = exc
 
         thread = threading.Thread(target=worker)
         thread.start()
@@ -741,27 +733,19 @@ class TestTimeoutContract:
         assert outcome["error"] is None
         assert outcome["result"] == "ok"
 
-    def test_timeout_worker_thread_handles_partial_pipe_writes(self):
-        @faultcore.timeout(100)
+    def test_timeout_worker_thread_handles_large_payload(self):
+        @faultcore.connect_timeout(100)
         def produce_large_payload():
             return "x" * 200_000
-
-        original_write = os.write
-
-        def short_write(fd: int, payload: bytes) -> int:
-            if len(payload) > 32:
-                return original_write(fd, payload[:32])
-            return original_write(fd, payload)
 
         outcome: dict[str, object] = {}
 
         def worker() -> None:
-            with patch("faultcore.decorator.os.write", side_effect=short_write):
-                try:
-                    outcome["result"] = produce_large_payload()
-                    outcome["error"] = None
-                except Exception as exc:  # noqa: BLE001
-                    outcome["error"] = exc
+            try:
+                outcome["result"] = produce_large_payload()
+                outcome["error"] = None
+            except Exception as exc:  # noqa: BLE001
+                outcome["error"] = exc
 
         thread = threading.Thread(target=worker)
         thread.start()
@@ -773,7 +757,7 @@ class TestTimeoutContract:
 
 
 class TestTimeoutShmLifecycle:
-    def test_sync_timeout_clears_shm_on_timeout_error(self):
+    def test_sync_timeout_clears_shm_on_success(self):
         mock_shm = MagicMock()
         mock_shm.write_timeouts = MagicMock()
         mock_shm.clear = MagicMock()
@@ -781,14 +765,13 @@ class TestTimeoutShmLifecycle:
         with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
             with patch("faultcore.decorator.threading.get_native_id", return_value=777):
 
-                @faultcore.timeout(5)
+                @faultcore.connect_timeout(5)
                 def slow_operation():
-                    time.sleep(0.02)
+                    return "ok"
 
-                with pytest.raises(TimeoutError):
-                    slow_operation()
+                assert slow_operation() == "ok"
 
-                mock_shm.write_timeouts.assert_called_once_with(777, 5, 5)
+                mock_shm.write_timeouts.assert_called_once_with(777, 5, 0)
                 mock_shm.clear.assert_called_once_with(777)
 
     def test_sync_timeout_clears_shm_on_function_exception(self):
@@ -799,17 +782,17 @@ class TestTimeoutShmLifecycle:
         with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
             with patch("faultcore.decorator.threading.get_native_id", return_value=778):
 
-                @faultcore.timeout(100)
+                @faultcore.connect_timeout(100)
                 def failing_operation():
                     raise RuntimeError("boom")
 
                 with pytest.raises(RuntimeError, match="boom"):
                     failing_operation()
 
-                mock_shm.write_timeouts.assert_called_once_with(778, 100, 100)
+                mock_shm.write_timeouts.assert_called_once_with(778, 100, 0)
                 mock_shm.clear.assert_called_once_with(778)
 
-    async def test_async_timeout_clears_shm_on_timeout_error(self):
+    async def test_async_timeout_clears_shm_on_success(self):
         mock_shm = MagicMock()
         mock_shm.write_timeouts = MagicMock()
         mock_shm.clear = MagicMock()
@@ -817,14 +800,14 @@ class TestTimeoutShmLifecycle:
         with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
             with patch("faultcore.decorator.threading.get_native_id", return_value=779):
 
-                @faultcore.timeout(10)
+                @faultcore.connect_timeout(10)
                 async def slow_async():
-                    await asyncio.sleep(0.05)
+                    await asyncio.sleep(0.001)
+                    return "ok"
 
-                with pytest.raises(TimeoutError):
-                    await slow_async()
+                assert await slow_async() == "ok"
 
-                mock_shm.write_timeouts.assert_called_once_with(779, 10, 10)
+                mock_shm.write_timeouts.assert_called_once_with(779, 10, 0)
                 mock_shm.clear.assert_called_once_with(779)
 
 
@@ -839,7 +822,7 @@ class TestAsyncShmLifecycle:
         with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
             with patch("faultcore.decorator.threading.get_native_id", return_value=321):
 
-                @faultcore.timeout(100)
+                @faultcore.connect_timeout(100)
                 async def async_op():
                     return "ok"
 
@@ -849,7 +832,7 @@ class TestAsyncShmLifecycle:
                 finally:
                     result = await pending
                     assert result == "ok"
-                mock_shm.write_timeouts.assert_called_once_with(321, 100, 100)
+                mock_shm.write_timeouts.assert_called_once_with(321, 100, 0)
                 mock_shm.clear.assert_called_once_with(321)
 
     async def test_async_fault_context_is_isolated_per_task(self):

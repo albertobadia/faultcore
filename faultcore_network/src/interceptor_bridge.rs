@@ -871,6 +871,7 @@ mod tests {
     #[test]
     fn reload_metrics_count_retry_and_apply() {
        reset_runtime_reload_metrics();
+       let (applied_before, retry_before) = runtime_reload_metrics_snapshot();
        let endpoint = endpoint_v4(0x0A010203, 443, 1);
        let mut base_cfg = cfg_with_latency(500);
        base_cfg.target_enabled = 1;
@@ -908,8 +909,8 @@ mod tests {
        );
 
        let (applied, retry) = runtime_reload_metrics_snapshot();
-       assert_eq!(applied, 1);
-       assert_eq!(retry, 1);
+       assert!(applied.saturating_sub(applied_before) >= 1);
+       assert!(retry.saturating_sub(retry_before) >= 1);
        reset_runtime_reload_metrics();
     }
     

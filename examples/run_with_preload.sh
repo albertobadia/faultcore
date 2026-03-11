@@ -52,7 +52,7 @@ if [ $# -eq 0 ]; then
     echo "  08_bandwidth_throttle.py - Bandwidth throttling"
     echo "  09_network_timeout.py   - Network latency injection"
     echo "  10_target_priority.py   - Target precedence behavior"
-    echo "  11_fault_metrics.py     - Global/context metrics"
+    echo "  11_fault_metrics.py     - Policy application example"
     echo "  12_perf_baseline.py     - Baseline vs policy throughput"
     echo "  13_end_to_end_scenarios.py - TCP/UDP/HTTP/DNS scenarios"
     echo ""

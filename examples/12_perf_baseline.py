@@ -62,9 +62,6 @@ def run_benchmark(host: str, port: int, count: int, latency_ms: int) -> None:
     def policy_call(msg: str) -> str:
         return tcp_echo(host, port, msg)
 
-    # Reset global counters before benchmark windows.
-    _ = faultcore.get_fault_metrics(reset=True)
-
     baseline = run_calls(baseline_call, count=count)
     policy = run_calls(policy_call, count=count)
 
@@ -77,9 +74,6 @@ def run_benchmark(host: str, port: int, count: int, latency_ms: int) -> None:
         f"p95_ms +{policy['p95_ms'] - baseline['p95_ms']:.3f} "
         f"throughput {policy['throughput_rps'] - baseline['throughput_rps']:.2f} rps"
     )
-
-    metrics = faultcore.get_fault_metrics()
-    print(f"runtime metrics totals: {metrics['totals']}")
 
 
 if __name__ == "__main__":

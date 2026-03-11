@@ -66,14 +66,6 @@ class StressStats:
         return self.errors / self.ops if self.ops > 0 else 1.0
 
 
-def read_metrics_totals(reset: bool = False) -> dict:
-    snapshot = faultcore.get_fault_metrics(reset=reset)
-    totals = snapshot.get("totals")
-    if not isinstance(totals, dict):
-        raise RuntimeError("invalid metrics snapshot: missing totals")
-    return totals
-
-
 def run_stress_phase(
     label: str,
     call_fn,
@@ -173,7 +165,6 @@ def main() -> int:
         tcp_echo_once(args.host, args.port, payload)
 
     try:
-        read_metrics_totals(reset=True)
         baseline_rss_before = read_rss_kb()
         baseline = run_stress_phase(
             "baseline",
@@ -183,9 +174,7 @@ def main() -> int:
             max_error_rate=args.max_error_rate,
         )
         baseline_rss_after = read_rss_kb()
-        baseline_metrics = read_metrics_totals()
 
-        read_metrics_totals(reset=True)
         policy_rss_before = read_rss_kb()
         policy = run_stress_phase(
             "policy_latency",
@@ -195,7 +184,6 @@ def main() -> int:
             max_error_rate=args.max_error_rate,
         )
         policy_rss_after = read_rss_kb()
-        policy_metrics = read_metrics_totals()
     except Exception as exc:  # noqa: BLE001
         print(f"ERROR: {exc}")
         return 1
@@ -214,11 +202,8 @@ def main() -> int:
     policy_phase_delta_kb = (
         policy_rss_after - policy_rss_before if policy_rss_before >= 0 and policy_rss_after >= 0 else -1
     )
-    print(f"baseline: rss_phase_delta_kb={baseline_phase_delta_kb} metrics_totals={baseline_metrics}")
-    print(f"policy_latency: rss_phase_delta_kb={policy_phase_delta_kb} metrics_totals={policy_metrics}")
-    if policy_metrics.get("delay", 0) <= 0:
-        print("ERROR: expected policy phase to produce delay metrics > 0")
-        return 1
+    print(f"baseline: rss_phase_delta_kb={baseline_phase_delta_kb}")
+    print(f"policy_latency: rss_phase_delta_kb={policy_phase_delta_kb}")
     if policy.avg_latency_ms <= baseline.avg_latency_ms + 5.0:
         print(
             "ERROR: expected policy avg latency to exceed baseline by at least 5ms "

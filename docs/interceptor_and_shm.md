@@ -58,19 +58,10 @@ Helper script:
 examples/run_with_preload.sh 01_http_requests.py
 ```
 
-## Interceptor Detection from Python
-
-Utilities:
-- `faultcore.is_interceptor_loaded()`
-- `faultcore.get_interceptor_path()`
-
-These are convenience checks and not hard guarantees of all runtime conditions.
-
 ## Platform Notes
 
 - `LD_PRELOAD` interception is Linux-specific.
 - Without active SHM/interceptor, decorators remain callable and fail gracefully (no-op writes).
-- Function-level timeout behavior still applies without interceptor.
 
 ### Platform Compatibility Flow
 
@@ -81,8 +72,7 @@ flowchart TD
     SHM --> Hook["Interceptor applies network effects"]
     Hook --> EndA["Return with injected behavior"]
     Linux -->|No| Noop["SHM write may be no-op"]
-    Noop --> Timeout["Function timeout decorators still apply"]
-    Timeout --> EndB["Return without interceptor network effects"]
+    Noop --> EndB["Return without interceptor network effects"]
 ```
 
 Diagram focus: behavior split between active interception and graceful fallback.

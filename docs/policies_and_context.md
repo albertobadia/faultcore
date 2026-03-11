@@ -10,7 +10,7 @@ A policy is a named set of optional fields:
 - `packet_loss` (converted to ppm)
 - `burst_loss_len`
 - `rate` (converted to bps)
-- `timeout_ms` or split `connect_timeout_ms` / `recv_timeout_ms`
+- `connect_timeout_ms` / `recv_timeout_ms`
 
 Policies are stored in a process-local registry protected by a lock.
 
@@ -52,7 +52,8 @@ faultcore.register_policy(
     packet_loss="1%",
     burst_loss_len=3,
     rate="2mbps",
-    timeout_ms=20,
+    connect_timeout_ms=20,
+    recv_timeout_ms=20,
 )
 
 print(faultcore.list_policies())      # ["slow_link"]
@@ -112,7 +113,8 @@ File format:
     "packet_loss": "0.2%",
     "burst_loss_len": 2,
     "rate": "1mbps",
-    "timeout_ms": 9
+    "connect_timeout_ms": 9,
+    "recv_timeout_ms": 9
   }
 }
 ```
@@ -121,28 +123,10 @@ Notes:
 - YAML support requires `PyYAML`.
 - Root value must be an object keyed by policy name.
 
-## Precedence Notes
+## Timeout Notes
 
-- `timeout_ms` sets both connect and recv timeout.
-- If split timeout fields are also provided, split fields are used for final stored timeout tuple.
-- Missing fields are simply omitted from the policy; decorators only write fields that exist.
-
-### Timeout Precedence Flow
-
-```mermaid
-flowchart TD
-    Start["register_policy(...)"] --> A{"timeout_ms provided?"}
-    A -->|No| B["No base timeout pair from timeout_ms"]
-    A -->|Yes| C["Set connect_timeout_ms and recv_timeout_ms from timeout_ms"]
-    B --> D{"split timeout fields provided?"}
-    C --> D
-    D -->|Yes| E["Override with explicit connect_timeout_ms and/or recv_timeout_ms"]
-    D -->|No| F["Keep current timeout pair"]
-    E --> G["Persist final timeout tuple"]
-    F --> G
-```
-
-Diagram focus: how shared and split timeout values resolve.
+- Only split network timeout fields are supported: `connect_timeout_ms` and `recv_timeout_ms`.
+- Missing timeout fields are omitted from the policy.
 
 ## Related
 
