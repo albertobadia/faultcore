@@ -46,41 +46,45 @@ def apply_fault_profiles(shm: Any, tid: int, wrapper: Any, *, started_monotonic_
         connect_ms, recv_ms = wrapper._timeouts
         shm.write_timeouts(tid, connect_ms, recv_ms)
 
-    if wrapper._uplink_profile:
+    uplink_profile = wrapper._uplink_profile
+    if uplink_profile:
         shm.write_uplink(
             tid,
-            latency_ms=wrapper._uplink_profile.get("latency_ms"),
-            jitter_ms=wrapper._uplink_profile.get("jitter_ms"),
-            packet_loss_ppm=wrapper._uplink_profile.get("packet_loss_ppm"),
-            burst_loss_len=wrapper._uplink_profile.get("burst_loss_len"),
-            bandwidth_bps=wrapper._uplink_profile.get("bandwidth_bps"),
+            latency_ms=uplink_profile.get("latency_ms"),
+            jitter_ms=uplink_profile.get("jitter_ms"),
+            packet_loss_ppm=uplink_profile.get("packet_loss_ppm"),
+            burst_loss_len=uplink_profile.get("burst_loss_len"),
+            bandwidth_bps=uplink_profile.get("bandwidth_bps"),
         )
 
-    if wrapper._downlink_profile:
+    downlink_profile = wrapper._downlink_profile
+    if downlink_profile:
         shm.write_downlink(
             tid,
-            latency_ms=wrapper._downlink_profile.get("latency_ms"),
-            jitter_ms=wrapper._downlink_profile.get("jitter_ms"),
-            packet_loss_ppm=wrapper._downlink_profile.get("packet_loss_ppm"),
-            burst_loss_len=wrapper._downlink_profile.get("burst_loss_len"),
-            bandwidth_bps=wrapper._downlink_profile.get("bandwidth_bps"),
+            latency_ms=downlink_profile.get("latency_ms"),
+            jitter_ms=downlink_profile.get("jitter_ms"),
+            packet_loss_ppm=downlink_profile.get("packet_loss_ppm"),
+            burst_loss_len=downlink_profile.get("burst_loss_len"),
+            bandwidth_bps=downlink_profile.get("bandwidth_bps"),
         )
 
-    if wrapper._correlated_loss_profile:
+    correlated_loss_profile = wrapper._correlated_loss_profile
+    if correlated_loss_profile:
         shm.write_correlated_loss(
             tid,
-            enabled=bool(wrapper._correlated_loss_profile.get("enabled", 0)),
-            p_good_to_bad_ppm=wrapper._correlated_loss_profile.get("p_good_to_bad_ppm", 0),
-            p_bad_to_good_ppm=wrapper._correlated_loss_profile.get("p_bad_to_good_ppm", 0),
-            loss_good_ppm=wrapper._correlated_loss_profile.get("loss_good_ppm", 0),
-            loss_bad_ppm=wrapper._correlated_loss_profile.get("loss_bad_ppm", 0),
+            enabled=bool(correlated_loss_profile.get("enabled", 0)),
+            p_good_to_bad_ppm=correlated_loss_profile.get("p_good_to_bad_ppm", 0),
+            p_bad_to_good_ppm=correlated_loss_profile.get("p_bad_to_good_ppm", 0),
+            loss_good_ppm=correlated_loss_profile.get("loss_good_ppm", 0),
+            loss_bad_ppm=correlated_loss_profile.get("loss_bad_ppm", 0),
         )
 
-    if wrapper._connection_error_profile:
+    connection_error_profile = wrapper._connection_error_profile
+    if connection_error_profile:
         shm.write_connection_error(
             tid,
-            kind=wrapper._connection_error_profile.get("kind", 0),
-            prob_ppm=wrapper._connection_error_profile.get("prob_ppm", 0),
+            kind=connection_error_profile.get("kind", 0),
+            prob_ppm=connection_error_profile.get("prob_ppm", 0),
         )
 
     if wrapper._half_open_profile:
@@ -90,27 +94,30 @@ def apply_fault_profiles(shm: Any, tid: int, wrapper: Any, *, started_monotonic_
             err_kind=wrapper._half_open_profile.get("err_kind", 0),
         )
 
-    if wrapper._packet_duplicate_profile:
+    packet_duplicate_profile = wrapper._packet_duplicate_profile
+    if packet_duplicate_profile:
         shm.write_packet_duplicate(
             tid,
-            prob_ppm=wrapper._packet_duplicate_profile.get("prob_ppm", 0),
-            max_extra=wrapper._packet_duplicate_profile.get("max_extra", 1),
+            prob_ppm=packet_duplicate_profile.get("prob_ppm", 0),
+            max_extra=packet_duplicate_profile.get("max_extra", 1),
         )
 
-    if wrapper._packet_reorder_profile:
+    packet_reorder_profile = wrapper._packet_reorder_profile
+    if packet_reorder_profile:
         shm.write_packet_reorder(
             tid,
-            prob_ppm=wrapper._packet_reorder_profile.get("prob_ppm", 0),
-            max_delay_ns=wrapper._packet_reorder_profile.get("max_delay_ns", 0),
-            window=wrapper._packet_reorder_profile.get("window", 1),
+            prob_ppm=packet_reorder_profile.get("prob_ppm", 0),
+            max_delay_ns=packet_reorder_profile.get("max_delay_ns", 0),
+            window=packet_reorder_profile.get("window", 1),
         )
 
-    if wrapper._dns_profile:
+    dns_profile = wrapper._dns_profile
+    if dns_profile:
         shm.write_dns(
             tid,
-            delay_ms=wrapper._dns_profile.get("delay_ms"),
-            timeout_ms=wrapper._dns_profile.get("timeout_ms"),
-            nxdomain_ppm=wrapper._dns_profile.get("nxdomain_ppm"),
+            delay_ms=dns_profile.get("delay_ms"),
+            timeout_ms=dns_profile.get("timeout_ms"),
+            nxdomain_ppm=dns_profile.get("nxdomain_ppm"),
         )
 
     if wrapper._target_profiles:

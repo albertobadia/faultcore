@@ -1,6 +1,4 @@
 #!/bin/bash
-# Test script for faultcore
-# Runs pytest with interceptor preloaded
 
 set -euo pipefail
 
@@ -44,7 +42,6 @@ wait_for_port() {
     return 1
 }
 
-# Detect OS and set interceptor variables
 INTERCEPTOR=""
 case "$(uname)" in
     Linux)
@@ -61,34 +58,28 @@ case "$(uname)" in
         ;;
 esac
 
-# Start local test servers for integration tests
 echo "Starting local test servers..."
 export ECHO_SERVER_HOST=127.0.0.1
 export ECHO_SERVER_PORT=9000
 export HTTP_SERVER_HOST=127.0.0.1
 export HTTP_SERVER_PORT=8000
 
-# Kill existing servers if any
 pkill -f "tcp_echo_server.py" || true
 pkill -f "uvicorn.*http_server" || true
 
-# Start servers in background
 "$PYTHON_BIN" tests/integration/servers/tcp_echo_server.py --host 127.0.0.1 --port 9000 > /tmp/echo_server.log 2>&1 &
 ECHO_PID=$!
 "$PYTHON_BIN" -m uvicorn tests.integration.servers.http_server:app --host 127.0.0.1 --port 8000 > /tmp/http_server.log 2>&1 &
 HTTP_PID=$!
 
-# Wait for servers to be ready
 echo "Waiting for servers to start..."
 wait_for_port "$ECHO_SERVER_HOST" "$ECHO_SERVER_PORT"
 wait_for_port "$HTTP_SERVER_HOST" "$HTTP_SERVER_PORT"
 
-# Run pytest unit tests with the interceptor (using python directly to ensure env vars are passed)
 PYTEST="$PYTHON_BIN -m pytest"
 echo "Running unit tests with interceptor..."
 LD_PRELOAD="$INTERCEPTOR" $PYTEST tests/unit -v -s
 
-# Run integration CLI scripts (auto-discovery; each script defines its own default suite)
 echo "Running integration CLI scripts with interceptor..."
 run_integration_script() {
     local script="$1"

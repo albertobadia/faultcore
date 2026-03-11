@@ -98,6 +98,30 @@ def _build_directional_profile_or_raise(
     return direction_profile
 
 
+def _policy_to_wrapper_kwargs(policy: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "seed": policy.get("seed"),
+        "latency_ms": policy.get("latency_ms"),
+        "jitter_ms": policy.get("jitter_ms"),
+        "packet_loss_ppm": policy.get("packet_loss_ppm"),
+        "burst_loss_len": policy.get("burst_loss_len"),
+        "bandwidth_bps": policy.get("bandwidth_bps"),
+        "timeouts": policy.get("timeouts"),
+        "uplink_profile": policy.get("uplink_profile"),
+        "downlink_profile": policy.get("downlink_profile"),
+        "correlated_loss_profile": policy.get("correlated_loss_profile"),
+        "connection_error_profile": policy.get("connection_error_profile"),
+        "half_open_profile": policy.get("half_open_profile"),
+        "packet_duplicate_profile": policy.get("packet_duplicate_profile"),
+        "packet_reorder_profile": policy.get("packet_reorder_profile"),
+        "dns_profile": policy.get("dns_profile"),
+        "target_profile": policy.get("target_profile"),
+        "target_profiles": policy.get("target_profiles"),
+        "schedule_profile": policy.get("schedule_profile"),
+        "session_budget_profile": policy.get("session_budget_profile"),
+    }
+
+
 class FaultWrapper:
     def __init__(
         self,
@@ -238,12 +262,9 @@ def packet_loss(loss: str | int | float) -> Callable[[Callable[..., Any]], Fault
 
 
 def burst_loss(length: int) -> Callable[[Callable[..., Any]], FaultWrapper]:
-    def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        if length < 0:
-            raise ValueError("burst_loss length must be >= 0")
-        return FaultWrapper(func, burst_loss_len=int(length))
-
-    return decorator
+    if length < 0:
+        raise ValueError("burst_loss length must be >= 0")
+    return _with_wrapper(burst_loss_len=int(length))
 
 
 def uplink(
@@ -419,37 +440,14 @@ def apply_policy(policy_name: str) -> Callable[[Callable[..., Any]], FaultWrappe
         policy = get_policy_for_apply(policy_name)
         if policy is None:
             return FaultWrapper(func)
-        return FaultWrapper(
-            func,
-            seed=policy.get("seed"),
-            latency_ms=policy.get("latency_ms"),
-            jitter_ms=policy.get("jitter_ms"),
-            packet_loss_ppm=policy.get("packet_loss_ppm"),
-            burst_loss_len=policy.get("burst_loss_len"),
-            bandwidth_bps=policy.get("bandwidth_bps"),
-            timeouts=policy.get("timeouts"),
-            uplink_profile=policy.get("uplink_profile"),
-            downlink_profile=policy.get("downlink_profile"),
-            correlated_loss_profile=policy.get("correlated_loss_profile"),
-            connection_error_profile=policy.get("connection_error_profile"),
-            half_open_profile=policy.get("half_open_profile"),
-            packet_duplicate_profile=policy.get("packet_duplicate_profile"),
-            packet_reorder_profile=policy.get("packet_reorder_profile"),
-            dns_profile=policy.get("dns_profile"),
-            target_profile=policy.get("target_profile"),
-            target_profiles=policy.get("target_profiles"),
-            schedule_profile=policy.get("schedule_profile"),
-            session_budget_profile=policy.get("session_budget_profile"),
-        )
+        return FaultWrapper(func, **_policy_to_wrapper_kwargs(policy))
 
     return decorator
 
 
 def fault(policy_name: str = "auto") -> Callable[[Callable[..., Any]], FaultWrapper]:
     def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        name = policy_name
-        if name == "auto":
-            name = get_thread_policy() or ""
+        name = (get_thread_policy() or "") if policy_name == "auto" else policy_name
         if not name:
             return FaultWrapper(func)
         return apply_policy(name)(func)

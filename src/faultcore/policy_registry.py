@@ -143,16 +143,11 @@ def _rule_is_dns_observable(rule: dict[str, Any]) -> bool:
 
 
 def _rule_is_transport_observable(rule: dict[str, Any]) -> bool:
-    if rule.get("hostname") is not None or rule.get("sni") is not None:
-        return True
-    return int(rule.get("kind", 0)) in (1, 2)
+    return rule.get("hostname") is not None or rule.get("sni") is not None or int(rule.get("kind", 0)) in (1, 2)
 
 
 def _iter_policy_target_rules(policy: dict[str, Any]) -> list[dict[str, Any]]:
-    rules: list[dict[str, Any]] = []
-    single = policy.get("target_profile")
-    if isinstance(single, dict):
-        rules.append(single)
+    rules = [policy["target_profile"]] if isinstance(policy.get("target_profile"), dict) else []
     multiple = policy.get("target_profiles")
     if isinstance(multiple, list):
         rules.extend(rule for rule in multiple if isinstance(rule, dict))

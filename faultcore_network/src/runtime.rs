@@ -10,6 +10,12 @@ use parking_lot::Mutex;
 
 use crate::LayerDecision;
 
+fn sleep_if_needed(ns: u64) {
+    if ns > 0 {
+        std::thread::sleep(Duration::from_nanos(ns));
+    }
+}
+
 #[derive(Clone)]
 pub struct PendingDatagram {
     pub data: Arc<[u8]>,
@@ -198,9 +204,7 @@ pub fn apply_connect_directive(directive: ConnectDirective) -> Option<i32> {
     match directive {
         ConnectDirective::Continue => None,
         ConnectDirective::SleepNs(ns) => {
-            if ns > 0 {
-                std::thread::sleep(Duration::from_nanos(ns));
-            }
+            sleep_if_needed(ns);
             None
         }
         ConnectDirective::ReturnErrno { errno, ret } => {
@@ -214,9 +218,7 @@ pub fn apply_stream_directive(directive: StreamDirective) -> Option<isize> {
     match directive {
         StreamDirective::Continue => None,
         StreamDirective::SleepNs(ns) => {
-            if ns > 0 {
-                std::thread::sleep(Duration::from_nanos(ns));
-            }
+            sleep_if_needed(ns);
             None
         }
         StreamDirective::ReturnValue(v) => Some(v),
@@ -292,9 +294,10 @@ impl InterceptorRuntime {
     {
         let queue = {
             let mut map = self.reorder_pending_by_fd.lock();
-            map.entry(fd)
-                .or_insert_with(|| Arc::new(Mutex::new(VecDeque::new())))
-                .clone()
+            Arc::clone(
+                map.entry(fd)
+                    .or_insert_with(|| Arc::new(Mutex::new(VecDeque::new()))),
+            )
         };
 
         let mut guard = queue.lock();
@@ -321,9 +324,10 @@ impl InterceptorRuntime {
     {
         let queue = {
             let mut map = self.reorder_pending_recv_by_fd.lock();
-            map.entry(fd)
-                .or_insert_with(|| Arc::new(Mutex::new(VecDeque::new())))
-                .clone()
+            Arc::clone(
+                map.entry(fd)
+                    .or_insert_with(|| Arc::new(Mutex::new(VecDeque::new()))),
+            )
         };
 
         let mut guard = queue.lock();

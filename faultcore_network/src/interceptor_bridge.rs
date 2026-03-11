@@ -1173,6 +1173,7 @@ mod tests {
        let mut base_cfg = cfg_with_latency(500);
        base_cfg.target_enabled = 2;
        base_cfg.ruleset_generation = 22;
+       let fallback_cfg = base_cfg.clone();
        let tid_slot = 9usize;
 
        let mut rules = [TargetRule::default(); crate::MAX_TARGET_RULES_PER_TID];
@@ -1206,12 +1207,12 @@ mod tests {
        };
 
        let selected_cfg = apply_multi_target_for_tid_with_reader(
-           base_cfg.clone(),
+           base_cfg,
            tid_slot,
            Some(endpoint),
            SemanticContext::default(),
            || Some(rules),
-           || Some(base_cfg.clone()),
+           || Some(fallback_cfg.clone()),
        )
        .expect("rule must match");
        assert_eq!(selected_cfg.target_enabled, 0);

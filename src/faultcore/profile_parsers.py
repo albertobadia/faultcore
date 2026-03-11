@@ -2,15 +2,58 @@ import ipaddress
 
 from faultcore.target_name_helpers import normalize_target_name
 
+_ERROR_KIND_MAP = {
+    "reset": 1,
+    "refused": 2,
+    "unreachable": 3,
+}
+
+_TARGET_PROTOCOL_MAP = {
+    "any": 0,
+    "tcp": 1,
+    "udp": 2,
+}
+
+_NS_PER_SECOND = 1_000_000_000
+
+
+def _as_non_negative_float(value: float, error_message: str) -> float:
+    if value < 0:
+        raise ValueError(error_message)
+    return value
+
+
+def _as_non_negative_int(value: int | float, error_message: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise ValueError(error_message)
+    return parsed
+
+
+def _pad_addr16(addr: list[int]) -> list[int]:
+    if len(addr) >= 16:
+        return addr
+    return addr + ([0] * (16 - len(addr)))
+
+
+def _set_port_range(profile: dict[str, object], port_start: int | None, port_end: int | None) -> None:
+    if port_start is not None and port_end is not None:
+        profile["port_start"] = port_start
+        profile["port_end"] = port_end
+
+
+def _seconds_to_ns(value: int | float) -> int:
+    return int(float(value) * _NS_PER_SECOND)
+
+
+def _validate_port_bounds(value: int, field_name: str) -> None:
+    if value < 0 or value > 65535:
+        raise ValueError(f"target {field_name} must be between 0 and 65535")
+
 
 def parse_rate(rate: str | int | float) -> int:
-    def as_non_negative(value: float) -> float:
-        if value < 0:
-            raise ValueError("rate must be >= 0")
-        return value
-
     if isinstance(rate, (int, float)):
-        return int(as_non_negative(float(rate)) * 1_000_000)
+        return int(_as_non_negative_float(float(rate), "rate must be >= 0") * 1_000_000)
 
     normalized_rate = rate.strip().lower()
     units = {
@@ -21,10 +64,10 @@ def parse_rate(rate: str | int | float) -> int:
     }
     for suffix, multiplier in units.items():
         if normalized_rate.endswith(suffix):
-            numeric = as_non_negative(float(normalized_rate[: -len(suffix)]))
+            numeric = _as_non_negative_float(float(normalized_rate[: -len(suffix)]), "rate must be >= 0")
             return int(numeric * multiplier)
 
-    return int(as_non_negative(float(normalized_rate)))
+    return int(_as_non_negative_float(float(normalized_rate), "rate must be >= 0"))
 
 
 def parse_packet_loss(loss: str | int | float) -> int:
@@ -65,20 +108,13 @@ def build_direction_profile(
 ) -> dict[str, int]:
     profile: dict[str, int] = {}
     if latency_ms is not None:
-        if int(latency_ms) < 0:
-            raise ValueError("latency_ms must be >= 0")
-        profile["latency_ms"] = int(latency_ms)
+        profile["latency_ms"] = _as_non_negative_int(latency_ms, "latency_ms must be >= 0")
     if jitter_ms is not None:
-        if int(jitter_ms) < 0:
-            raise ValueError("jitter_ms must be >= 0")
-        profile["jitter_ms"] = int(jitter_ms)
+        profile["jitter_ms"] = _as_non_negative_int(jitter_ms, "jitter_ms must be >= 0")
     if packet_loss is not None:
         profile["packet_loss_ppm"] = parse_packet_loss(packet_loss)
     if burst_loss_len is not None:
-        b = int(burst_loss_len)
-        if b < 0:
-            raise ValueError("burst_loss_len must be >= 0")
-        profile["burst_loss_len"] = b
+        profile["burst_loss_len"] = _as_non_negative_int(burst_loss_len, "burst_loss_len must be >= 0")
     if rate is not None:
         profile["bandwidth_bps"] = parse_rate(rate)
     return profile
@@ -103,13 +139,10 @@ def build_correlated_loss_profile(
 
 def parse_error_kind(kind: str) -> int:
     normalized = kind.strip().lower()
-    if normalized == "reset":
-        return 1
-    if normalized == "refused":
-        return 2
-    if normalized == "unreachable":
-        return 3
-    raise ValueError("error kind must be one of: reset, refused, unreachable")
+    parsed = _ERROR_KIND_MAP.get(normalized)
+    if parsed is None:
+        raise ValueError("error kind must be one of: reset, refused, unreachable")
+    return parsed
 
 
 def build_connection_error_profile(*, kind: str, prob: str | int | float = "100%") -> dict[str, int]:
@@ -157,15 +190,9 @@ def build_dns_profile(
 ) -> dict[str, int]:
     profile: dict[str, int] = {}
     if delay_ms is not None:
-        d = int(delay_ms)
-        if d < 0:
-            raise ValueError("dns delay must be >= 0")
-        profile["delay_ms"] = d
+        profile["delay_ms"] = _as_non_negative_int(delay_ms, "dns delay must be >= 0")
     if timeout_ms is not None:
-        t = int(timeout_ms)
-        if t < 0:
-            raise ValueError("dns timeout must be >= 0")
-        profile["timeout_ms"] = t
+        profile["timeout_ms"] = _as_non_negative_int(timeout_ms, "dns timeout must be >= 0")
     if nxdomain is not None:
         profile["nxdomain_ppm"] = parse_packet_loss(nxdomain)
     return profile
@@ -175,13 +202,10 @@ def parse_target_protocol(protocol: str | None) -> int:
     if protocol is None:
         return 0
     normalized = protocol.strip().lower()
-    if normalized == "any":
-        return 0
-    if normalized == "tcp":
-        return 1
-    if normalized == "udp":
-        return 2
-    raise ValueError("target protocol must be one of: any, tcp, udp")
+    parsed = _TARGET_PROTOCOL_MAP.get(normalized)
+    if parsed is None:
+        raise ValueError("target protocol must be one of: any, tcp, udp")
+    return parsed
 
 
 def _parse_target_host_port(raw: str) -> tuple[str, int]:
@@ -253,17 +277,14 @@ def build_target_profile(
                 parsed_port = port_from_target
             parsed_host = host_part
 
-    if parsed_port < 0 or parsed_port > 65535:
-        raise ValueError("target port must be between 0 and 65535")
+    _validate_port_bounds(parsed_port, "port")
     if parsed_port != 0 and (parsed_port_start is not None or parsed_port_end is not None):
         raise ValueError("target cannot define both port and port_start/port_end")
     if (parsed_port_start is None) != (parsed_port_end is None):
         raise ValueError("target requires both port_start and port_end when using port ranges")
     if parsed_port_start is not None and parsed_port_end is not None:
-        if parsed_port_start < 0 or parsed_port_start > 65535:
-            raise ValueError("target port_start must be between 0 and 65535")
-        if parsed_port_end < 0 or parsed_port_end > 65535:
-            raise ValueError("target port_end must be between 0 and 65535")
+        _validate_port_bounds(parsed_port_start, "port_start")
+        _validate_port_bounds(parsed_port_end, "port_end")
         if parsed_port_start > parsed_port_end:
             raise ValueError("target port_start must be <= port_end")
     parsed_priority = 100 if priority is None else int(priority)
@@ -297,9 +318,7 @@ def build_target_profile(
             profile["hostname"] = parsed_hostname
         if parsed_sni is not None:
             profile["sni"] = parsed_sni
-        if parsed_port_start is not None and parsed_port_end is not None:
-            profile["port_start"] = parsed_port_start
-            profile["port_end"] = parsed_port_end
+        _set_port_range(profile, parsed_port_start, parsed_port_end)
         return profile
 
     if parsed_host:
@@ -315,9 +334,7 @@ def build_target_profile(
             address_family = 2
             ipv4 = 0
             prefix_len = 128
-        addr = list(address.packed)
-        if len(addr) < 16:
-            addr = addr + ([0] * (16 - len(addr)))
+        addr = _pad_addr16(list(address.packed))
         profile = {
             "enabled": 1,
             "kind": 1,
@@ -329,9 +346,7 @@ def build_target_profile(
             "address_family": address_family,
             "addr": addr,
         }
-        if parsed_port_start is not None and parsed_port_end is not None:
-            profile["port_start"] = parsed_port_start
-            profile["port_end"] = parsed_port_end
+        _set_port_range(profile, parsed_port_start, parsed_port_end)
         return profile
 
     try:
@@ -346,9 +361,7 @@ def build_target_profile(
         address_family = 2
         ipv4 = 0
         max_prefix_len = 128
-    addr = list(network.network_address.packed)
-    if len(addr) < 16:
-        addr = addr + ([0] * (16 - len(addr)))
+    addr = _pad_addr16(list(network.network_address.packed))
     if network.prefixlen < 0 or network.prefixlen > max_prefix_len:
         raise ValueError(f"target prefix_len must be between 0 and {max_prefix_len}")
     profile = {
@@ -362,9 +375,7 @@ def build_target_profile(
         "address_family": address_family,
         "addr": addr,
     }
-    if parsed_port_start is not None and parsed_port_end is not None:
-        profile["port_start"] = parsed_port_start
-        profile["port_end"] = parsed_port_end
+    _set_port_range(profile, parsed_port_start, parsed_port_end)
     return profile
 
 
@@ -381,8 +392,8 @@ def build_schedule_profile(
     if normalized == "spike":
         if every_s is None or duration_s is None:
             raise ValueError("spike profile requires every_s and duration_s")
-        cycle_ns = int(float(every_s) * 1_000_000_000)
-        active_ns = int(float(duration_s) * 1_000_000_000)
+        cycle_ns = _seconds_to_ns(every_s)
+        active_ns = _seconds_to_ns(duration_s)
         if cycle_ns <= 0 or active_ns <= 0 or active_ns > cycle_ns:
             raise ValueError("spike profile requires 0 < duration_s <= every_s")
         return {"schedule_type": 2, "param_a_ns": cycle_ns, "param_b_ns": active_ns, "param_c_ns": 0}
@@ -390,8 +401,8 @@ def build_schedule_profile(
     if normalized == "flapping":
         if on_s is None or off_s is None:
             raise ValueError("flapping profile requires on_s and off_s")
-        on_ns = int(float(on_s) * 1_000_000_000)
-        off_ns = int(float(off_s) * 1_000_000_000)
+        on_ns = _seconds_to_ns(on_s)
+        off_ns = _seconds_to_ns(off_s)
         if on_ns <= 0 or off_ns <= 0:
             raise ValueError("flapping profile requires on_s > 0 and off_s > 0")
         return {"schedule_type": 3, "param_a_ns": on_ns, "param_b_ns": off_ns, "param_c_ns": 0}
@@ -399,7 +410,7 @@ def build_schedule_profile(
     if normalized == "ramp":
         if ramp_s is None:
             raise ValueError("ramp profile requires ramp_s")
-        ramp_ns = int(float(ramp_s) * 1_000_000_000)
+        ramp_ns = _seconds_to_ns(ramp_s)
         if ramp_ns <= 0:
             raise ValueError("ramp profile requires ramp_s > 0")
         return {"schedule_type": 1, "param_a_ns": ramp_ns, "param_b_ns": 0, "param_c_ns": 0}

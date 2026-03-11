@@ -51,35 +51,18 @@ impl LayerMetrics {
     }
 
     fn record_decision(&self, decision: &LayerDecision) {
-        match decision {
-            LayerDecision::Continue => {
-                self.continue_count.fetch_add(1, Ordering::Relaxed);
-            }
-            LayerDecision::DelayNs(_) => {
-                self.delay_count.fetch_add(1, Ordering::Relaxed);
-            }
-            LayerDecision::Drop => {
-                self.drop_count.fetch_add(1, Ordering::Relaxed);
-            }
-            LayerDecision::TimeoutMs(_) => {
-                self.timeout_count.fetch_add(1, Ordering::Relaxed);
-            }
-            LayerDecision::Error(_) => {
-                self.error_count.fetch_add(1, Ordering::Relaxed);
-            }
-            LayerDecision::ConnectionErrorKind(_) => {
-                self.connection_error_count.fetch_add(1, Ordering::Relaxed);
-            }
-            LayerDecision::StageReorder => {
-                self.reorder_count.fetch_add(1, Ordering::Relaxed);
-            }
-            LayerDecision::Duplicate(_) => {
-                self.duplicate_count.fetch_add(1, Ordering::Relaxed);
-            }
-            LayerDecision::NxDomain => {
-                self.nxdomain_count.fetch_add(1, Ordering::Relaxed);
-            }
-        }
+        let counter = match decision {
+            LayerDecision::Continue => &self.continue_count,
+            LayerDecision::DelayNs(_) => &self.delay_count,
+            LayerDecision::Drop => &self.drop_count,
+            LayerDecision::TimeoutMs(_) => &self.timeout_count,
+            LayerDecision::Error(_) => &self.error_count,
+            LayerDecision::ConnectionErrorKind(_) => &self.connection_error_count,
+            LayerDecision::StageReorder => &self.reorder_count,
+            LayerDecision::Duplicate(_) => &self.duplicate_count,
+            LayerDecision::NxDomain => &self.nxdomain_count,
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
     }
 
     fn record_skipped(&self) {
