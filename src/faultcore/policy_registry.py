@@ -52,6 +52,24 @@ _REGISTERABLE_FIELDS = (
     "session_budget",
 )
 
+_TRANSPORT_EFFECT_POLICY_KEYS = (
+    "latency_ms",
+    "jitter_ms",
+    "packet_loss_ppm",
+    "burst_loss_len",
+    "bandwidth_bps",
+    "timeouts",
+    "uplink_profile",
+    "downlink_profile",
+    "correlated_loss_profile",
+    "connection_error_profile",
+    "half_open_profile",
+    "packet_duplicate_profile",
+    "packet_reorder_profile",
+    "schedule_profile",
+    "session_budget_profile",
+)
+
 
 def _require_mapping(value: Any, field_name: str) -> dict[str, Any]:
     if not isinstance(value, dict):
@@ -109,6 +127,60 @@ def _build_target_profiles(targets: list[str | dict[str, Any]]) -> list[dict[str
         key=lambda profile: profile.get("priority", 100),
         reverse=True,
     )
+
+
+def _rule_is_dns_observable(rule: dict[str, Any]) -> bool:
+    if rule.get("hostname") is None:
+        return False
+    if int(rule.get("protocol", 0)) > 0:
+        return False
+    if int(rule.get("port", 0)) > 0:
+        return False
+    if "port_start" in rule or "port_end" in rule:
+        return False
+    return True
+
+
+def _rule_is_transport_observable(rule: dict[str, Any]) -> bool:
+    if rule.get("hostname") is not None or rule.get("sni") is not None:
+        return True
+    return int(rule.get("kind", 0)) in (1, 2)
+
+
+def _iter_policy_target_rules(policy: dict[str, Any]) -> list[dict[str, Any]]:
+    rules: list[dict[str, Any]] = []
+    single = policy.get("target_profile")
+    if isinstance(single, dict):
+        rules.append(single)
+    multiple = policy.get("target_profiles")
+    if isinstance(multiple, list):
+        rules.extend(rule for rule in multiple if isinstance(rule, dict))
+    return rules
+
+
+def _validate_target_observability(policy: dict[str, Any]) -> None:
+    rules = _iter_policy_target_rules(policy)
+    if not rules:
+        return
+
+    has_dns_effects = "dns_profile" in policy
+    has_transport_effects = any(key in policy for key in _TRANSPORT_EFFECT_POLICY_KEYS)
+    if not has_dns_effects and not has_transport_effects:
+        return
+
+    has_dns_observable_rule = any(_rule_is_dns_observable(rule) for rule in rules)
+    has_transport_observable_rule = any(_rule_is_transport_observable(rule) for rule in rules)
+
+    if has_dns_effects and not has_dns_observable_rule:
+        raise ValueError(
+            "targets do not expose DNS-observable selectors for dns_* effects; "
+            "use hostname-only rules (without port/protocol filters)"
+        )
+    if has_transport_effects and not has_transport_observable_rule:
+        raise ValueError(
+            "targets do not expose transport-observable selectors for non-dns effects; "
+            "use host/cidr, hostname, or sni rules"
+        )
 
 
 def _build_direction_policy(direction: dict[str, Any]) -> dict[str, Any]:
@@ -255,6 +327,7 @@ def register_policy(
             budget_timeout_ms=session_budget.get("budget_timeout_ms"),
             error=session_budget.get("error"),
         )
+    _validate_target_observability(policy)
     with _POLICY_LOCK:
         _POLICY_REGISTRY[name] = policy
 

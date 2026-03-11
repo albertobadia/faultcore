@@ -12,12 +12,33 @@ use crate::{
 };
 
 const RULESET_READ_RETRY_LIMIT: usize = 3;
+const HOSTNAME_OBSERVATION_TTL_NS: u64 = 30_000_000_000;
+const HOSTNAME_OBSERVATION_MAX_ENTRIES: usize = 4096;
 static RELOAD_APPLIED_TOTAL: AtomicU64 = AtomicU64::new(0);
 static RELOAD_RETRY_TOTAL: AtomicU64 = AtomicU64::new(0);
 static OBSERVED_SNI_BY_FD: OnceLock<Mutex<HashMap<c_int, String>>> = OnceLock::new();
+static OBSERVED_HOSTNAME_BY_ENDPOINT: OnceLock<Mutex<HashMap<HostnameObservationKey, ObservedName>>> =
+    OnceLock::new();
 
 fn observed_sni_by_fd() -> &'static Mutex<HashMap<c_int, String>> {
     OBSERVED_SNI_BY_FD.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct HostnameObservationKey {
+    tid_slot: usize,
+    address_family: u64,
+    addr: [u8; 16],
+}
+
+#[derive(Clone)]
+struct ObservedName {
+    hostname: String,
+    observed_at_ns: u64,
+}
+
+fn observed_hostname_by_endpoint() -> &'static Mutex<HashMap<HostnameObservationKey, ObservedName>> {
+    OBSERVED_HOSTNAME_BY_ENDPOINT.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn normalize_semantic_name(value: &str) -> Option<String> {
@@ -33,6 +54,64 @@ fn observed_sni_for_fd(fd: c_int) -> Option<String> {
         return None;
     }
     observed_sni_by_fd().lock().get(&fd).cloned()
+}
+
+fn hostname_observation_key(tid_slot: usize, endpoint: Endpoint) -> Option<HostnameObservationKey> {
+    if endpoint.address_family != 1 && endpoint.address_family != 2 {
+        return None;
+    }
+    Some(HostnameObservationKey {
+        tid_slot,
+        address_family: endpoint.address_family,
+        addr: endpoint.addr,
+    })
+}
+
+fn prune_hostname_observations(map: &mut HashMap<HostnameObservationKey, ObservedName>, now_ns: u64) {
+    map.retain(|_, item| now_ns.saturating_sub(item.observed_at_ns) <= HOSTNAME_OBSERVATION_TTL_NS);
+    if map.len() <= HOSTNAME_OBSERVATION_MAX_ENTRIES {
+        return;
+    }
+    let mut items: Vec<(HostnameObservationKey, u64)> = map
+        .iter()
+        .map(|(key, item)| (*key, item.observed_at_ns))
+        .collect();
+    items.sort_unstable_by_key(|(_, observed_at)| *observed_at);
+    let remove_count = map.len().saturating_sub(HOSTNAME_OBSERVATION_MAX_ENTRIES);
+    for (key, _) in items.into_iter().take(remove_count) {
+        map.remove(&key);
+    }
+}
+
+fn observe_hostname_for_slot_endpoint(tid_slot: usize, endpoint: Endpoint, hostname: &str) {
+    let Some(normalized) = normalize_semantic_name(hostname) else {
+        return;
+    };
+    let Some(key) = hostname_observation_key(tid_slot, endpoint) else {
+        return;
+    };
+    let now_ns = monotonic_now_ns();
+    let mut map = observed_hostname_by_endpoint().lock();
+    map.insert(
+        key,
+        ObservedName {
+            hostname: normalized,
+            observed_at_ns: now_ns,
+        },
+    );
+    prune_hostname_observations(&mut map, now_ns);
+}
+
+fn observed_hostname_for_slot_endpoint(tid_slot: usize, endpoint: Endpoint) -> Option<String> {
+    let key = hostname_observation_key(tid_slot, endpoint)?;
+    let now_ns = monotonic_now_ns();
+    let mut map = observed_hostname_by_endpoint().lock();
+    let observed = map.get(&key).cloned()?;
+    if now_ns.saturating_sub(observed.observed_at_ns) > HOSTNAME_OBSERVATION_TTL_NS {
+        map.remove(&key);
+        return None;
+    }
+    Some(observed.hostname)
 }
 
 pub fn observe_sni_for_fd(fd: c_int, sni: &str) {
@@ -63,6 +142,20 @@ pub fn clone_observed_semantic_for_fd(src_fd: c_int, dst_fd: c_int) {
     } else {
         map.remove(&dst_fd);
     }
+}
+
+/// # Safety
+/// `addr` must point to a valid socket address buffer of at least `addr_len` bytes.
+pub unsafe fn observe_hostname_for_current_thread_addr(
+    addr: *const sockaddr,
+    addr_len: socklen_t,
+    hostname: &str,
+) {
+    let tid_slot = get_tid_slot_for_tid(get_thread_id());
+    let Some(endpoint) = (unsafe { endpoint_for_addr_or_fd(-1, addr, addr_len) }) else {
+        return;
+    };
+    observe_hostname_for_slot_endpoint(tid_slot, endpoint, hostname);
 }
 
 pub fn runtime_reload_metrics_snapshot() -> (u64, u64) {
@@ -336,8 +429,9 @@ fn resolve_runtime_config_for_endpoint(fd: c_int, endpoint: Option<Endpoint>) ->
     };
 
     let observed_sni = observed_sni_for_fd(fd);
+    let observed_hostname = endpoint.and_then(|resolved| observed_hostname_for_slot_endpoint(slot, resolved));
     let semantic = SemanticContext {
-        hostname: None,
+        hostname: observed_hostname.as_deref(),
         sni: observed_sni.as_deref(),
     };
     apply_multi_target_for_tid(base_cfg, slot, endpoint, semantic)
@@ -852,6 +946,19 @@ mod tests {
        clear_observed_semantic_for_fd(13);
        assert!(observed_sni_for_fd(12).is_none());
        assert!(observed_sni_for_fd(13).is_none());
+    }
+
+    #[test]
+    fn observed_hostname_state_is_slot_and_endpoint_scoped() {
+       let endpoint = endpoint_v4(0x7F000001, 443, 1);
+       observed_hostname_by_endpoint().lock().clear();
+       observe_hostname_for_slot_endpoint(77, endpoint, "Api.Foo.com.");
+       assert_eq!(
+           observed_hostname_for_slot_endpoint(77, endpoint).as_deref(),
+           Some("api.foo.com")
+       );
+       assert!(observed_hostname_for_slot_endpoint(78, endpoint).is_none());
+       observed_hostname_by_endpoint().lock().clear();
     }
     
     #[test]

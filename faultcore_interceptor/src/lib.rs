@@ -3,7 +3,7 @@ use faultcore_network::{
     SetpriorityCompatOutcome, apply_connect_directive, apply_stream_directive,
     bind_fd_to_current_thread, clear_fd_binding, clone_fd_binding, global_fault_osi_engine,
     global_interceptor_runtime, handle_setpriority_compat, init_runtime_shm,
-    observe_sni_for_fd,
+    observe_hostname_for_current_thread_addr, observe_sni_for_fd,
     reset_global_fault_osi_metrics, runtime_config_for_addr_or_fd, runtime_config_for_fd,
     runtime_dns_config_for_current_thread, runtime_dns_config_for_query, set_errno_value,
     snapshot_recv_datagram,
@@ -950,6 +950,21 @@ pub unsafe extern "C" fn getaddrinfo(
     }
 
     let result = unsafe { (ORIG_GETADDRINFO)(node, service, hints, res) };
+    if result == 0
+        && let (Some(hostname), false) = (observed_hostname.as_deref(), res.is_null())
+    {
+        let mut item = unsafe { *res };
+        while !item.is_null() {
+            let addr = unsafe { (*item).ai_addr };
+            let addr_len = unsafe { (*item).ai_addrlen };
+            if !addr.is_null() && addr_len > 0 {
+                unsafe {
+                    observe_hostname_for_current_thread_addr(addr.cast_const(), addr_len as socklen_t, hostname)
+                };
+            }
+            item = unsafe { (*item).ai_next };
+        }
+    }
     exit_hook();
     result
 }

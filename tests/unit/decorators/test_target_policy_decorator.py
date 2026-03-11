@@ -536,9 +536,9 @@ class TestPolicyRegistry:
                 )
                 mock_shm.clear.assert_called_once_with(990)
 
-    def test_register_policy_target_filter_accepts_hostname(self):
+    def test_register_policy_target_filter_accepts_hostname_for_transport_effects(self):
         faultcore.register_policy(
-            "target_policy_hostname",
+            "target_policy_hostname_transport",
             latency_ms=10,
             target={"hostname": "*.Foo.com"},
         )
@@ -549,14 +549,49 @@ class TestPolicyRegistry:
         mock_shm.clear = MagicMock()
 
         with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
-            with patch("faultcore.decorator.threading.get_native_id", return_value=991):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=9901):
 
-                @faultcore.apply_policy("target_policy_hostname")
+                @faultcore.apply_policy("target_policy_hostname_transport")
                 def op():
                     return "ok"
 
                 assert op() == "ok"
-                mock_shm.write_latency.assert_called_once_with(991, 10)
+                mock_shm.write_latency.assert_called_once_with(9901, 10)
+                mock_shm.write_target.assert_called_once_with(
+                    9901,
+                    enabled=True,
+                    kind=0,
+                    ipv4=0,
+                    prefix_len=0,
+                    port=0,
+                    protocol=0,
+                    address_family=0,
+                    addr=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                    hostname="*.foo.com",
+                )
+                mock_shm.clear.assert_called_once_with(9901)
+
+    def test_register_policy_target_filter_accepts_hostname_for_dns_effects(self):
+        faultcore.register_policy(
+            "target_policy_hostname_dns",
+            dns_timeout_ms=300,
+            target={"hostname": "*.Foo.com"},
+        )
+
+        mock_shm = MagicMock()
+        mock_shm.write_dns = MagicMock()
+        mock_shm.write_target = MagicMock()
+        mock_shm.clear = MagicMock()
+
+        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
+            with patch("faultcore.decorator.threading.get_native_id", return_value=991):
+
+                @faultcore.apply_policy("target_policy_hostname_dns")
+                def op():
+                    return "ok"
+
+                assert op() == "ok"
+                mock_shm.write_dns.assert_called_once_with(991, delay_ms=None, timeout_ms=300, nxdomain_ppm=None)
                 mock_shm.write_target.assert_called_once_with(
                     991,
                     enabled=True,
