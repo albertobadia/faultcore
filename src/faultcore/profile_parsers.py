@@ -15,6 +15,17 @@ _TARGET_PROTOCOL_MAP = {
 }
 
 _NS_PER_SECOND = 1_000_000_000
+_RATE_SUFFIX_MULTIPLIERS = {
+    "gbps": 1_000_000_000,
+    "mbps": 1_000_000,
+    "kbps": 1_000,
+    "bps": 1,
+}
+
+
+def _ensure_range(value: float | int, minimum: float | int, maximum: float | int, error_message: str) -> None:
+    if value < minimum or value > maximum:
+        raise ValueError(error_message)
 
 
 def _as_non_negative_float(value: float, error_message: str) -> float:
@@ -47,8 +58,7 @@ def _seconds_to_ns(value: int | float) -> int:
 
 
 def _validate_port_bounds(value: int, field_name: str) -> None:
-    if value < 0 or value > 65535:
-        raise ValueError(f"target {field_name} must be between 0 and 65535")
+    _ensure_range(value, 0, 65535, f"target {field_name} must be between 0 and 65535")
 
 
 def _as_positive_int(value: int | None, error_message: str) -> int | None:
@@ -60,23 +70,58 @@ def _as_positive_int(value: int | None, error_message: str) -> int | None:
     return parsed
 
 
+def _target_profile_base(
+    *,
+    kind: int,
+    ipv4: int,
+    prefix_len: int,
+    port: int,
+    protocol: int,
+    priority: int,
+    address_family: int,
+    addr: list[int],
+) -> dict[str, object]:
+    return {
+        "enabled": 1,
+        "kind": kind,
+        "ipv4": ipv4,
+        "prefix_len": prefix_len,
+        "port": port,
+        "protocol": protocol,
+        "priority": priority,
+        "address_family": address_family,
+        "addr": addr,
+    }
+
+
+def _parse_priority(priority: int | None) -> int:
+    parsed_priority = int(priority) if priority is not None else 100
+    _ensure_range(parsed_priority, 0, 65535, "target priority must be between 0 and 65535")
+    return parsed_priority
+
+
+def _add_positive_limit(
+    profile: dict[str, int],
+    key: str,
+    value: int | None,
+    error_message: str,
+) -> None:
+    parsed = _as_positive_int(value, error_message)
+    if parsed is not None:
+        profile[key] = parsed
+
+
 def parse_rate(rate: str | int | float) -> int:
     if isinstance(rate, (int, float)):
         return int(_as_non_negative_float(float(rate), "rate must be >= 0") * 1_000_000)
 
     normalized_rate = rate.strip().lower()
-    units = {
-        "gbps": 1_000_000_000,
-        "mbps": 1_000_000,
-        "kbps": 1_000,
-        "bps": 1,
-    }
-    for suffix, multiplier in units.items():
+    for suffix, multiplier in _RATE_SUFFIX_MULTIPLIERS.items():
         if normalized_rate.endswith(suffix):
             numeric = _as_non_negative_float(float(normalized_rate[: -len(suffix)]), "rate must be >= 0")
             return int(numeric * multiplier)
 
-    return int(_as_non_negative_float(float(normalized_rate), "rate must be >= 0"))
+    return int(_as_non_negative_float(float(normalized_rate), "rate must be >= 0") * 1_000_000)
 
 
 def parse_packet_loss(loss: str | int | float) -> int:
@@ -84,13 +129,11 @@ def parse_packet_loss(loss: str | int | float) -> int:
         raw = loss.strip().lower()
         if raw.endswith("%"):
             value = float(raw[:-1])
-            if value < 0 or value > 100:
-                raise ValueError("packet_loss percentage must be between 0 and 100")
+            _ensure_range(value, 0, 100, "packet_loss percentage must be between 0 and 100")
             return int(value * 10_000)
         if raw.endswith("ppm"):
             value = float(raw[:-3])
-            if value < 0 or value > 1_000_000:
-                raise ValueError("packet_loss ppm must be between 0 and 1000000")
+            _ensure_range(value, 0, 1_000_000, "packet_loss ppm must be between 0 and 1000000")
             return int(value)
         value = float(raw)
     else:
@@ -295,9 +338,7 @@ def build_target_profile(
         _validate_port_bounds(parsed_port_end, "port_end")
         if parsed_port_start > parsed_port_end:
             raise ValueError("target port_start must be <= port_end")
-    parsed_priority = int(priority) if priority is not None else 100
-    if parsed_priority < 0 or parsed_priority > 65535:
-        raise ValueError("target priority must be between 0 and 65535")
+    parsed_priority = _parse_priority(priority)
 
     if parsed_hostname and parsed_sni:
         raise ValueError("target cannot define both hostname and sni")
@@ -311,17 +352,16 @@ def build_target_profile(
         raise ValueError("target requires either host or cidr")
 
     if has_semantic_name:
-        profile: dict[str, object] = {
-            "enabled": 1,
-            "kind": 0,
-            "ipv4": 0,
-            "prefix_len": 0,
-            "port": parsed_port,
-            "protocol": parsed_protocol,
-            "priority": parsed_priority,
-            "address_family": 0,
-            "addr": [0] * 16,
-        }
+        profile = _target_profile_base(
+            kind=0,
+            ipv4=0,
+            prefix_len=0,
+            port=parsed_port,
+            protocol=parsed_protocol,
+            priority=parsed_priority,
+            address_family=0,
+            addr=[0] * 16,
+        )
         if parsed_hostname is not None:
             profile["hostname"] = parsed_hostname
         if parsed_sni is not None:
@@ -339,17 +379,16 @@ def build_target_profile(
         ipv4 = int(address) if is_ipv4 else 0
         prefix_len = 32 if is_ipv4 else 128
         addr = _pad_addr16(list(address.packed))
-        profile = {
-            "enabled": 1,
-            "kind": 1,
-            "ipv4": ipv4,
-            "prefix_len": prefix_len,
-            "port": parsed_port,
-            "protocol": parsed_protocol,
-            "priority": parsed_priority,
-            "address_family": address_family,
-            "addr": addr,
-        }
+        profile = _target_profile_base(
+            kind=1,
+            ipv4=ipv4,
+            prefix_len=prefix_len,
+            port=parsed_port,
+            protocol=parsed_protocol,
+            priority=parsed_priority,
+            address_family=address_family,
+            addr=addr,
+        )
         _set_port_range(profile, parsed_port_start, parsed_port_end)
         return profile
 
@@ -364,17 +403,16 @@ def build_target_profile(
     addr = _pad_addr16(list(network.network_address.packed))
     if network.prefixlen < 0 or network.prefixlen > max_prefix_len:
         raise ValueError(f"target prefix_len must be between 0 and {max_prefix_len}")
-    profile = {
-        "enabled": 1,
-        "kind": 2,
-        "ipv4": ipv4,
-        "prefix_len": int(network.prefixlen),
-        "port": parsed_port,
-        "protocol": parsed_protocol,
-        "priority": parsed_priority,
-        "address_family": address_family,
-        "addr": addr,
-    }
+    profile = _target_profile_base(
+        kind=2,
+        ipv4=ipv4,
+        prefix_len=int(network.prefixlen),
+        port=parsed_port,
+        protocol=parsed_protocol,
+        priority=parsed_priority,
+        address_family=address_family,
+        addr=addr,
+    )
     _set_port_range(profile, parsed_port_start, parsed_port_end)
     return profile
 
@@ -430,21 +468,15 @@ def build_session_budget_profile(
 ) -> dict[str, int]:
     profile: dict[str, int] = {}
 
-    parsed_max_bytes_tx = _as_positive_int(max_bytes_tx, "session_budget max_bytes_tx must be > 0")
-    if parsed_max_bytes_tx is not None:
-        profile["max_bytes_tx"] = parsed_max_bytes_tx
-
-    parsed_max_bytes_rx = _as_positive_int(max_bytes_rx, "session_budget max_bytes_rx must be > 0")
-    if parsed_max_bytes_rx is not None:
-        profile["max_bytes_rx"] = parsed_max_bytes_rx
-
-    parsed_max_ops = _as_positive_int(max_ops, "session_budget max_ops must be > 0")
-    if parsed_max_ops is not None:
-        profile["max_ops"] = parsed_max_ops
-
-    parsed_max_duration_ms = _as_positive_int(max_duration_ms, "session_budget max_duration_ms must be > 0")
-    if parsed_max_duration_ms is not None:
-        profile["max_duration_ms"] = parsed_max_duration_ms
+    _add_positive_limit(profile, "max_bytes_tx", max_bytes_tx, "session_budget max_bytes_tx must be > 0")
+    _add_positive_limit(profile, "max_bytes_rx", max_bytes_rx, "session_budget max_bytes_rx must be > 0")
+    _add_positive_limit(profile, "max_ops", max_ops, "session_budget max_ops must be > 0")
+    _add_positive_limit(
+        profile,
+        "max_duration_ms",
+        max_duration_ms,
+        "session_budget max_duration_ms must be > 0",
+    )
 
     if not profile:
         raise ValueError("session_budget requires at least one limit")

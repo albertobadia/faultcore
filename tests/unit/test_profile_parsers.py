@@ -1,6 +1,6 @@
 import pytest
 
-from faultcore.profile_parsers import build_session_budget_profile, build_target_profile
+from faultcore.profile_parsers import build_session_budget_profile, build_target_profile, parse_rate
 
 
 def test_build_target_profile_includes_unified_fields_for_ipv4_host():
@@ -153,3 +153,7 @@ def test_build_session_budget_profile_rejects_invalid_combinations():
         build_session_budget_profile(max_ops=1, action="timeout")
     with pytest.raises(ValueError, match=r"(?i)only applies to action=timeout"):
         build_session_budget_profile(max_ops=1, action="drop", budget_timeout_ms=5)
+
+
+def test_parse_rate_numeric_and_string_plain_values_are_consistent():
+    assert parse_rate(10) == parse_rate("10")

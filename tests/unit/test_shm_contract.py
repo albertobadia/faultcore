@@ -2,11 +2,11 @@ import struct
 
 from faultcore.shm_writer import CONFIG_SIZE
 
+_CONFIG_FORMAT = "<I" + ("Q" * 46) + "I" + "Q" + "Q" + "16s" + "32s" + "32s" + ("Q" * 9)
+
 
 def test_faultcore_config_binary_layout_is_stable():
-    # legacy fixed layout + SHM vNext targeting extension.
-    fmt = "<I" + ("Q" * 46) + "I" + "Q" + "Q" + "16s" + "32s" + "32s" + ("Q" * 9)
-    assert struct.calcsize(fmt) == CONFIG_SIZE == 544
+    assert struct.calcsize(_CONFIG_FORMAT) == CONFIG_SIZE == 544
 
 
 def test_faultcore_config_offsets_are_stable():

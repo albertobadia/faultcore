@@ -30,6 +30,8 @@ struct HostnameObservationKey {
     tid_slot: usize,
     address_family: u64,
     addr: [u8; 16],
+    port: u16,
+    protocol: u64,
 }
 
 #[derive(Clone)]
@@ -65,6 +67,8 @@ fn hostname_observation_key(tid_slot: usize, endpoint: Endpoint) -> Option<Hostn
         tid_slot,
         address_family: endpoint.address_family,
         addr: endpoint.addr,
+        port: endpoint.port,
+        protocol: endpoint.protocol,
     })
 }
 
@@ -107,9 +111,22 @@ fn observed_hostname_for_slot_endpoint(tid_slot: usize, endpoint: Endpoint) -> O
     let key = hostname_observation_key(tid_slot, endpoint)?;
     let now_ns = monotonic_now_ns();
     let mut map = observed_hostname_by_endpoint().lock();
-    let observed = map.get(&key).cloned()?;
+
+    let (selected_key, observed) = if let Some(found) = map.get(&key).cloned() {
+        (key, found)
+    } else {
+        map.iter()
+            .filter(|(candidate, _)| {
+                candidate.tid_slot == tid_slot
+                    && candidate.address_family == endpoint.address_family
+                    && candidate.addr == endpoint.addr
+            })
+            .max_by_key(|(_, item)| item.observed_at_ns)
+            .map(|(candidate, item)| (*candidate, item.clone()))?
+    };
+
     if now_ns.saturating_sub(observed.observed_at_ns) > HOSTNAME_OBSERVATION_TTL_NS {
-        map.remove(&key);
+        map.remove(&selected_key);
         return None;
     }
     Some(observed.hostname)
@@ -512,8 +529,10 @@ pub unsafe fn uplink_duplicate_count_for_addr_or_fd(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::observability::advanced_metrics_test_guard;
     use crate::{global_fault_osi_advanced_metrics_snapshot, reset_advanced_metrics};
     use std::cell::Cell;
+    use std::sync::OnceLock;
     
     fn endpoint_v4(ipv4: u32, port: u16, protocol: u64) -> Endpoint {
        let mut addr = [0u8; 16];
@@ -548,6 +567,11 @@ mod tests {
            latency_ns,
            ..Default::default()
        }
+    }
+
+    fn observed_semantic_test_guard() -> parking_lot::MutexGuard<'static, ()> {
+       static TEST_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
+       TEST_GUARD.get_or_init(|| Mutex::new(())).lock()
     }
 
     fn name32(value: &str) -> [u8; 32] {
@@ -945,6 +969,7 @@ mod tests {
 
     #[test]
     fn observed_sni_state_clones_and_clears_by_fd() {
+       let _guard = observed_semantic_test_guard();
        observe_sni_for_fd(12, "Api.Foo.com.");
        assert_eq!(observed_sni_for_fd(12).as_deref(), Some("api.foo.com"));
 
@@ -959,15 +984,39 @@ mod tests {
 
     #[test]
     fn observed_hostname_state_is_slot_and_endpoint_scoped() {
+       let _guard = observed_semantic_test_guard();
        let endpoint = endpoint_v4(0x7F000001, 443, 1);
-       observed_hostname_by_endpoint().lock().clear();
-       observe_hostname_for_slot_endpoint(77, endpoint, "Api.Foo.com.");
-       assert_eq!(
-           observed_hostname_for_slot_endpoint(77, endpoint).as_deref(),
-           Some("api.foo.com")
-       );
-       assert!(observed_hostname_for_slot_endpoint(78, endpoint).is_none());
-       observed_hostname_by_endpoint().lock().clear();
+       let slot = 7077usize;
+        observed_hostname_by_endpoint().lock().clear();
+        observe_hostname_for_slot_endpoint(slot, endpoint, "Api.Foo.com.");
+        assert_eq!(
+            observed_hostname_for_slot_endpoint(slot, endpoint).as_deref(),
+            Some("api.foo.com")
+        );
+        assert!(observed_hostname_for_slot_endpoint(slot + 1, endpoint).is_none());
+        observed_hostname_by_endpoint().lock().clear();
+    }
+
+    #[test]
+    fn observed_hostname_state_distinguishes_same_ip_with_different_ports() {
+       let _guard = observed_semantic_test_guard();
+       let endpoint_443 = endpoint_v4(0x7F000001, 443, 1);
+       let endpoint_8443 = endpoint_v4(0x7F000001, 8443, 1);
+        let slot = 7843usize;
+        observed_hostname_by_endpoint().lock().clear();
+
+        observe_hostname_for_slot_endpoint(slot, endpoint_443, "api-443.foo.com");
+        observe_hostname_for_slot_endpoint(slot, endpoint_8443, "api-8443.foo.com");
+
+        assert_eq!(
+            observed_hostname_for_slot_endpoint(slot, endpoint_443).as_deref(),
+            Some("api-443.foo.com")
+        );
+        assert_eq!(
+            observed_hostname_for_slot_endpoint(slot, endpoint_8443).as_deref(),
+            Some("api-8443.foo.com")
+        );
+        observed_hostname_by_endpoint().lock().clear();
     }
     
     #[test]
@@ -1168,6 +1217,7 @@ mod tests {
 
     #[test]
     fn target_rule_hit_metrics_record_selected_rule_id() {
+       let _guard = advanced_metrics_test_guard();
        reset_advanced_metrics();
        let endpoint = endpoint_v4(0x0A010203, 443, 1);
        let mut base_cfg = cfg_with_latency(500);

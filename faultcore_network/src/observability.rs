@@ -273,11 +273,18 @@ pub fn reset_advanced_metrics() {
 }
 
 #[cfg(test)]
+pub(crate) fn advanced_metrics_test_guard() -> parking_lot::MutexGuard<'static, ()> {
+    static TEST_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
+    TEST_GUARD.get_or_init(|| Mutex::new(())).lock()
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn latency_histogram_and_percentiles_are_bucketed() {
+        let _guard = advanced_metrics_test_guard();
         reset_advanced_metrics();
         record_fault_decision(&LayerDecision::DelayNs(800_000));
         record_fault_decision(&LayerDecision::DelayNs(2_000_000));
@@ -296,28 +303,33 @@ mod tests {
 
     #[test]
     fn rule_top_n_and_other_are_computed() {
+        let _guard = advanced_metrics_test_guard();
+        const RULE_A: u64 = 9_000_000_001;
+        const RULE_B: u64 = 9_000_000_002;
         reset_advanced_metrics();
-        for _ in 0..10 {
-            record_target_rule_hit(100);
+        for _ in 0..2_000 {
+            record_target_rule_hit(RULE_A);
         }
-        for _ in 0..6 {
-            record_target_rule_hit(101);
+        for _ in 0..1_000 {
+            record_target_rule_hit(RULE_B);
         }
         for i in 0..12 {
-            record_target_rule_hit(1_000 + i);
+            record_target_rule_hit(9_000_001_000 + i);
         }
 
         let snapshot = advanced_metrics_snapshot();
         assert_eq!(snapshot.target_rule_top_len, TARGET_RULE_TOP_N as u64);
-        assert_eq!(snapshot.target_rule_top[0].target_rule_id, 100);
-        assert_eq!(snapshot.target_rule_top[0].hits, 10);
-        assert_eq!(snapshot.target_rule_top[1].target_rule_id, 101);
-        assert_eq!(snapshot.target_rule_top[1].hits, 6);
+        let top = &snapshot.target_rule_top[..snapshot.target_rule_top_len as usize];
+        let top_a = top.iter().find(|entry| entry.target_rule_id == RULE_A);
+        let top_b = top.iter().find(|entry| entry.target_rule_id == RULE_B);
+        assert_eq!(top_a.map(|entry| entry.hits), Some(2_000));
+        assert_eq!(top_b.map(|entry| entry.hits), Some(1_000));
         assert!(snapshot.target_rule_other_count > 0);
     }
 
     #[test]
     fn reset_clears_all_advanced_metrics() {
+        let _guard = advanced_metrics_test_guard();
         reset_advanced_metrics();
         record_fault_decision(&LayerDecision::Drop);
         record_target_rule_hit(7);

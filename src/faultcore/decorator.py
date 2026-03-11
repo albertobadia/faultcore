@@ -1,16 +1,14 @@
 import functools
+import inspect
 import threading
 import time
-from asyncio import iscoroutine
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from faultcore import policy_registry as _policy_registry
 from faultcore.decorator_helpers import apply_fault_profiles
-from faultcore.policy_registry import (
-    get_policy_for_apply,
-)
+from faultcore.policy_registry import get_policy_for_apply
 from faultcore.profile_parsers import (
     build_connection_error_profile as _build_connection_error_profile,
     build_correlated_loss_profile as _build_correlated_loss_profile,
@@ -86,40 +84,72 @@ def _build_directional_profile_or_raise(
     burst_loss_len: int | None = None,
     rate: str | int | float | None = None,
 ) -> dict[str, int]:
-    direction_profile = _build_direction_profile(
+    profile = _build_direction_profile(
         latency_ms=latency_ms,
         jitter_ms=jitter_ms,
         packet_loss=packet_loss,
         burst_loss_len=burst_loss_len,
         rate=rate,
     )
-    if not direction_profile:
+    if not profile:
         raise ValueError(f"{direction_name} requires at least one directional field")
-    return direction_profile
+    return profile
+
+
+def _with_directional_profile(
+    *,
+    field_name: str,
+    direction_name: str,
+    latency_ms: int | None = None,
+    jitter_ms: int | None = None,
+    packet_loss: str | int | float | None = None,
+    burst_loss_len: int | None = None,
+    rate: str | int | float | None = None,
+) -> Callable[[Callable[..., Any]], "FaultWrapper"]:
+    direction_profile = _build_directional_profile_or_raise(
+        direction_name,
+        latency_ms=latency_ms,
+        jitter_ms=jitter_ms,
+        packet_loss=packet_loss,
+        burst_loss_len=burst_loss_len,
+        rate=rate,
+    )
+    return _with_wrapper(**{field_name: direction_profile})
+
+
+_POLICY_WRAPPER_FIELDS = (
+    "seed",
+    "latency_ms",
+    "jitter_ms",
+    "packet_loss_ppm",
+    "burst_loss_len",
+    "bandwidth_bps",
+    "timeouts",
+    "uplink_profile",
+    "downlink_profile",
+    "correlated_loss_profile",
+    "connection_error_profile",
+    "half_open_profile",
+    "packet_duplicate_profile",
+    "packet_reorder_profile",
+    "dns_profile",
+    "target_profile",
+    "target_profiles",
+    "schedule_profile",
+    "session_budget_profile",
+)
 
 
 def _policy_to_wrapper_kwargs(policy: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "seed": policy.get("seed"),
-        "latency_ms": policy.get("latency_ms"),
-        "jitter_ms": policy.get("jitter_ms"),
-        "packet_loss_ppm": policy.get("packet_loss_ppm"),
-        "burst_loss_len": policy.get("burst_loss_len"),
-        "bandwidth_bps": policy.get("bandwidth_bps"),
-        "timeouts": policy.get("timeouts"),
-        "uplink_profile": policy.get("uplink_profile"),
-        "downlink_profile": policy.get("downlink_profile"),
-        "correlated_loss_profile": policy.get("correlated_loss_profile"),
-        "connection_error_profile": policy.get("connection_error_profile"),
-        "half_open_profile": policy.get("half_open_profile"),
-        "packet_duplicate_profile": policy.get("packet_duplicate_profile"),
-        "packet_reorder_profile": policy.get("packet_reorder_profile"),
-        "dns_profile": policy.get("dns_profile"),
-        "target_profile": policy.get("target_profile"),
-        "target_profiles": policy.get("target_profiles"),
-        "schedule_profile": policy.get("schedule_profile"),
-        "session_budget_profile": policy.get("session_budget_profile"),
-    }
+    return {field: policy.get(field) for field in _POLICY_WRAPPER_FIELDS}
+
+
+def _resolve_runtime_policy_name(policy_name: str) -> str:
+    return policy_name if policy_name != "auto" else (get_thread_policy() or "")
+
+
+def _with_dns_profile(**dns_kwargs: int | str | float) -> Callable[[Callable[..., Any]], "FaultWrapper"]:
+    return _with_wrapper(dns_profile=_build_dns_profile(**dns_kwargs))
 
 
 class FaultWrapper:
@@ -185,7 +215,7 @@ class FaultWrapper:
 
             result = self._func(*args, **kwargs)
 
-            if iscoroutine(result):
+            if inspect.isawaitable(result):
                 async_handoff = True
                 return self._run_async(result, shm, tid)
 
@@ -275,15 +305,15 @@ def uplink(
     burst_loss_len: int | None = None,
     rate: str | int | float | None = None,
 ) -> Callable[[Callable[..., Any]], FaultWrapper]:
-    direction_profile = _build_directional_profile_or_raise(
-        "uplink",
+    return _with_directional_profile(
+        field_name="uplink_profile",
+        direction_name="uplink",
         latency_ms=latency_ms,
         jitter_ms=jitter_ms,
         packet_loss=packet_loss,
         burst_loss_len=burst_loss_len,
         rate=rate,
     )
-    return _with_wrapper(uplink_profile=direction_profile)
 
 
 def downlink(
@@ -294,15 +324,15 @@ def downlink(
     burst_loss_len: int | None = None,
     rate: str | int | float | None = None,
 ) -> Callable[[Callable[..., Any]], FaultWrapper]:
-    direction_profile = _build_directional_profile_or_raise(
-        "downlink",
+    return _with_directional_profile(
+        field_name="downlink_profile",
+        direction_name="downlink",
         latency_ms=latency_ms,
         jitter_ms=jitter_ms,
         packet_loss=packet_loss,
         burst_loss_len=burst_loss_len,
         rate=rate,
     )
-    return _with_wrapper(downlink_profile=direction_profile)
 
 
 def correlated_loss(
@@ -351,18 +381,15 @@ def packet_reorder(
 
 
 def dns_delay(delay_ms: int) -> Callable[[Callable[..., Any]], FaultWrapper]:
-    dns_profile = _build_dns_profile(delay_ms=delay_ms)
-    return _with_wrapper(dns_profile=dns_profile)
+    return _with_dns_profile(delay_ms=delay_ms)
 
 
 def dns_timeout(timeout_ms: int) -> Callable[[Callable[..., Any]], FaultWrapper]:
-    dns_profile = _build_dns_profile(timeout_ms=timeout_ms)
-    return _with_wrapper(dns_profile=dns_profile)
+    return _with_dns_profile(timeout_ms=timeout_ms)
 
 
 def dns_nxdomain(prob: str | int | float = "100%") -> Callable[[Callable[..., Any]], FaultWrapper]:
-    dns_profile = _build_dns_profile(nxdomain=prob)
-    return _with_wrapper(dns_profile=dns_profile)
+    return _with_dns_profile(nxdomain=prob)
 
 
 def for_target(
@@ -446,10 +473,18 @@ def apply_policy(policy_name: str) -> Callable[[Callable[..., Any]], FaultWrappe
 
 
 def fault(policy_name: str = "auto") -> Callable[[Callable[..., Any]], FaultWrapper]:
-    def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        name = (get_thread_policy() or "") if policy_name == "auto" else policy_name
-        if not name:
-            return FaultWrapper(func)
-        return apply_policy(name)(func)
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(func)
+        def runtime_dispatch(*args: Any, **kwargs: Any) -> Any:
+            name = _resolve_runtime_policy_name(policy_name)
+            if not name:
+                return func(*args, **kwargs)
+            policy = get_policy_for_apply(name)
+            if policy is None:
+                return func(*args, **kwargs)
+            wrapped = FaultWrapper(func, **_policy_to_wrapper_kwargs(policy))
+            return wrapped(*args, **kwargs)
+
+        return runtime_dispatch
 
     return decorator

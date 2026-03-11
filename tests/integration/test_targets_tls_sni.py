@@ -106,14 +106,26 @@ class TlsEchoServer:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(certfile=cert_path, keyfile=key_path)
 
-        def sni_callback(_ssl_sock: ssl.SSLSocket, server_name: str | None, _ctx: ssl.SSLContext) -> None:
-            if server_name is None:
+        def sni_callback(
+            _ssl_sock: ssl.SSLSocket,
+            server_name: str | bytes | None,
+            _ctx: ssl.SSLContext,
+        ) -> None:
+            # Never abort the TLS handshake from callback errors; older/newer
+            # OpenSSL/Python combos can surface server_name in unexpected forms.
+            try:
+                if server_name is None:
+                    return
+                if isinstance(server_name, bytes):
+                    normalized = server_name.decode("idna", errors="ignore").strip().rstrip(".").lower()
+                else:
+                    normalized = server_name.strip().rstrip(".").lower()
+                if not normalized:
+                    return
+                with self._sni_lock:
+                    self._sni_seen.append(normalized)
+            except Exception:
                 return
-            normalized = server_name.strip().rstrip(".").lower()
-            if not normalized:
-                return
-            with self._sni_lock:
-                self._sni_seen.append(normalized)
 
         context.set_servername_callback(sni_callback)
 

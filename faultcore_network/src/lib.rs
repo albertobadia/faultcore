@@ -388,16 +388,19 @@ impl Config {
         self.jitter_ns = scale_u64(self.jitter_ns, factor);
         self.packet_loss_ppm = scale_u64(self.packet_loss_ppm, factor);
         self.burst_loss_len = scale_u64(self.burst_loss_len, factor);
+        self.bandwidth_bps = scale_u64(self.bandwidth_bps, factor);
         self.connect_timeout_ms = scale_u64(self.connect_timeout_ms, factor);
         self.recv_timeout_ms = scale_u64(self.recv_timeout_ms, factor);
         self.uplink_latency_ns = scale_u64(self.uplink_latency_ns, factor);
         self.uplink_jitter_ns = scale_u64(self.uplink_jitter_ns, factor);
         self.uplink_packet_loss_ppm = scale_u64(self.uplink_packet_loss_ppm, factor);
         self.uplink_burst_loss_len = scale_u64(self.uplink_burst_loss_len, factor);
+        self.uplink_bandwidth_bps = scale_u64(self.uplink_bandwidth_bps, factor);
         self.downlink_latency_ns = scale_u64(self.downlink_latency_ns, factor);
         self.downlink_jitter_ns = scale_u64(self.downlink_jitter_ns, factor);
         self.downlink_packet_loss_ppm = scale_u64(self.downlink_packet_loss_ppm, factor);
         self.downlink_burst_loss_len = scale_u64(self.downlink_burst_loss_len, factor);
+        self.downlink_bandwidth_bps = scale_u64(self.downlink_bandwidth_bps, factor);
         self.conn_err_prob_ppm = scale_u64(self.conn_err_prob_ppm, factor);
         self.dup_prob_ppm = scale_u64(self.dup_prob_ppm, factor);
         self.reorder_prob_ppm = scale_u64(self.reorder_prob_ppm, factor);
@@ -478,6 +481,7 @@ mod tests {
 
     #[test]
     fn advanced_metrics_snapshot_contract_is_stable() {
+        let _guard = observability::advanced_metrics_test_guard();
         let snapshot = global_fault_osi_advanced_metrics_snapshot();
         assert_eq!(snapshot.latency_bucket_len as usize, observability::LATENCY_BUCKET_COUNT);
         assert_eq!(
@@ -488,6 +492,7 @@ mod tests {
 
     #[test]
     fn reset_global_metrics_clears_advanced_observability() {
+        let _guard = observability::advanced_metrics_test_guard();
         reset_advanced_metrics();
         record_fault_observability_decision(&LayerDecision::Drop);
         record_target_rule_observability_hit(1234);
@@ -500,5 +505,24 @@ mod tests {
         assert_eq!(after.fault_counters.drop_count, 0);
         assert_eq!(after.target_rule_top_len, 0);
         assert_eq!(after.target_rule_other_count, 0);
+    }
+
+    #[test]
+    fn ramp_schedule_scales_bandwidth_fields() {
+        let mut cfg = Config {
+            bandwidth_bps: 1_000,
+            uplink_bandwidth_bps: 2_000,
+            downlink_bandwidth_bps: 3_000,
+            schedule_type: 1,
+            schedule_param_a_ns: 100,
+            schedule_started_monotonic_ns: 1_000,
+            ..Default::default()
+        };
+
+        cfg.apply_schedule(1_050);
+
+        assert_eq!(cfg.bandwidth_bps, 500);
+        assert_eq!(cfg.uplink_bandwidth_bps, 1_000);
+        assert_eq!(cfg.downlink_bandwidth_bps, 1_500);
     }
 }
