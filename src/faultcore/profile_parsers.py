@@ -33,7 +33,7 @@ def _as_non_negative_int(value: int | float, error_message: str) -> int:
 def _pad_addr16(addr: list[int]) -> list[int]:
     if len(addr) >= 16:
         return addr
-    return addr + ([0] * (16 - len(addr)))
+    return addr + [0] * (16 - len(addr))
 
 
 def _set_port_range(profile: dict[str, object], port_start: int | None, port_end: int | None) -> None:
@@ -49,6 +49,15 @@ def _seconds_to_ns(value: int | float) -> int:
 def _validate_port_bounds(value: int, field_name: str) -> None:
     if value < 0 or value > 65535:
         raise ValueError(f"target {field_name} must be between 0 and 65535")
+
+
+def _as_positive_int(value: int | None, error_message: str) -> int | None:
+    if value is None:
+        return None
+    parsed = int(value)
+    if parsed <= 0:
+        raise ValueError(error_message)
+    return parsed
 
 
 def parse_rate(rate: str | int | float) -> int:
@@ -127,14 +136,13 @@ def build_correlated_loss_profile(
     loss_good: str | int | float,
     loss_bad: str | int | float,
 ) -> dict[str, int]:
-    profile = {
+    return {
+        "enabled": 1,
         "p_good_to_bad_ppm": parse_packet_loss(p_good_to_bad),
         "p_bad_to_good_ppm": parse_packet_loss(p_bad_to_good),
         "loss_good_ppm": parse_packet_loss(loss_good),
         "loss_bad_ppm": parse_packet_loss(loss_bad),
     }
-    profile["enabled"] = 1
-    return profile
 
 
 def parse_error_kind(kind: str) -> int:
@@ -287,7 +295,7 @@ def build_target_profile(
         _validate_port_bounds(parsed_port_end, "port_end")
         if parsed_port_start > parsed_port_end:
             raise ValueError("target port_start must be <= port_end")
-    parsed_priority = 100 if priority is None else int(priority)
+    parsed_priority = int(priority) if priority is not None else 100
     if parsed_priority < 0 or parsed_priority > 65535:
         raise ValueError("target priority must be between 0 and 65535")
 
@@ -326,14 +334,10 @@ def build_target_profile(
             address = ipaddress.ip_address(parsed_host)
         except ValueError as exc:
             raise ValueError("target host must be a valid IPv4 or IPv6 address") from exc
-        if isinstance(address, ipaddress.IPv4Address):
-            address_family = 1
-            ipv4 = int(address)
-            prefix_len = 32
-        else:
-            address_family = 2
-            ipv4 = 0
-            prefix_len = 128
+        is_ipv4 = isinstance(address, ipaddress.IPv4Address)
+        address_family = 1 if is_ipv4 else 2
+        ipv4 = int(address) if is_ipv4 else 0
+        prefix_len = 32 if is_ipv4 else 128
         addr = _pad_addr16(list(address.packed))
         profile = {
             "enabled": 1,
@@ -353,14 +357,10 @@ def build_target_profile(
         network = ipaddress.ip_network(parsed_cidr, strict=False)
     except ValueError as exc:
         raise ValueError("target cidr must be a valid IPv4 or IPv6 CIDR") from exc
-    if isinstance(network, ipaddress.IPv4Network):
-        address_family = 1
-        ipv4 = int(network.network_address)
-        max_prefix_len = 32
-    else:
-        address_family = 2
-        ipv4 = 0
-        max_prefix_len = 128
+    is_ipv4_network = isinstance(network, ipaddress.IPv4Network)
+    address_family = 1 if is_ipv4_network else 2
+    ipv4 = int(network.network_address) if is_ipv4_network else 0
+    max_prefix_len = 32 if is_ipv4_network else 128
     addr = _pad_addr16(list(network.network_address.packed))
     if network.prefixlen < 0 or network.prefixlen > max_prefix_len:
         raise ValueError(f"target prefix_len must be between 0 and {max_prefix_len}")
@@ -430,26 +430,21 @@ def build_session_budget_profile(
 ) -> dict[str, int]:
     profile: dict[str, int] = {}
 
-    if max_bytes_tx is not None:
-        max_bytes_tx = int(max_bytes_tx)
-        if max_bytes_tx <= 0:
-            raise ValueError("session_budget max_bytes_tx must be > 0")
-        profile["max_bytes_tx"] = max_bytes_tx
-    if max_bytes_rx is not None:
-        max_bytes_rx = int(max_bytes_rx)
-        if max_bytes_rx <= 0:
-            raise ValueError("session_budget max_bytes_rx must be > 0")
-        profile["max_bytes_rx"] = max_bytes_rx
-    if max_ops is not None:
-        max_ops = int(max_ops)
-        if max_ops <= 0:
-            raise ValueError("session_budget max_ops must be > 0")
-        profile["max_ops"] = max_ops
-    if max_duration_ms is not None:
-        max_duration_ms = int(max_duration_ms)
-        if max_duration_ms <= 0:
-            raise ValueError("session_budget max_duration_ms must be > 0")
-        profile["max_duration_ms"] = max_duration_ms
+    parsed_max_bytes_tx = _as_positive_int(max_bytes_tx, "session_budget max_bytes_tx must be > 0")
+    if parsed_max_bytes_tx is not None:
+        profile["max_bytes_tx"] = parsed_max_bytes_tx
+
+    parsed_max_bytes_rx = _as_positive_int(max_bytes_rx, "session_budget max_bytes_rx must be > 0")
+    if parsed_max_bytes_rx is not None:
+        profile["max_bytes_rx"] = parsed_max_bytes_rx
+
+    parsed_max_ops = _as_positive_int(max_ops, "session_budget max_ops must be > 0")
+    if parsed_max_ops is not None:
+        profile["max_ops"] = parsed_max_ops
+
+    parsed_max_duration_ms = _as_positive_int(max_duration_ms, "session_budget max_duration_ms must be > 0")
+    if parsed_max_duration_ms is not None:
+        profile["max_duration_ms"] = parsed_max_duration_ms
 
     if not profile:
         raise ValueError("session_budget requires at least one limit")

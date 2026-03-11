@@ -1,5 +1,6 @@
 import contextvars
 import copy
+import importlib
 import json
 import threading
 from pathlib import Path
@@ -100,28 +101,31 @@ def _build_target_rule_from_mapping(target: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def _build_single_target_profile(target: str | dict[str, Any]) -> dict[str, Any]:
+def _build_target_rule(target: str | dict[str, Any], *, include_priority: bool) -> dict[str, Any]:
     if isinstance(target, str):
-        return build_target_profile(target=target)
-    if isinstance(target, dict):
-        target_profile = _build_target_rule_from_mapping(target)
-        target_profile.pop("priority", None)
-        return target_profile
-    raise ValueError("target must be a string or mapping when provided")
+        rule = build_target_profile(target=target)
+    elif isinstance(target, dict):
+        rule = _build_target_rule_from_mapping(target)
+    else:
+        raise ValueError("target must be a string or mapping when provided")
+
+    if not include_priority:
+        rule.pop("priority", None)
+    return rule
+
+
+def _build_single_target_profile(target: str | dict[str, Any]) -> dict[str, Any]:
+    return _build_target_rule(target, include_priority=False)
 
 
 def _build_target_profiles(targets: list[str | dict[str, Any]]) -> list[dict[str, Any]]:
     if not targets:
         raise ValueError("targets must be a non-empty list when provided")
 
-    built_rules: list[dict[str, Any]] = []
-    for entry in targets:
-        if isinstance(entry, str):
-            built_rules.append(build_target_profile(target=entry))
-        elif isinstance(entry, dict):
-            built_rules.append(_build_target_rule_from_mapping(entry))
-        else:
-            raise ValueError("each targets entry must be a string or mapping")
+    if not all(isinstance(entry, (str, dict)) for entry in targets):
+        raise ValueError("each targets entry must be a string or mapping")
+
+    built_rules = [_build_target_rule(entry, include_priority=True) for entry in targets]
 
     return sorted(
         built_rules,
@@ -131,15 +135,13 @@ def _build_target_profiles(targets: list[str | dict[str, Any]]) -> list[dict[str
 
 
 def _rule_is_dns_observable(rule: dict[str, Any]) -> bool:
-    if rule.get("hostname") is None:
-        return False
-    if int(rule.get("protocol", 0)) > 0:
-        return False
-    if int(rule.get("port", 0)) > 0:
-        return False
-    if "port_start" in rule or "port_end" in rule:
-        return False
-    return True
+    return (
+        rule.get("hostname") is not None
+        and int(rule.get("protocol", 0)) == 0
+        and int(rule.get("port", 0)) == 0
+        and "port_start" not in rule
+        and "port_end" not in rule
+    )
 
 
 def _rule_is_transport_observable(rule: dict[str, Any]) -> bool:
@@ -254,43 +256,41 @@ def register_policy(
     if connect_timeout_ms is not None or recv_timeout_ms is not None:
         policy["timeouts"] = _coerce_timeout_pair(connect_timeout_ms, recv_timeout_ms)
     if uplink is not None:
-        uplink = _require_mapping(uplink, "uplink")
-        policy["uplink_profile"] = _build_direction_policy(uplink)
+        policy["uplink_profile"] = _build_direction_policy(_require_mapping(uplink, "uplink"))
     if downlink is not None:
-        downlink = _require_mapping(downlink, "downlink")
-        policy["downlink_profile"] = _build_direction_policy(downlink)
+        policy["downlink_profile"] = _build_direction_policy(_require_mapping(downlink, "downlink"))
     if correlated_loss is not None:
-        correlated_loss = _require_mapping(correlated_loss, "correlated_loss")
+        correlated_loss_mapping = _require_mapping(correlated_loss, "correlated_loss")
         policy["correlated_loss_profile"] = build_correlated_loss_profile(
-            p_good_to_bad=correlated_loss.get("p_good_to_bad", 0),
-            p_bad_to_good=correlated_loss.get("p_bad_to_good", 0),
-            loss_good=correlated_loss.get("loss_good", 0),
-            loss_bad=correlated_loss.get("loss_bad", 0),
+            p_good_to_bad=correlated_loss_mapping.get("p_good_to_bad", 0),
+            p_bad_to_good=correlated_loss_mapping.get("p_bad_to_good", 0),
+            loss_good=correlated_loss_mapping.get("loss_good", 0),
+            loss_bad=correlated_loss_mapping.get("loss_bad", 0),
         )
     if connection_error is not None:
-        connection_error = _require_mapping(connection_error, "connection_error")
+        connection_error_mapping = _require_mapping(connection_error, "connection_error")
         policy["connection_error_profile"] = build_connection_error_profile(
-            kind=connection_error.get("kind", "reset"),
-            prob=connection_error.get("prob", "100%"),
+            kind=connection_error_mapping.get("kind", "reset"),
+            prob=connection_error_mapping.get("prob", "100%"),
         )
     if half_open is not None:
-        half_open = _require_mapping(half_open, "half_open")
+        half_open_mapping = _require_mapping(half_open, "half_open")
         policy["half_open_profile"] = build_half_open_profile(
-            after_bytes=half_open.get("after_bytes", 0),
-            error=half_open.get("error", "reset"),
+            after_bytes=half_open_mapping.get("after_bytes", 0),
+            error=half_open_mapping.get("error", "reset"),
         )
     if packet_duplicate is not None:
-        packet_duplicate = _require_mapping(packet_duplicate, "packet_duplicate")
+        packet_duplicate_mapping = _require_mapping(packet_duplicate, "packet_duplicate")
         policy["packet_duplicate_profile"] = build_packet_duplicate_profile(
-            prob=packet_duplicate.get("prob", "100%"),
-            max_extra=packet_duplicate.get("max_extra", 1),
+            prob=packet_duplicate_mapping.get("prob", "100%"),
+            max_extra=packet_duplicate_mapping.get("max_extra", 1),
         )
     if packet_reorder is not None:
-        packet_reorder = _require_mapping(packet_reorder, "packet_reorder")
+        packet_reorder_mapping = _require_mapping(packet_reorder, "packet_reorder")
         policy["packet_reorder_profile"] = build_packet_reorder_profile(
-            prob=packet_reorder.get("prob", "100%"),
-            max_delay_ms=packet_reorder.get("max_delay_ms", 0),
-            window=packet_reorder.get("window", 1),
+            prob=packet_reorder_mapping.get("prob", "100%"),
+            max_delay_ms=packet_reorder_mapping.get("max_delay_ms", 0),
+            window=packet_reorder_mapping.get("window", 1),
         )
     dns_profile = build_dns_profile(
         delay_ms=dns_delay_ms,
@@ -306,25 +306,25 @@ def register_policy(
             raise ValueError("targets must be a non-empty list when provided")
         policy["target_profiles"] = _build_target_profiles(targets)
     if schedule is not None:
-        schedule = _require_mapping(schedule, "schedule")
+        schedule_mapping = _require_mapping(schedule, "schedule")
         policy["schedule_profile"] = build_schedule_profile(
-            kind=schedule.get("kind", ""),
-            every_s=schedule.get("every_s"),
-            duration_s=schedule.get("duration_s"),
-            on_s=schedule.get("on_s"),
-            off_s=schedule.get("off_s"),
-            ramp_s=schedule.get("ramp_s"),
+            kind=schedule_mapping.get("kind", ""),
+            every_s=schedule_mapping.get("every_s"),
+            duration_s=schedule_mapping.get("duration_s"),
+            on_s=schedule_mapping.get("on_s"),
+            off_s=schedule_mapping.get("off_s"),
+            ramp_s=schedule_mapping.get("ramp_s"),
         )
     if session_budget is not None:
-        session_budget = _require_mapping(session_budget, "session_budget")
+        session_budget_mapping = _require_mapping(session_budget, "session_budget")
         policy["session_budget_profile"] = build_session_budget_profile(
-            max_bytes_tx=session_budget.get("max_bytes_tx"),
-            max_bytes_rx=session_budget.get("max_bytes_rx"),
-            max_ops=session_budget.get("max_ops"),
-            max_duration_ms=session_budget.get("max_duration_ms"),
-            action=session_budget.get("action", "drop"),
-            budget_timeout_ms=session_budget.get("budget_timeout_ms"),
-            error=session_budget.get("error"),
+            max_bytes_tx=session_budget_mapping.get("max_bytes_tx"),
+            max_bytes_rx=session_budget_mapping.get("max_bytes_rx"),
+            max_ops=session_budget_mapping.get("max_ops"),
+            max_duration_ms=session_budget_mapping.get("max_duration_ms"),
+            action=session_budget_mapping.get("action", "drop"),
+            budget_timeout_ms=session_budget_mapping.get("budget_timeout_ms"),
+            error=session_budget_mapping.get("error"),
         )
     _validate_target_observability(policy)
     with _POLICY_LOCK:
@@ -361,11 +361,11 @@ def load_policies(path: str | Path) -> int:
             raw = json.load(f)
     elif extension in {".yaml", ".yml"}:
         try:
-            import yaml  # type: ignore[import-untyped]
+            yaml_module = importlib.import_module("yaml")
         except Exception as exc:
             raise ValueError("YAML support requires PyYAML installed") from exc
         with path_obj.open("r", encoding="utf-8") as f:
-            raw = yaml.safe_load(f)
+            raw = yaml_module.safe_load(f)
     else:
         raise ValueError("Unsupported policy format; use .json, .yaml or .yml")
 
@@ -376,7 +376,8 @@ def load_policies(path: str | Path) -> int:
     for name, cfg in raw.items():
         if not isinstance(name, str) or not isinstance(cfg, dict):
             raise ValueError("Each policy entry must be a mapping")
-        register_policy(name, **{field: cfg.get(field) for field in _REGISTERABLE_FIELDS})
+        policy_kwargs = {field: cfg.get(field) for field in _REGISTERABLE_FIELDS}
+        register_policy(name, **policy_kwargs)
         loaded += 1
     return loaded
 

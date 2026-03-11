@@ -105,8 +105,6 @@ def run_tcp_case(host: str) -> None:
     sock.settimeout(None)
     try:
         sock.connect((host, port))
-        # Avoid policy race with the in-process push server thread:
-        # make sure both packets are sent before enabling reorder on recv.
         if not sent_ready.wait(timeout=1):
             raise RuntimeError("tcp push server did not send packets in time")
         out1, out2 = recv_two_tcp(sock)

@@ -44,7 +44,7 @@ def combined_test_scenario(host: str, tcp_port: int):
     results: dict[str, str | int] = {}
 
     print("\n--- Scenario 1: Rate-limited TCP + HTTP ---")
-    start = time.time()
+    start = time.perf_counter()
 
     tcp_result = rate_limited_tcp(host, tcp_port, "TCP Test")
     results["tcp"] = tcp_result
@@ -55,7 +55,7 @@ def combined_test_scenario(host: str, tcp_port: int):
         results["http"] = http_result
         print(f"HTTP: {http_result}")
 
-    print(f"Total: {time.time() - start:.3f}s")
+    print(f"Total: {time.perf_counter() - start:.3f}s")
     return results
 
 
@@ -63,40 +63,40 @@ def latency_scenario(host: str, tcp_port: int):
     print("\n--- Scenario 2: Latency injection on multiple protocols ---")
 
     print("TCP with 250ms latency:")
-    start = time.time()
+    start = time.perf_counter()
     try:
         result = latency_injected_call(tcp_echo, host, tcp_port, "Latency test")
         print(f"  Result: {result}")
-        print(f"  Time: {(time.time() - start) * 1000:.1f}ms")
-    except Exception as e:
-        print(f"  Error: {type(e).__name__}: {e}")
+        print(f"  Time: {(time.perf_counter() - start) * 1000:.1f}ms")
+    except Exception as exc:
+        print(f"  Error: {type(exc).__name__}: {exc}")
 
     if requests is not None:
         print("HTTP with 250ms latency:")
-        start = time.time()
+        start = time.perf_counter()
         try:
             result = latency_injected_call(lambda: requests.get("https://httpbin.org/get", timeout=10))
             print(f"  Status: {result.status_code}")
-            print(f"  Time: {(time.time() - start) * 1000:.1f}ms")
-        except Exception as e:
-            print(f"  Error: {type(e).__name__}: {e}")
+            print(f"  Time: {(time.perf_counter() - start) * 1000:.1f}ms")
+        except Exception as exc:
+            print(f"  Error: {type(exc).__name__}: {exc}")
 
 
 def burst_scenario(host: str, tcp_port: int):
     print("\n--- Scenario 3: Burst traffic simulation ---")
 
     print("Sending 10 rapid requests (should be rate limited):")
-    start = time.time()
-    for i in range(10):
-        req_start = time.time()
+    start = time.perf_counter()
+    for attempt in range(10):
+        req_start = time.perf_counter()
         try:
-            result = tcp_echo(host, tcp_port, f"Burst {i}")
-            elapsed = (time.time() - req_start) * 1000
-            print(f"  Request {i + 1}: {elapsed:.1f}ms - {result}")
-        except Exception as e:
-            elapsed = (time.time() - req_start) * 1000
-            print(f"  Request {i + 1}: {elapsed:.1f}ms - ERROR: {type(e).__name__}")
-    print(f"Total: {time.time() - start:.3f}s")
+            result = tcp_echo(host, tcp_port, f"Burst {attempt}")
+            elapsed = (time.perf_counter() - req_start) * 1000
+            print(f"  Request {attempt + 1}: {elapsed:.1f}ms - {result}")
+        except Exception as exc:
+            elapsed = (time.perf_counter() - req_start) * 1000
+            print(f"  Request {attempt + 1}: {elapsed:.1f}ms - ERROR: {type(exc).__name__}")
+    print(f"Total: {time.perf_counter() - start:.3f}s")
 
 
 def mixed_policy_scenario(host: str, tcp_port: int):
@@ -107,17 +107,17 @@ def mixed_policy_scenario(host: str, tcp_port: int):
     def throttled_and_slow_call(msg: str):
         return tcp_echo(host, tcp_port, msg)
 
-    start = time.time()
-    for i in range(3):
-        req_start = time.time()
+    start = time.perf_counter()
+    for attempt in range(3):
+        req_start = time.perf_counter()
         try:
-            result = throttled_and_slow_call(f"Mixed {i}")
-            elapsed = (time.time() - req_start) * 1000
-            print(f"  Request {i + 1}: {elapsed:.1f}ms - {result}")
-        except Exception as e:
-            elapsed = (time.time() - req_start) * 1000
-            print(f"  Request {i + 1}: {elapsed:.1f}ms - ERROR: {type(e).__name__}")
-    print(f"Total: {time.time() - start:.3f}s")
+            result = throttled_and_slow_call(f"Mixed {attempt}")
+            elapsed = (time.perf_counter() - req_start) * 1000
+            print(f"  Request {attempt + 1}: {elapsed:.1f}ms - {result}")
+        except Exception as exc:
+            elapsed = (time.perf_counter() - req_start) * 1000
+            print(f"  Request {attempt + 1}: {elapsed:.1f}ms - ERROR: {type(exc).__name__}")
+    print(f"Total: {time.perf_counter() - start:.3f}s")
 
 
 if __name__ == "__main__":

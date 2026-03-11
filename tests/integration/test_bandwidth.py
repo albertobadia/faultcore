@@ -27,19 +27,18 @@ def test_bandwidth_send(host: str, port: int, data_size: int, duration_sec: floa
             try:
                 sock.sendall(data)
                 total_sent += data_size
-                # Drain echoed data opportunistically to avoid backpressure deadlocks.
                 ready, _, _ = select.select([sock], [], [], 0)
                 if ready:
                     _ = sock.recv(4096)
-            except Exception as e:
-                print(f"Send error: {e}")
+            except Exception as exc:
+                print(f"Send error: {exc}")
                 sock.close()
                 return None
 
         sock.close()
 
-    except Exception as e:
-        print(f"Connection error: {e}")
+    except Exception as exc:
+        print(f"Connection error: {exc}")
         return None
 
     end_time = time.perf_counter()
@@ -80,14 +79,14 @@ def test_bandwidth_recv(host: str, port: int, duration_sec: float = 5.0):
                 total_received += len(data)
             except TimeoutError:
                 break
-            except Exception as e:
-                print(f"Receive error: {e}")
+            except Exception as exc:
+                print(f"Receive error: {exc}")
                 break
 
         sock.close()
 
-    except Exception as e:
-        print(f"Connection error: {e}")
+    except Exception as exc:
+        print(f"Connection error: {exc}")
         return None
 
     end_time = time.perf_counter()
@@ -126,8 +125,8 @@ def test_throughput(host: str, port: int, num_messages: int = 100):
             if response:
                 successful += 1
 
-        except Exception as e:
-            print(f"Error on message {i}: {e}")
+        except Exception as exc:
+            print(f"Error on message {i}: {exc}")
 
     end_time = time.perf_counter()
     elapsed = end_time - start_time

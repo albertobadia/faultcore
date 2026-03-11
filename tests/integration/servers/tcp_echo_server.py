@@ -19,7 +19,6 @@ class EchoServer:
         self.server_socket = socket.socket(family, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         if family == socket.AF_INET6:
-            # Keep behavior predictable: explicit IPv6 bind for ::1/:: hosts.
             self.server_socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
         self.server_socket.bind((self.host, self.port))
         self.server_socket.listen(5)
@@ -42,9 +41,9 @@ class EchoServer:
                 thread = threading.Thread(target=self.handle_client, args=(client_socket, address, client_id))
                 thread.daemon = True
                 thread.start()
-            except Exception as e:
+            except Exception as exc:
                 if self.running:
-                    print(f"Error accepting connection: {e}")
+                    print(f"Error accepting connection: {exc}")
 
     def handle_client(self, client_socket, address, client_id):
         try:
@@ -63,8 +62,8 @@ class EchoServer:
                 response = f"ECHO: {message}\n"
                 client_socket.sendall(response.encode("utf-8"))
 
-        except Exception as e:
-            print(f"[{datetime.now().isoformat()}] Client {client_id} error: {e}")
+        except Exception as exc:
+            print(f"[{datetime.now().isoformat()}] Client {client_id} error: {exc}")
         finally:
             client_socket.close()
             print(f"[{datetime.now().isoformat()}] Client {client_id} disconnected")
@@ -75,9 +74,9 @@ class EchoServer:
         try:
             while True:
                 client_socket.sendall(chunk)
-        except Exception as e:
+        except Exception as exc:
             elapsed = time.perf_counter() - started
-            print(f"[{datetime.now().isoformat()}] Client {client_id} stream ended after {elapsed:.2f}s: {e}")
+            print(f"[{datetime.now().isoformat()}] Client {client_id} stream ended after {elapsed:.2f}s: {exc}")
 
     def stop(self):
         self.running = False

@@ -2,6 +2,11 @@ from typing import Any
 
 
 def _target_write_kwargs(target_profile: dict[str, Any]) -> dict[str, Any]:
+    port_start = target_profile.get("port_start")
+    port_end = target_profile.get("port_end")
+    hostname = target_profile.get("hostname")
+    sni = target_profile.get("sni")
+
     kwargs: dict[str, Any] = {
         "enabled": bool(target_profile.get("enabled", 0)),
         "kind": target_profile.get("kind", 0),
@@ -12,15 +17,26 @@ def _target_write_kwargs(target_profile: dict[str, Any]) -> dict[str, Any]:
         "address_family": target_profile.get("address_family", 0),
         "addr": target_profile.get("addr"),
     }
-    if target_profile.get("port_start") is not None:
-        kwargs["port_start"] = target_profile.get("port_start")
-    if target_profile.get("port_end") is not None:
-        kwargs["port_end"] = target_profile.get("port_end")
-    if target_profile.get("hostname") is not None:
-        kwargs["hostname"] = target_profile.get("hostname")
-    if target_profile.get("sni") is not None:
-        kwargs["sni"] = target_profile.get("sni")
+    if port_start is not None:
+        kwargs["port_start"] = port_start
+    if port_end is not None:
+        kwargs["port_end"] = port_end
+    if hostname is not None:
+        kwargs["hostname"] = hostname
+    if sni is not None:
+        kwargs["sni"] = sni
     return kwargs
+
+
+def _write_direction_profile(tid: int, write_method: Any, profile: dict[str, Any]) -> None:
+    write_method(
+        tid,
+        latency_ms=profile.get("latency_ms"),
+        jitter_ms=profile.get("jitter_ms"),
+        packet_loss_ppm=profile.get("packet_loss_ppm"),
+        burst_loss_len=profile.get("burst_loss_len"),
+        bandwidth_bps=profile.get("bandwidth_bps"),
+    )
 
 
 def apply_fault_profiles(shm: Any, tid: int, wrapper: Any, *, started_monotonic_ns: int) -> None:
@@ -48,25 +64,11 @@ def apply_fault_profiles(shm: Any, tid: int, wrapper: Any, *, started_monotonic_
 
     uplink_profile = wrapper._uplink_profile
     if uplink_profile:
-        shm.write_uplink(
-            tid,
-            latency_ms=uplink_profile.get("latency_ms"),
-            jitter_ms=uplink_profile.get("jitter_ms"),
-            packet_loss_ppm=uplink_profile.get("packet_loss_ppm"),
-            burst_loss_len=uplink_profile.get("burst_loss_len"),
-            bandwidth_bps=uplink_profile.get("bandwidth_bps"),
-        )
+        _write_direction_profile(tid, shm.write_uplink, uplink_profile)
 
     downlink_profile = wrapper._downlink_profile
     if downlink_profile:
-        shm.write_downlink(
-            tid,
-            latency_ms=downlink_profile.get("latency_ms"),
-            jitter_ms=downlink_profile.get("jitter_ms"),
-            packet_loss_ppm=downlink_profile.get("packet_loss_ppm"),
-            burst_loss_len=downlink_profile.get("burst_loss_len"),
-            bandwidth_bps=downlink_profile.get("bandwidth_bps"),
-        )
+        _write_direction_profile(tid, shm.write_downlink, downlink_profile)
 
     correlated_loss_profile = wrapper._correlated_loss_profile
     if correlated_loss_profile:
@@ -87,11 +89,12 @@ def apply_fault_profiles(shm: Any, tid: int, wrapper: Any, *, started_monotonic_
             prob_ppm=connection_error_profile.get("prob_ppm", 0),
         )
 
-    if wrapper._half_open_profile:
+    half_open_profile = wrapper._half_open_profile
+    if half_open_profile:
         shm.write_half_open(
             tid,
-            after_bytes=wrapper._half_open_profile.get("after_bytes", 0),
-            err_kind=wrapper._half_open_profile.get("err_kind", 0),
+            after_bytes=half_open_profile.get("after_bytes", 0),
+            err_kind=half_open_profile.get("err_kind", 0),
         )
 
     packet_duplicate_profile = wrapper._packet_duplicate_profile
@@ -125,24 +128,26 @@ def apply_fault_profiles(shm: Any, tid: int, wrapper: Any, *, started_monotonic_
     elif wrapper._target_profile:
         shm.write_target(tid, **_target_write_kwargs(wrapper._target_profile))
 
-    if wrapper._schedule_profile:
+    schedule_profile = wrapper._schedule_profile
+    if schedule_profile:
         shm.write_schedule(
             tid,
-            schedule_type=wrapper._schedule_profile.get("schedule_type", 0),
-            param_a_ns=wrapper._schedule_profile.get("param_a_ns", 0),
-            param_b_ns=wrapper._schedule_profile.get("param_b_ns", 0),
-            param_c_ns=wrapper._schedule_profile.get("param_c_ns", 0),
+            schedule_type=schedule_profile.get("schedule_type", 0),
+            param_a_ns=schedule_profile.get("param_a_ns", 0),
+            param_b_ns=schedule_profile.get("param_b_ns", 0),
+            param_c_ns=schedule_profile.get("param_c_ns", 0),
             started_monotonic_ns=started_monotonic_ns,
         )
 
-    if wrapper._session_budget_profile:
+    session_budget_profile = wrapper._session_budget_profile
+    if session_budget_profile:
         shm.write_session_budget(
             tid,
-            max_bytes_tx=wrapper._session_budget_profile.get("max_bytes_tx"),
-            max_bytes_rx=wrapper._session_budget_profile.get("max_bytes_rx"),
-            max_ops=wrapper._session_budget_profile.get("max_ops"),
-            max_duration_ms=wrapper._session_budget_profile.get("max_duration_ms"),
-            action=wrapper._session_budget_profile.get("action", 0),
-            budget_timeout_ms=wrapper._session_budget_profile.get("budget_timeout_ms"),
-            error_kind=wrapper._session_budget_profile.get("error_kind"),
+            max_bytes_tx=session_budget_profile.get("max_bytes_tx"),
+            max_bytes_rx=session_budget_profile.get("max_bytes_rx"),
+            max_ops=session_budget_profile.get("max_ops"),
+            max_duration_ms=session_budget_profile.get("max_duration_ms"),
+            action=session_budget_profile.get("action", 0),
+            budget_timeout_ms=session_budget_profile.get("budget_timeout_ms"),
+            error_kind=session_budget_profile.get("error_kind"),
         )
