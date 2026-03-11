@@ -1,5 +1,6 @@
 pub mod chaos_engine;
 pub mod interceptor_bridge;
+pub mod observability;
 pub mod layers;
 pub mod runtime;
 pub mod setpriority_compat;
@@ -9,6 +10,12 @@ pub mod socket_runtime;
 use std::sync::OnceLock;
 
 pub use chaos_engine::{ChaosEngine, DecisionCounters};
+pub use observability::{
+    FaultOsiAdvancedMetricsSnapshot, FaultTypeCountersSnapshot, TargetRuleCounterSnapshot,
+    advanced_metrics_snapshot as global_fault_osi_advanced_metrics_snapshot,
+    record_fault_decision as record_fault_observability_decision,
+    record_target_rule_hit as record_target_rule_observability_hit, reset_advanced_metrics,
+};
 pub type FaultOsiEngine = ChaosEngine;
 pub type FaultOsiDecisionCounters = DecisionCounters;
 pub use interceptor_bridge::{
@@ -135,6 +142,7 @@ pub fn global_fault_osi_metrics_snapshot() -> FaultOsiMetricsSnapshot {
 pub fn reset_global_fault_osi_metrics() {
     global_fault_osi_engine().reset_metrics();
     reset_runtime_reload_metrics();
+    reset_advanced_metrics();
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -460,5 +468,31 @@ mod tests {
         assert_eq!(snapshot.len, 7);
         assert_eq!(snapshot.layers[0].stage, 1);
         assert_eq!(snapshot.layers[6].stage, 7);
+    }
+
+    #[test]
+    fn advanced_metrics_snapshot_contract_is_stable() {
+        let snapshot = global_fault_osi_advanced_metrics_snapshot();
+        assert_eq!(snapshot.latency_bucket_len as usize, observability::LATENCY_BUCKET_COUNT);
+        assert_eq!(
+            snapshot.latency_bucket_upper_bounds_ns,
+            observability::LATENCY_BUCKET_UPPER_BOUNDS_NS
+        );
+    }
+
+    #[test]
+    fn reset_global_metrics_clears_advanced_observability() {
+        reset_advanced_metrics();
+        record_fault_observability_decision(&LayerDecision::Drop);
+        record_target_rule_observability_hit(1234);
+        let before = global_fault_osi_advanced_metrics_snapshot();
+        assert_eq!(before.fault_counters.drop_count, 1);
+        assert_eq!(before.target_rule_top_len, 1);
+
+        reset_global_fault_osi_metrics();
+        let after = global_fault_osi_advanced_metrics_snapshot();
+        assert_eq!(after.fault_counters.drop_count, 0);
+        assert_eq!(after.target_rule_top_len, 0);
+        assert_eq!(after.target_rule_other_count, 0);
     }
 }

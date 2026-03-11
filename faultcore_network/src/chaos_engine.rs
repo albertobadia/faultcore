@@ -1,5 +1,5 @@
 use crate::{
-    Config, Layer,
+    Config, Layer, record_fault_observability_decision,
     layers::{
         Direction, L1Chaos, L2QoS, L3Routing, L4Transport, L5Session, L6Presentation, L7Resolver,
         LayerDecision, LayerStage, Operation, PacketContext,
@@ -252,7 +252,9 @@ impl ChaosEngine {
             direction: Some(Direction::Uplink),
             config: &effective,
         };
-        self.process_pipeline(&ctx)
+        let decision = self.process_pipeline(&ctx);
+        record_fault_observability_decision(&decision);
+        decision
     }
 
     pub fn evaluate_stream_pre(
@@ -271,6 +273,7 @@ impl ChaosEngine {
             .precheck(fd, bytes, direction, &effective, crate::monotonic_now_ns());
         if !matches!(session_precheck, LayerDecision::Continue) {
             self.metrics[Self::stage_index(LayerStage::L5)].record_decision(&session_precheck);
+            record_fault_observability_decision(&session_precheck);
             return session_precheck;
         }
         let operation = match direction {
@@ -287,11 +290,13 @@ impl ChaosEngine {
 
         let decision = self.process_pipeline(&ctx);
         if !matches!(decision, LayerDecision::Continue) {
+            record_fault_observability_decision(&decision);
             return decision;
         }
 
         let decision = self.l1.reorder_decision(&effective);
         self.metrics[Self::stage_index(LayerStage::L1)].record_decision(&decision);
+        record_fault_observability_decision(&decision);
         decision
     }
 
@@ -303,6 +308,7 @@ impl ChaosEngine {
         if matches!(direction, Direction::Uplink) {
             let decision = self.l1.duplicate_decision(&effective);
             self.metrics[Self::stage_index(LayerStage::L1)].record_decision(&decision);
+            record_fault_observability_decision(&decision);
             decision
         } else {
             LayerDecision::Continue
@@ -317,7 +323,9 @@ impl ChaosEngine {
             direction: None,
             config,
         };
-        self.process_pipeline(&ctx)
+        let decision = self.process_pipeline(&ctx);
+        record_fault_observability_decision(&decision);
+        decision
     }
 
     pub fn record_stream_bytes(&self, fd: i32, bytes: u64) {

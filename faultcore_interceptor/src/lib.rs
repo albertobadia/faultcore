@@ -1,5 +1,6 @@
 use faultcore_network::{
-    Config, Direction, FaultOsiMetricsSnapshot, LayerDecision, PendingDatagram,
+    Config, Direction, FaultOsiAdvancedMetricsSnapshot, FaultOsiMetricsSnapshot, LayerDecision,
+    PendingDatagram,
     SetpriorityCompatOutcome, apply_connect_directive, apply_stream_directive,
     bind_fd_to_current_thread, clear_fd_binding, clone_fd_binding, global_fault_osi_engine,
     global_interceptor_runtime, handle_setpriority_compat, init_runtime_shm,
@@ -1092,6 +1093,22 @@ pub unsafe extern "C" fn faultcore_metrics_snapshot(out: *mut FaultOsiMetricsSna
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `out` must be a valid writable pointer to `FaultOsiAdvancedMetricsSnapshot`.
+pub unsafe extern "C" fn faultcore_advanced_metrics_snapshot(
+    out: *mut FaultOsiAdvancedMetricsSnapshot,
+) -> bool {
+    if out.is_null() {
+        return false;
+    }
+    let snapshot = faultcore_network::global_fault_osi_advanced_metrics_snapshot();
+    unsafe {
+        std::ptr::write(out, snapshot);
+    }
+    true
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn faultcore_metrics_reset() {
     reset_global_fault_osi_metrics();
 }
@@ -1233,6 +1250,12 @@ mod tests {
     #[test]
     fn metrics_snapshot_null_pointer_returns_false() {
        let ok = unsafe { faultcore_metrics_snapshot(std::ptr::null_mut()) };
+       assert!(!ok);
+    }
+
+    #[test]
+    fn advanced_metrics_snapshot_null_pointer_returns_false() {
+       let ok = unsafe { faultcore_advanced_metrics_snapshot(std::ptr::null_mut()) };
        assert!(!ok);
     }
     

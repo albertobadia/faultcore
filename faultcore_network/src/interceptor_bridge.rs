@@ -8,7 +8,8 @@ use crate::{
     Config, Direction, Endpoint, FaultOsiEngine, LayerDecision, TargetRule, assign_rule_to_fd,
     clear_rule_for_fd, clone_rule_for_fd, endpoint_for_addr_or_fd, endpoint_for_fd,
     get_config_for_tid, get_config_for_tid_slot, get_target_rules_for_tid_slot, get_thread_id,
-    get_tid_slot_for_fd, get_tid_slot_for_tid, monotonic_now_ns, try_open_shm,
+    get_tid_slot_for_fd, get_tid_slot_for_tid, monotonic_now_ns,
+    record_target_rule_observability_hit, try_open_shm,
 };
 
 const RULESET_READ_RETRY_LIMIT: usize = 3;
@@ -308,7 +309,7 @@ fn select_best_target_rule(
     semantic: SemanticContext<'_>,
     rules: &[TargetRule],
     count: usize,
-) -> Option<TargetRule> {
+) -> Option<(usize, TargetRule)> {
     let mut selected_idx: Option<usize> = None;
     let mut selected_priority: u64 = 0;
     let mut selected_class: u8 = 0;
@@ -327,7 +328,11 @@ fn select_best_target_rule(
             selected_class = match_class;
         }
     }
-    selected_idx.map(|idx| rules[idx])
+    selected_idx.map(|idx| (idx, rules[idx]))
+}
+
+fn target_rule_id_for_slot_idx(tid_slot: usize, idx: usize) -> u64 {
+    ((tid_slot as u64) << 32) | (idx as u64)
 }
 
 fn apply_multi_target_for_tid(
@@ -342,6 +347,7 @@ fn apply_multi_target_for_tid(
     let endpoint = endpoint?;
     apply_multi_target_for_tid_with_reader(
         cfg,
+        tid_slot,
         Some(endpoint),
         semantic,
         || get_target_rules_for_tid_slot(tid_slot),
@@ -351,6 +357,7 @@ fn apply_multi_target_for_tid(
 
 fn apply_multi_target_for_tid_with_reader<FRules, FCfg>(
     mut cfg: Config,
+    tid_slot: usize,
     endpoint: Option<Endpoint>,
     semantic: SemanticContext<'_>,
     mut read_rules: FRules,
@@ -375,7 +382,7 @@ where
         }
 
         let count = usize::min(cfg.target_enabled as usize, rules.len());
-        let rule = select_best_target_rule(endpoint, semantic, &rules, count)?;
+        let (rule_idx, rule) = select_best_target_rule(endpoint, semantic, &rules, count)?;
         cfg.target_enabled = 0;
         cfg.target_kind = rule.kind;
         cfg.target_prefix_len = rule.prefix_len;
@@ -385,6 +392,7 @@ where
         cfg.target_addr = rule.addr;
         cfg.target_hostname = rule.hostname;
         cfg.target_sni = rule.sni;
+        record_target_rule_observability_hit(target_rule_id_for_slot_idx(tid_slot, rule_idx));
         RELOAD_APPLIED_TOTAL.fetch_add(1, Ordering::Relaxed);
         return cfg.runtime_filtered(endpoint, monotonic_now_ns());
     }
@@ -464,6 +472,7 @@ pub fn runtime_dns_config_for_query(hostname: Option<&str>, sni: Option<&str>) -
     }
     apply_multi_target_for_tid_with_reader(
         cfg,
+        slot,
         None,
         SemanticContext { hostname, sni },
         || get_target_rules_for_tid_slot(slot),
@@ -503,6 +512,7 @@ pub unsafe fn uplink_duplicate_count_for_addr_or_fd(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{global_fault_osi_advanced_metrics_snapshot, reset_advanced_metrics};
     use std::cell::Cell;
     
     fn endpoint_v4(ipv4: u32, port: u16, protocol: u64) -> Endpoint {
@@ -567,37 +577,36 @@ mod tests {
     #[test]
     fn select_rule_prefers_higher_priority() {
        let endpoint = endpoint_v4(0x0A010203, 443, 1);
-       let rules = [
-           TargetRule {
-               enabled: 1,
-               priority: 10,
-               kind: 1,
-               ipv4: endpoint.ipv4 as u64,
-               prefix_len: 32,
-               port: endpoint.port as u64,
-               protocol: endpoint.protocol,
-               reserved: 0,
-               address_family: 1,
-               addr: endpoint.addr,
-               hostname: [0; 32],
-               sni: [0; 32],
-           },
-           TargetRule {
-               enabled: 1,
-               priority: 200,
-               kind: 1,
-               ipv4: endpoint.ipv4 as u64,
-               prefix_len: 32,
-               port: endpoint.port as u64,
-               protocol: endpoint.protocol,
-               reserved: 0,
-               address_family: 1,
-               addr: endpoint.addr,
-               hostname: [0; 32],
-               sni: [0; 32],
-           },
-       ];
-       let selected = select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).expect("must select");
+       let mut rules = [TargetRule::default(); crate::MAX_TARGET_RULES_PER_TID];
+       rules[0] = TargetRule {
+           enabled: 1,
+           priority: 10,
+           kind: 1,
+           ipv4: endpoint.ipv4 as u64,
+           prefix_len: 32,
+           port: endpoint.port as u64,
+           protocol: endpoint.protocol,
+           reserved: 0,
+           address_family: 1,
+           addr: endpoint.addr,
+           hostname: [0; 32],
+           sni: [0; 32],
+       };
+       rules[1] = TargetRule {
+           enabled: 1,
+           priority: 200,
+           kind: 1,
+           ipv4: endpoint.ipv4 as u64,
+           prefix_len: 32,
+           port: endpoint.port as u64,
+           protocol: endpoint.protocol,
+           reserved: 0,
+           address_family: 1,
+           addr: endpoint.addr,
+           hostname: [0; 32],
+           sni: [0; 32],
+       };
+       let (_, selected) = select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).expect("must select");
        assert_eq!(selected.priority, 200);
     }
     
@@ -634,7 +643,7 @@ mod tests {
                sni: [0; 32],
            },
        ];
-       let selected = select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).expect("must select");
+       let (_, selected) = select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).expect("must select");
        assert_eq!(selected.ipv4, 0x0A000000);
        assert_eq!(selected.prefix_len, 8);
     }
@@ -692,7 +701,7 @@ mod tests {
                sni: [0; 32],
            },
        ];
-       let selected = select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).expect("must select");
+       let (_, selected) = select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).expect("must select");
        assert_eq!(selected.priority, 100);
     }
     
@@ -743,7 +752,7 @@ mod tests {
                sni: [0; 32],
            },
        ];
-       let selected = select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).expect("must select");
+       let (_, selected) = select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).expect("must select");
        assert_eq!(selected.priority, 70);
     }
     
@@ -764,7 +773,7 @@ mod tests {
            hostname: [0; 32],
            sni: [0; 32],
        }];
-       let selected = select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).expect("must select");
+       let (_, selected) = select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).expect("must select");
        assert_eq!(selected.priority, 70);
     }
     
@@ -805,7 +814,7 @@ mod tests {
            hostname: [0; 32],
            sni: [0; 32],
        }];
-       let selected = select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).expect("must select");
+       let (_, selected) = select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).expect("must select");
        assert_eq!(selected.kind, 2);
        assert_eq!(selected.prefix_len, 0);
     }
@@ -843,7 +852,7 @@ mod tests {
                sni: name32("api.foo.com"),
            },
        ];
-       let selected = select_best_target_rule(
+       let (_, selected) = select_best_target_rule(
            Some(endpoint),
            SemanticContext { hostname: None, sni: Some("api.foo.com") },
            &rules,
@@ -870,7 +879,7 @@ mod tests {
            hostname: name32("*.foo.com"),
            sni: [0; 32],
        }];
-       let selected = select_best_target_rule(
+       let (_, selected) = select_best_target_rule(
            None,
            SemanticContext { hostname: Some("api.foo.com"), sni: None },
            &rules,
@@ -986,6 +995,7 @@ mod tests {
        let cfg_reads = Cell::new(0usize);
        let result = apply_multi_target_for_tid_with_reader(
             base_cfg,
+            0,
             Some(endpoint),
             SemanticContext::default(),
            || Some(rules),
@@ -1033,6 +1043,7 @@ mod tests {
        let cfg_reads = Cell::new(0usize);
        let result = apply_multi_target_for_tid_with_reader(
             base_cfg,
+            0,
             Some(endpoint),
             SemanticContext::default(),
            || Some(rules),
@@ -1077,6 +1088,7 @@ mod tests {
        let cfg_reads = Cell::new(0usize);
        let _ = apply_multi_target_for_tid_with_reader(
            base_cfg,
+           0,
            Some(endpoint),
            SemanticContext::default(),
            || Some(rules),
@@ -1121,7 +1133,7 @@ mod tests {
            hostname: [0; 32],
            sni: [0; 32],
        }];
-       let selected = select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).expect("must select");
+       let (_, selected) = select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).expect("must select");
        assert_eq!(selected.priority, 300);
     }
     
@@ -1150,8 +1162,67 @@ mod tests {
            hostname: [0; 32],
            sni: [0; 32],
        }];
-       let selected = select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).expect("must select");
+       let (_, selected) = select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).expect("must select");
        assert_eq!(selected.kind, 2);
        assert_eq!(selected.prefix_len, 48);
+    }
+
+    #[test]
+    fn target_rule_hit_metrics_record_selected_rule_id() {
+       reset_advanced_metrics();
+       let endpoint = endpoint_v4(0x0A010203, 443, 1);
+       let mut base_cfg = cfg_with_latency(500);
+       base_cfg.target_enabled = 2;
+       base_cfg.ruleset_generation = 22;
+       let tid_slot = 9usize;
+
+       let mut rules = [TargetRule::default(); crate::MAX_TARGET_RULES_PER_TID];
+       rules[0] = TargetRule {
+           enabled: 1,
+           priority: 10,
+           kind: 1,
+           ipv4: endpoint.ipv4 as u64,
+           prefix_len: 32,
+           port: endpoint.port as u64,
+           protocol: endpoint.protocol,
+           reserved: 0,
+           address_family: 1,
+           addr: endpoint.addr,
+           hostname: [0; 32],
+           sni: [0; 32],
+       };
+       rules[1] = TargetRule {
+           enabled: 1,
+           priority: 200,
+           kind: 1,
+           ipv4: endpoint.ipv4 as u64,
+           prefix_len: 32,
+           port: endpoint.port as u64,
+           protocol: endpoint.protocol,
+           reserved: 0,
+           address_family: 1,
+           addr: endpoint.addr,
+           hostname: [0; 32],
+           sni: [0; 32],
+       };
+
+       let selected_cfg = apply_multi_target_for_tid_with_reader(
+           base_cfg.clone(),
+           tid_slot,
+           Some(endpoint),
+           SemanticContext::default(),
+           || Some(rules),
+           || Some(base_cfg.clone()),
+       )
+       .expect("rule must match");
+       assert_eq!(selected_cfg.target_enabled, 0);
+
+       let snapshot = global_fault_osi_advanced_metrics_snapshot();
+       assert_eq!(snapshot.target_rule_top_len, 1);
+       assert_eq!(
+           snapshot.target_rule_top[0].target_rule_id,
+           target_rule_id_for_slot_idx(tid_slot, 1)
+       );
+       assert_eq!(snapshot.target_rule_top[0].hits, 1);
     }
 }
