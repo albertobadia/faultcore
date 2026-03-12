@@ -111,8 +111,6 @@ class TlsEchoServer:
             server_name: str | bytes | None,
             _ctx: ssl.SSLContext,
         ) -> None:
-            # Never abort the TLS handshake from callback errors; older/newer
-            # OpenSSL/Python combos can surface server_name in unexpected forms.
             try:
                 if server_name is None:
                     return

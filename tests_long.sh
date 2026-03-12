@@ -1,6 +1,4 @@
 #!/bin/bash
-# Long stress test script for faultcore
-# Runs only the long stress integration path (separate from regular tests.sh gate)
 
 set -euo pipefail
 

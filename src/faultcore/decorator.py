@@ -342,23 +342,22 @@ def correlated_loss(
     loss_good: str | int | float,
     loss_bad: str | int | float,
 ) -> Callable[[Callable[..., Any]], FaultWrapper]:
-    correlated_profile = _build_correlated_loss_profile(
-        p_good_to_bad=p_good_to_bad,
-        p_bad_to_good=p_bad_to_good,
-        loss_good=loss_good,
-        loss_bad=loss_bad,
+    return _with_wrapper(
+        correlated_loss_profile=_build_correlated_loss_profile(
+            p_good_to_bad=p_good_to_bad,
+            p_bad_to_good=p_bad_to_good,
+            loss_good=loss_good,
+            loss_bad=loss_bad,
+        )
     )
-    return _with_wrapper(correlated_loss_profile=correlated_profile)
 
 
 def connection_error(*, kind: str, prob: str | int | float = "100%") -> Callable[[Callable[..., Any]], FaultWrapper]:
-    connection_error_profile = _build_connection_error_profile(kind=kind, prob=prob)
-    return _with_wrapper(connection_error_profile=connection_error_profile)
+    return _with_wrapper(connection_error_profile=_build_connection_error_profile(kind=kind, prob=prob))
 
 
 def half_open(*, after_bytes: int, error: str = "reset") -> Callable[[Callable[..., Any]], FaultWrapper]:
-    half_open_profile = _build_half_open_profile(after_bytes=after_bytes, error=error)
-    return _with_wrapper(half_open_profile=half_open_profile)
+    return _with_wrapper(half_open_profile=_build_half_open_profile(after_bytes=after_bytes, error=error))
 
 
 def packet_duplicate(
@@ -366,8 +365,7 @@ def packet_duplicate(
     prob: str | int | float = "100%",
     max_extra: int = 1,
 ) -> Callable[[Callable[..., Any]], FaultWrapper]:
-    duplicate_profile = _build_packet_duplicate_profile(prob=prob, max_extra=max_extra)
-    return _with_wrapper(packet_duplicate_profile=duplicate_profile)
+    return _with_wrapper(packet_duplicate_profile=_build_packet_duplicate_profile(prob=prob, max_extra=max_extra))
 
 
 def packet_reorder(
@@ -376,8 +374,13 @@ def packet_reorder(
     max_delay_ms: int = 0,
     window: int = 1,
 ) -> Callable[[Callable[..., Any]], FaultWrapper]:
-    reorder_profile = _build_packet_reorder_profile(prob=prob, max_delay_ms=max_delay_ms, window=window)
-    return _with_wrapper(packet_reorder_profile=reorder_profile)
+    return _with_wrapper(
+        packet_reorder_profile=_build_packet_reorder_profile(
+            prob=prob,
+            max_delay_ms=max_delay_ms,
+            window=window,
+        )
+    )
 
 
 def dns_delay(delay_ms: int) -> Callable[[Callable[..., Any]], FaultWrapper]:
@@ -404,18 +407,19 @@ def for_target(
     port_end: int | None = None,
     protocol: str | None = None,
 ) -> Callable[[Callable[..., Any]], FaultWrapper]:
-    target_profile = _build_target_profile(
-        target=target,
-        host=host,
-        cidr=cidr,
-        hostname=hostname,
-        sni=sni,
-        port=port,
-        port_start=port_start,
-        port_end=port_end,
-        protocol=protocol,
+    return _with_wrapper(
+        target_profile=_build_target_profile(
+            target=target,
+            host=host,
+            cidr=cidr,
+            hostname=hostname,
+            sni=sni,
+            port=port,
+            port_start=port_start,
+            port_end=port_end,
+            protocol=protocol,
+        )
     )
-    return _with_wrapper(target_profile=target_profile)
 
 
 def profile(

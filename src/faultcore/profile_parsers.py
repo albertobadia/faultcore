@@ -24,7 +24,7 @@ _RATE_SUFFIX_MULTIPLIERS = {
 
 
 def _ensure_range(value: float | int, minimum: float | int, maximum: float | int, error_message: str) -> None:
-    if value < minimum or value > maximum:
+    if not minimum <= value <= maximum:
         raise ValueError(error_message)
 
 
@@ -42,9 +42,7 @@ def _as_non_negative_int(value: int | float, error_message: str) -> int:
 
 
 def _pad_addr16(addr: list[int]) -> list[int]:
-    if len(addr) >= 16:
-        return addr
-    return addr + [0] * (16 - len(addr))
+    return addr if len(addr) >= 16 else addr + [0] * (16 - len(addr))
 
 
 def _set_port_range(profile: dict[str, object], port_start: int | None, port_end: int | None) -> None:
@@ -54,7 +52,11 @@ def _set_port_range(profile: dict[str, object], port_start: int | None, port_end
 
 
 def _seconds_to_ns(value: int | float) -> int:
-    return int(float(value) * _NS_PER_SECOND)
+    return int(value * _NS_PER_SECOND)
+
+
+def _rate_to_bps(value: float | int, multiplier: int) -> int:
+    return int(_as_non_negative_float(float(value), "rate must be >= 0") * multiplier)
 
 
 def _validate_port_bounds(value: int, field_name: str) -> None:
@@ -113,15 +115,14 @@ def _add_positive_limit(
 
 def parse_rate(rate: str | int | float) -> int:
     if isinstance(rate, (int, float)):
-        return int(_as_non_negative_float(float(rate), "rate must be >= 0") * 1_000_000)
+        return _rate_to_bps(rate, 1_000_000)
 
     normalized_rate = rate.strip().lower()
     for suffix, multiplier in _RATE_SUFFIX_MULTIPLIERS.items():
         if normalized_rate.endswith(suffix):
-            numeric = _as_non_negative_float(float(normalized_rate[: -len(suffix)]), "rate must be >= 0")
-            return int(numeric * multiplier)
+            return _rate_to_bps(normalized_rate[: -len(suffix)], multiplier)
 
-    return int(_as_non_negative_float(float(normalized_rate), "rate must be >= 0") * 1_000_000)
+    return _rate_to_bps(normalized_rate, 1_000_000)
 
 
 def parse_packet_loss(loss: str | int | float) -> int:

@@ -1,6 +1,4 @@
 #!/bin/bash
-# Build script for faultcore
-# Builds the Python package and optionally the interceptor
 
 set -e
 

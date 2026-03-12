@@ -174,11 +174,8 @@ impl ChaosEngine {
     }
 
     pub fn metrics_snapshot(&self) -> [(LayerStage, DecisionCounters); 7] {
-        let order = self.stage_order();
-        std::array::from_fn(|i| {
-            let stage = order[i];
-            (stage, self.metrics[i].snapshot())
-        })
+        let stage_order = self.stage_order();
+        std::array::from_fn(|idx| (stage_order[idx], self.metrics[idx].snapshot()))
     }
 
     pub fn reset_metrics(&self) {
@@ -288,13 +285,14 @@ impl ChaosEngine {
             Direction::Uplink => config.effective_for_send(),
             Direction::Downlink => config.effective_for_recv(),
         };
-        if matches!(direction, Direction::Uplink) {
-            let decision = self.l1.duplicate_decision(&effective);
-            self.metrics[Self::stage_index(LayerStage::L1)].record_decision(&decision);
-            record_fault_observability_decision(&decision);
-            decision
-        } else {
-            LayerDecision::Continue
+        match direction {
+            Direction::Uplink => {
+                let decision = self.l1.duplicate_decision(&effective);
+                self.metrics[Self::stage_index(LayerStage::L1)].record_decision(&decision);
+                record_fault_observability_decision(&decision);
+                decision
+            }
+            Direction::Downlink => LayerDecision::Continue,
         }
     }
 

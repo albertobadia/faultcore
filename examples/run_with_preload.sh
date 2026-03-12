@@ -1,8 +1,4 @@
 #!/bin/bash
-#
-# Run faultcore examples with LD_PRELOAD interceptor
-# Requires the interceptor to be built first
-#
 
 set -e
 

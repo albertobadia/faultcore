@@ -125,10 +125,8 @@ def _build_target_profiles(targets: list[str | dict[str, Any]]) -> list[dict[str
     if not all(isinstance(entry, (str, dict)) for entry in targets):
         raise ValueError("each targets entry must be a string or mapping")
 
-    built_rules = [_build_target_rule(entry, include_priority=True) for entry in targets]
-
     return sorted(
-        built_rules,
+        (_build_target_rule(entry, include_priority=True) for entry in targets),
         key=lambda profile: profile.get("priority", 100),
         reverse=True,
     )
