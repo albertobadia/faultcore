@@ -11,6 +11,41 @@ STRESS_WORKERS="${STRESS_WORKERS:-24}"
 STRESS_MAX_ERROR_RATE="${STRESS_MAX_ERROR_RATE:-0.02}"
 STRESS_MAX_RSS_DELTA_KB="${STRESS_MAX_RSS_DELTA_KB:-131072}"
 
+require_cmd() {
+    local cmd="$1"
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "Error: required command '$cmd' was not found."
+        exit 1
+    fi
+}
+
+require_path() {
+    local path="$1"
+    if [ ! -e "$path" ]; then
+        echo "Error: required path '$path' was not found."
+        exit 1
+    fi
+}
+
+platform_tag() {
+    local system
+    local machine
+    system="$(uname -s)"
+    machine="$(uname -m)"
+
+    case "${system}:${machine}" in
+    Linux:x86_64 | Linux:amd64)
+        echo "linux-x86_64"
+        ;;
+    Linux:aarch64 | Linux:arm64)
+        echo "linux-aarch64"
+        ;;
+    *)
+        echo "unsupported"
+        ;;
+    esac
+}
+
 cleanup() {
     echo "Cleaning up servers..."
     if [ -n "$ECHO_PID" ]; then
@@ -38,7 +73,16 @@ wait_for_port() {
     return 1
 }
 
-INTERCEPTOR="$PWD/faultcore_interceptor/target/release/libfaultcore_interceptor.so"
+require_cmd cargo
+require_path "$PYTHON_BIN"
+
+PLATFORM_TAG="$(platform_tag)"
+if [ "$PLATFORM_TAG" = "unsupported" ]; then
+    echo "Error: unsupported platform $(uname -s)/$(uname -m) for tests_long.sh"
+    exit 1
+fi
+
+INTERCEPTOR="$PWD/src/faultcore/_native/$PLATFORM_TAG/libfaultcore_interceptor.so"
 if [ ! -f "$INTERCEPTOR" ]; then
     echo "Error: interceptor not found at $INTERCEPTOR"
     echo "Build it first with: sh build.sh"
@@ -46,6 +90,7 @@ if [ ! -f "$INTERCEPTOR" ]; then
 fi
 
 echo "Using interceptor: $INTERCEPTOR"
+PRELOAD_ENV="${INTERCEPTOR}${LD_PRELOAD:+ ${LD_PRELOAD}}"
 
 export ECHO_SERVER_HOST=127.0.0.1
 export ECHO_SERVER_PORT=9000
@@ -66,7 +111,7 @@ wait_for_port "$ECHO_SERVER_HOST" "$ECHO_SERVER_PORT"
 wait_for_port "$HTTP_SERVER_HOST" "$HTTP_SERVER_PORT"
 
 echo "Running long stress integration..."
-LD_PRELOAD="$INTERCEPTOR" "$PYTHON_BIN" tests/integration/test_stress.py \
+LD_PRELOAD="$PRELOAD_ENV" "$PYTHON_BIN" tests/integration/test_stress.py \
     --host "$ECHO_SERVER_HOST" \
     --port "$ECHO_SERVER_PORT" \
     --mode long \

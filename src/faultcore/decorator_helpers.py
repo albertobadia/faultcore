@@ -1,12 +1,87 @@
 from typing import Any
 
+_SCALAR_WRITERS = (
+    ("_seed", "write_policy_seed"),
+    ("_latency_ms", "write_latency"),
+    ("_jitter_ms", "write_jitter"),
+    ("_packet_loss_ppm", "write_packet_loss"),
+    ("_burst_loss_len", "write_burst_loss"),
+    ("_bandwidth_bps", "write_bandwidth"),
+)
+
+_DIRECTIONAL_FIELDS = (
+    "latency_ms",
+    "jitter_ms",
+    "packet_loss_ppm",
+    "burst_loss_len",
+    "bandwidth_bps",
+)
+
+_TARGET_OPTIONAL_FIELDS = (
+    "port_start",
+    "port_end",
+    "hostname",
+    "sni",
+)
+
+_PROFILE_WRITERS: tuple[tuple[str, str, dict[str, Any]], ...] = (
+    (
+        "_correlated_loss_profile",
+        "write_correlated_loss",
+        {
+            "enabled": 0,
+            "p_good_to_bad_ppm": 0,
+            "p_bad_to_good_ppm": 0,
+            "loss_good_ppm": 0,
+            "loss_bad_ppm": 0,
+        },
+    ),
+    (
+        "_connection_error_profile",
+        "write_connection_error",
+        {
+            "kind": 0,
+            "prob_ppm": 0,
+        },
+    ),
+    (
+        "_half_open_profile",
+        "write_half_open",
+        {
+            "after_bytes": 0,
+            "err_kind": 0,
+        },
+    ),
+    (
+        "_packet_duplicate_profile",
+        "write_packet_duplicate",
+        {
+            "prob_ppm": 0,
+            "max_extra": 1,
+        },
+    ),
+    (
+        "_packet_reorder_profile",
+        "write_packet_reorder",
+        {
+            "prob_ppm": 0,
+            "max_delay_ns": 0,
+            "window": 1,
+        },
+    ),
+    (
+        "_dns_profile",
+        "write_dns",
+        {
+            "delay_ms": None,
+            "timeout_ms": None,
+            "nxdomain_ppm": None,
+        },
+    ),
+)
+
 
 def _target_write_kwargs(target_profile: dict[str, Any]) -> dict[str, Any]:
-    port_start = target_profile.get("port_start")
-    port_end = target_profile.get("port_end")
-    hostname = target_profile.get("hostname")
-    sni = target_profile.get("sni")
-
     kwargs: dict[str, Any] = {
         "enabled": bool(target_profile.get("enabled", 0)),
         "kind": target_profile.get("kind", 0),
@@ -17,46 +92,34 @@ def _target_write_kwargs(target_profile: dict[str, Any]) -> dict[str, Any]:
         "address_family": target_profile.get("address_family", 0),
         "addr": target_profile.get("addr"),
     }
-    if port_start is not None:
-        kwargs["port_start"] = port_start
-    if port_end is not None:
-        kwargs["port_end"] = port_end
-    if hostname is not None:
-        kwargs["hostname"] = hostname
-    if sni is not None:
-        kwargs["sni"] = sni
+    for field in _TARGET_OPTIONAL_FIELDS:
+        value = target_profile.get(field)
+        if value is not None:
+            kwargs[field] = value
     return kwargs
 
 
 def _write_direction_profile(tid: int, write_method: Any, profile: dict[str, Any]) -> None:
-    write_method(
-        tid,
-        latency_ms=profile.get("latency_ms"),
-        jitter_ms=profile.get("jitter_ms"),
-        packet_loss_ppm=profile.get("packet_loss_ppm"),
-        burst_loss_len=profile.get("burst_loss_len"),
-        bandwidth_bps=profile.get("bandwidth_bps"),
-    )
+    write_method(tid, **{field: profile.get(field) for field in _DIRECTIONAL_FIELDS})
+
+
+def _write_profile(shm: Any, tid: int, profile: dict[str, Any] | None, writer_name: str, **defaults: Any) -> None:
+    if not profile:
+        return
+
+    write_kwargs = {field: profile.get(field, default) for field, default in defaults.items()}
+    getattr(shm, writer_name)(tid, **write_kwargs)
+
+
+def _write_scalar_profiles(shm: Any, tid: int, wrapper: Any) -> None:
+    for field_name, writer_name in _SCALAR_WRITERS:
+        value = getattr(wrapper, field_name)
+        if value is not None:
+            getattr(shm, writer_name)(tid, value)
 
 
 def apply_fault_profiles(shm: Any, tid: int, wrapper: Any, *, started_monotonic_ns: int) -> None:
-    if wrapper._seed is not None:
-        shm.write_policy_seed(tid, wrapper._seed)
-
-    if wrapper._latency_ms is not None:
-        shm.write_latency(tid, wrapper._latency_ms)
-
-    if wrapper._jitter_ms is not None:
-        shm.write_jitter(tid, wrapper._jitter_ms)
-
-    if wrapper._packet_loss_ppm is not None:
-        shm.write_packet_loss(tid, wrapper._packet_loss_ppm)
-
-    if wrapper._burst_loss_len is not None:
-        shm.write_burst_loss(tid, wrapper._burst_loss_len)
-
-    if wrapper._bandwidth_bps is not None:
-        shm.write_bandwidth(tid, wrapper._bandwidth_bps)
+    _write_scalar_profiles(shm, tid, wrapper)
 
     if wrapper._timeouts:
         connect_ms, recv_ms = wrapper._timeouts
@@ -70,58 +133,8 @@ def apply_fault_profiles(shm: Any, tid: int, wrapper: Any, *, started_monotonic_
     if downlink_profile:
         _write_direction_profile(tid, shm.write_downlink, downlink_profile)
 
-    correlated_loss_profile = wrapper._correlated_loss_profile
-    if correlated_loss_profile:
-        shm.write_correlated_loss(
-            tid,
-            enabled=bool(correlated_loss_profile.get("enabled", 0)),
-            p_good_to_bad_ppm=correlated_loss_profile.get("p_good_to_bad_ppm", 0),
-            p_bad_to_good_ppm=correlated_loss_profile.get("p_bad_to_good_ppm", 0),
-            loss_good_ppm=correlated_loss_profile.get("loss_good_ppm", 0),
-            loss_bad_ppm=correlated_loss_profile.get("loss_bad_ppm", 0),
-        )
-
-    connection_error_profile = wrapper._connection_error_profile
-    if connection_error_profile:
-        shm.write_connection_error(
-            tid,
-            kind=connection_error_profile.get("kind", 0),
-            prob_ppm=connection_error_profile.get("prob_ppm", 0),
-        )
-
-    half_open_profile = wrapper._half_open_profile
-    if half_open_profile:
-        shm.write_half_open(
-            tid,
-            after_bytes=half_open_profile.get("after_bytes", 0),
-            err_kind=half_open_profile.get("err_kind", 0),
-        )
-
-    packet_duplicate_profile = wrapper._packet_duplicate_profile
-    if packet_duplicate_profile:
-        shm.write_packet_duplicate(
-            tid,
-            prob_ppm=packet_duplicate_profile.get("prob_ppm", 0),
-            max_extra=packet_duplicate_profile.get("max_extra", 1),
-        )
-
-    packet_reorder_profile = wrapper._packet_reorder_profile
-    if packet_reorder_profile:
-        shm.write_packet_reorder(
-            tid,
-            prob_ppm=packet_reorder_profile.get("prob_ppm", 0),
-            max_delay_ns=packet_reorder_profile.get("max_delay_ns", 0),
-            window=packet_reorder_profile.get("window", 1),
-        )
-
-    dns_profile = wrapper._dns_profile
-    if dns_profile:
-        shm.write_dns(
-            tid,
-            delay_ms=dns_profile.get("delay_ms"),
-            timeout_ms=dns_profile.get("timeout_ms"),
-            nxdomain_ppm=dns_profile.get("nxdomain_ppm"),
-        )
+    for profile_attr, writer_name, defaults in _PROFILE_WRITERS:
+        _write_profile(shm, tid, getattr(wrapper, profile_attr), writer_name, **defaults)
 
     if wrapper._target_profiles:
         shm.write_targets(tid, wrapper._target_profiles)

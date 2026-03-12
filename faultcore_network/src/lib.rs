@@ -158,7 +158,7 @@ pub struct Endpoint {
     pub protocol: u64,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Copy, Default)]
 pub struct Config {
     pub latency_ns: u64,
     pub jitter_ns: u64,
@@ -256,7 +256,7 @@ impl Config {
     }
 
     pub fn effective_for_send(&self) -> Self {
-        let mut out = self.clone();
+        let mut out = *self;
         if self.uplink_latency_ns > 0 {
             out.latency_ns = self.uplink_latency_ns;
         }
@@ -276,7 +276,7 @@ impl Config {
     }
 
     pub fn effective_for_recv(&self) -> Self {
-        let mut out = self.clone();
+        let mut out = *self;
         if self.downlink_latency_ns > 0 {
             out.latency_ns = self.downlink_latency_ns;
         }
@@ -300,7 +300,7 @@ impl Config {
         endpoint: Option<Endpoint>,
         now_monotonic_ns: u64,
     ) -> Option<Self> {
-        let mut out = self.clone();
+        let mut out = *self;
         if !out.matches_target(endpoint) {
             return None;
         }

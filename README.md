@@ -51,6 +51,8 @@ def network_operation():
 | [`docs/testing_and_examples.md`](docs/testing_and_examples.md) | Validation path diagram (`lint -> build -> tests.sh -> tests_long.sh`) and execution guidance |
 | [`docs/shm_protocol.md`](docs/shm_protocol.md) | SHM region layout, consistency sequence, and compatibility update flow |
 | [`docs/operations_tuning.md`](docs/operations_tuning.md) | Baseline/tuning/stress operational flowchart for long-running scenarios |
+| [`docs/binary_compatibility.md`](docs/binary_compatibility.md) | Native artifact policy (platform tags + glibc/manylinux objective) |
+| [`docs/release_local_checklist.md`](docs/release_local_checklist.md) | Reproducible local binary release checklist |
 
 ## Mermaid Conventions
 

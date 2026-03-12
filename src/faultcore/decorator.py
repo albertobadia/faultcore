@@ -145,11 +145,20 @@ def _policy_to_wrapper_kwargs(policy: dict[str, Any]) -> dict[str, Any]:
 
 
 def _resolve_runtime_policy_name(policy_name: str) -> str:
-    return policy_name if policy_name != "auto" else (get_thread_policy() or "")
+    if policy_name != "auto":
+        return policy_name
+    thread_policy = get_thread_policy()
+    return thread_policy or ""
 
 
 def _with_dns_profile(**dns_kwargs: int | str | float) -> Callable[[Callable[..., Any]], "FaultWrapper"]:
     return _with_wrapper(dns_profile=_build_dns_profile(**dns_kwargs))
+
+
+def _require_non_negative(value: int, *, field_name: str) -> int:
+    if value < 0:
+        raise ValueError(f"{field_name} must be >= 0")
+    return value
 
 
 class FaultWrapper:
@@ -215,11 +224,11 @@ class FaultWrapper:
 
             result = self._func(*args, **kwargs)
 
-            if inspect.isawaitable(result):
-                async_handoff = True
-                return self._run_async(result, shm, tid)
+            if not inspect.isawaitable(result):
+                return result
 
-            return result
+            async_handoff = True
+            return self._run_async(result, shm, tid)
         finally:
             if not async_handoff:
                 shm.clear(tid)
@@ -260,27 +269,19 @@ class FaultWrapper:
 
 
 def latency(latency_ms: int) -> Callable[[Callable[..., Any]], FaultWrapper]:
-    if latency_ms < 0:
-        raise ValueError("latency must be >= 0")
-    return _with_wrapper(latency_ms=latency_ms)
+    return _with_wrapper(latency_ms=_require_non_negative(latency_ms, field_name="latency"))
 
 
 def jitter(jitter_ms: int) -> Callable[[Callable[..., Any]], FaultWrapper]:
-    if jitter_ms < 0:
-        raise ValueError("jitter must be >= 0")
-    return _with_wrapper(jitter_ms=jitter_ms)
+    return _with_wrapper(jitter_ms=_require_non_negative(jitter_ms, field_name="jitter"))
 
 
 def connect_timeout(timeout_ms: int) -> Callable[[Callable[..., Any]], FaultWrapper]:
-    if timeout_ms < 0:
-        raise ValueError("connect_timeout must be >= 0")
-    return _with_wrapper(timeouts=(timeout_ms, 0))
+    return _with_wrapper(timeouts=(_require_non_negative(timeout_ms, field_name="connect_timeout"), 0))
 
 
 def recv_timeout(timeout_ms: int) -> Callable[[Callable[..., Any]], FaultWrapper]:
-    if timeout_ms < 0:
-        raise ValueError("recv_timeout must be >= 0")
-    return _with_wrapper(timeouts=(0, timeout_ms))
+    return _with_wrapper(timeouts=(0, _require_non_negative(timeout_ms, field_name="recv_timeout")))
 
 
 def rate_limit(rate: str | int) -> Callable[[Callable[..., Any]], FaultWrapper]:
@@ -292,9 +293,7 @@ def packet_loss(loss: str | int | float) -> Callable[[Callable[..., Any]], Fault
 
 
 def burst_loss(length: int) -> Callable[[Callable[..., Any]], FaultWrapper]:
-    if length < 0:
-        raise ValueError("burst_loss length must be >= 0")
-    return _with_wrapper(burst_loss_len=int(length))
+    return _with_wrapper(burst_loss_len=_require_non_negative(int(length), field_name="burst_loss length"))
 
 
 def uplink(
@@ -483,9 +482,11 @@ def fault(policy_name: str = "auto") -> Callable[[Callable[..., Any]], FaultWrap
             name = _resolve_runtime_policy_name(policy_name)
             if not name:
                 return func(*args, **kwargs)
+
             policy = get_policy_for_apply(name)
             if policy is None:
                 return func(*args, **kwargs)
+
             wrapped = FaultWrapper(func, **_policy_to_wrapper_kwargs(policy))
             return wrapped(*args, **kwargs)
 

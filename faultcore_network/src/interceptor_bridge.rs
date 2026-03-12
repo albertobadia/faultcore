@@ -1223,7 +1223,7 @@ mod tests {
        let mut base_cfg = cfg_with_latency(500);
        base_cfg.target_enabled = 2;
        base_cfg.ruleset_generation = 22;
-       let fallback_cfg = base_cfg.clone();
+       let fallback_cfg = base_cfg;
        let tid_slot = 9usize;
 
        let mut rules = [TargetRule::default(); crate::MAX_TARGET_RULES_PER_TID];
@@ -1262,8 +1262,8 @@ mod tests {
            Some(endpoint),
            SemanticContext::default(),
            || Some(rules),
-           || Some(fallback_cfg.clone()),
-       )
+           || Some(fallback_cfg),
+        )
        .expect("rule must match");
        assert_eq!(selected_cfg.target_enabled, 0);
 

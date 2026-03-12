@@ -39,7 +39,7 @@ Diagram focus: top-level SHM memory regions consumed by writer/runtime.
 | Field | Offset | Size | Type |
 |---|---:|---:|---|
 | `magic` | 0 | 4 | `u32` |
-| `version` | 4 | 8 | `u64` (legacy, reservado; no usado para consistencia) |
+| `version` | 4 | 8 | `u64` (legacy, reserved; unused for consistency) |
 | `latency_ns` | 12 | 8 | `u64` |
 | `jitter_ns` | 20 | 8 | `u64` |
 | `packet_loss_ppm` | 28 | 8 | `u64` |
@@ -76,7 +76,7 @@ Diagram focus: top-level SHM memory regions consumed by writer/runtime.
 | `dns_nxdomain_ppm` | 276 | 8 | `u64` |
 | `target_enabled` | 284 | 8 | `u64` |
 | `target_kind` | 292 | 8 | `u64` |
-| `target_ipv4` | 300 | 8 | `u64` (legacy de compat; matching operativo usa `target_address_family` + `target_addr`) |
+| `target_ipv4` | 300 | 8 | `u64` (legacy compatibility; operational matching uses `target_address_family` + `target_addr`) |
 | `target_prefix_len` | 308 | 8 | `u64` |
 | `target_port` | 316 | 8 | `u64` |
 | `target_protocol` | 324 | 8 | `u64` |
@@ -89,8 +89,8 @@ Diagram focus: top-level SHM memory regions consumed by writer/runtime.
 | `ruleset_generation` | 376 | 8 | `u64` |
 | `target_address_family` | 384 | 8 | `u64` |
 | `target_addr` | 392 | 16 | `[u8;16]` |
-| `target_hostname` | 408 | 32 | `[u8;32]` (tamaño final del ciclo vNext) |
-| `target_sni` | 440 | 32 | `[u8;32]` (tamaño final del ciclo vNext) |
+| `target_hostname` | 408 | 32 | `[u8;32]` (final size for the vNext cycle) |
+| `target_sni` | 440 | 32 | `[u8;32]` (final size for the vNext cycle) |
 | `session_budget_enabled` | 472 | 8 | `u64` (`0/1`) |
 | `session_max_bytes_tx` | 480 | 8 | `u64` (`0` deshabilitado) |
 | `session_max_bytes_rx` | 488 | 8 | `u64` (`0` deshabilitado) |
@@ -123,8 +123,8 @@ Constants:
 | `reserved` | `u64` | reserved |
 | `address_family` | `u64` | `0=unset`, `1=ipv4`, `2=ipv6` |
 | `addr` | `[u8;16]` | unified IP bytes (network order) |
-| `hostname` | `[u8;32]` | normalized hostname buffer (NUL padded, tamaño final vNext) |
-| `sni` | `[u8;32]` | normalized SNI buffer (NUL padded, tamaño final vNext) |
+| `hostname` | `[u8;32]` | normalized hostname buffer (NUL padded, final vNext size) |
+| `sni` | `[u8;32]` | normalized SNI buffer (NUL padded, final vNext size) |
 
 Selection semantics for `targets[]`:
 - consider first `target_enabled` rules;

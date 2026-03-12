@@ -194,9 +194,10 @@ def _coerce_timeout_pair(
     recv_timeout_ms: int | None,
 ) -> tuple[int, int]:
     error_message = "connect_timeout_ms and recv_timeout_ms must be >= 0"
-    connect_ms = _coerce_non_negative_int(connect_timeout_ms, error_message) if connect_timeout_ms is not None else 0
-    recv_ms = _coerce_non_negative_int(recv_timeout_ms, error_message) if recv_timeout_ms is not None else 0
-    return connect_ms, recv_ms
+    return (
+        _coerce_non_negative_int(connect_timeout_ms, error_message) if connect_timeout_ms is not None else 0,
+        _coerce_non_negative_int(recv_timeout_ms, error_message) if recv_timeout_ms is not None else 0,
+    )
 
 
 def get_policy_for_apply(name: str) -> dict[str, Any] | None:
@@ -258,37 +259,37 @@ def register_policy(
     if downlink is not None:
         policy["downlink_profile"] = _build_direction_policy(_require_mapping(downlink, "downlink"))
     if correlated_loss is not None:
-        correlated_loss_mapping = _require_mapping(correlated_loss, "correlated_loss")
+        correlated_loss_config = _require_mapping(correlated_loss, "correlated_loss")
         policy["correlated_loss_profile"] = build_correlated_loss_profile(
-            p_good_to_bad=correlated_loss_mapping.get("p_good_to_bad", 0),
-            p_bad_to_good=correlated_loss_mapping.get("p_bad_to_good", 0),
-            loss_good=correlated_loss_mapping.get("loss_good", 0),
-            loss_bad=correlated_loss_mapping.get("loss_bad", 0),
+            p_good_to_bad=correlated_loss_config.get("p_good_to_bad", 0),
+            p_bad_to_good=correlated_loss_config.get("p_bad_to_good", 0),
+            loss_good=correlated_loss_config.get("loss_good", 0),
+            loss_bad=correlated_loss_config.get("loss_bad", 0),
         )
     if connection_error is not None:
-        connection_error_mapping = _require_mapping(connection_error, "connection_error")
+        connection_error_config = _require_mapping(connection_error, "connection_error")
         policy["connection_error_profile"] = build_connection_error_profile(
-            kind=connection_error_mapping.get("kind", "reset"),
-            prob=connection_error_mapping.get("prob", "100%"),
+            kind=connection_error_config.get("kind", "reset"),
+            prob=connection_error_config.get("prob", "100%"),
         )
     if half_open is not None:
-        half_open_mapping = _require_mapping(half_open, "half_open")
+        half_open_config = _require_mapping(half_open, "half_open")
         policy["half_open_profile"] = build_half_open_profile(
-            after_bytes=half_open_mapping.get("after_bytes", 0),
-            error=half_open_mapping.get("error", "reset"),
+            after_bytes=half_open_config.get("after_bytes", 0),
+            error=half_open_config.get("error", "reset"),
         )
     if packet_duplicate is not None:
-        packet_duplicate_mapping = _require_mapping(packet_duplicate, "packet_duplicate")
+        packet_duplicate_config = _require_mapping(packet_duplicate, "packet_duplicate")
         policy["packet_duplicate_profile"] = build_packet_duplicate_profile(
-            prob=packet_duplicate_mapping.get("prob", "100%"),
-            max_extra=packet_duplicate_mapping.get("max_extra", 1),
+            prob=packet_duplicate_config.get("prob", "100%"),
+            max_extra=packet_duplicate_config.get("max_extra", 1),
         )
     if packet_reorder is not None:
-        packet_reorder_mapping = _require_mapping(packet_reorder, "packet_reorder")
+        packet_reorder_config = _require_mapping(packet_reorder, "packet_reorder")
         policy["packet_reorder_profile"] = build_packet_reorder_profile(
-            prob=packet_reorder_mapping.get("prob", "100%"),
-            max_delay_ms=packet_reorder_mapping.get("max_delay_ms", 0),
-            window=packet_reorder_mapping.get("window", 1),
+            prob=packet_reorder_config.get("prob", "100%"),
+            max_delay_ms=packet_reorder_config.get("max_delay_ms", 0),
+            window=packet_reorder_config.get("window", 1),
         )
     dns_profile = build_dns_profile(
         delay_ms=dns_delay_ms,
@@ -304,25 +305,25 @@ def register_policy(
             raise ValueError("targets must be a non-empty list when provided")
         policy["target_profiles"] = _build_target_profiles(targets)
     if schedule is not None:
-        schedule_mapping = _require_mapping(schedule, "schedule")
+        schedule_config = _require_mapping(schedule, "schedule")
         policy["schedule_profile"] = build_schedule_profile(
-            kind=schedule_mapping.get("kind", ""),
-            every_s=schedule_mapping.get("every_s"),
-            duration_s=schedule_mapping.get("duration_s"),
-            on_s=schedule_mapping.get("on_s"),
-            off_s=schedule_mapping.get("off_s"),
-            ramp_s=schedule_mapping.get("ramp_s"),
+            kind=schedule_config.get("kind", ""),
+            every_s=schedule_config.get("every_s"),
+            duration_s=schedule_config.get("duration_s"),
+            on_s=schedule_config.get("on_s"),
+            off_s=schedule_config.get("off_s"),
+            ramp_s=schedule_config.get("ramp_s"),
         )
     if session_budget is not None:
-        session_budget_mapping = _require_mapping(session_budget, "session_budget")
+        session_budget_config = _require_mapping(session_budget, "session_budget")
         policy["session_budget_profile"] = build_session_budget_profile(
-            max_bytes_tx=session_budget_mapping.get("max_bytes_tx"),
-            max_bytes_rx=session_budget_mapping.get("max_bytes_rx"),
-            max_ops=session_budget_mapping.get("max_ops"),
-            max_duration_ms=session_budget_mapping.get("max_duration_ms"),
-            action=session_budget_mapping.get("action", "drop"),
-            budget_timeout_ms=session_budget_mapping.get("budget_timeout_ms"),
-            error=session_budget_mapping.get("error"),
+            max_bytes_tx=session_budget_config.get("max_bytes_tx"),
+            max_bytes_rx=session_budget_config.get("max_bytes_rx"),
+            max_ops=session_budget_config.get("max_ops"),
+            max_duration_ms=session_budget_config.get("max_duration_ms"),
+            action=session_budget_config.get("action", "drop"),
+            budget_timeout_ms=session_budget_config.get("budget_timeout_ms"),
+            error=session_budget_config.get("error"),
         )
     _validate_target_observability(policy)
     with _POLICY_LOCK:

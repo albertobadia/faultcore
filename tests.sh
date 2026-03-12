@@ -2,18 +2,44 @@
 
 set -euo pipefail
 
-cd faultcore_interceptor
-cargo test
-cargo build --release
-
-cd ../faultcore_network
-cargo test
-
-cd ..
-
 ECHO_PID=""
 HTTP_PID=""
 PYTHON_BIN=".venv/bin/python"
+
+require_cmd() {
+    local cmd="$1"
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "Error: required command '$cmd' was not found."
+        exit 1
+    fi
+}
+
+require_path() {
+    local path="$1"
+    if [ ! -e "$path" ]; then
+        echo "Error: required path '$path' was not found."
+        exit 1
+    fi
+}
+
+platform_tag() {
+    local system
+    local machine
+    system="$(uname -s)"
+    machine="$(uname -m)"
+
+    case "${system}:${machine}" in
+    Linux:x86_64 | Linux:amd64)
+        echo "linux-x86_64"
+        ;;
+    Linux:aarch64 | Linux:arm64)
+        echo "linux-aarch64"
+        ;;
+    *)
+        echo "unsupported"
+        ;;
+    esac
+}
 
 cleanup() {
     echo "Cleaning up servers..."
@@ -42,21 +68,32 @@ wait_for_port() {
     return 1
 }
 
+require_cmd cargo
+require_path "$PYTHON_BIN"
+
+echo "Running Rust tests..."
+cargo test --manifest-path faultcore_interceptor/Cargo.toml
+cargo test --manifest-path faultcore_network/Cargo.toml
+
 INTERCEPTOR=""
-case "$(uname)" in
-    Linux)
-        INTERCEPTOR="$PWD/faultcore_interceptor/target/release/libfaultcore_interceptor.so"
-        if [ -f "$INTERCEPTOR" ]; then
-            export LD_PRELOAD="$INTERCEPTOR"
-            echo "Using interceptor: $INTERCEPTOR"
-        else
-            echo "Warning: Interceptor not found at $INTERCEPTOR"
-        fi
-        ;;
-    *)
-        echo "Unknown OS, skipping interceptor"
-        ;;
-esac
+PRELOAD_ENV=""
+if [ "$(uname -s)" = "Linux" ]; then
+    PLATFORM_TAG="$(platform_tag)"
+    if [ "$PLATFORM_TAG" = "unsupported" ]; then
+        echo "Error: unsupported Linux architecture '$(uname -m)'."
+        exit 1
+    fi
+    INTERCEPTOR="$PWD/src/faultcore/_native/$PLATFORM_TAG/libfaultcore_interceptor.so"
+    if [ ! -f "$INTERCEPTOR" ]; then
+        echo "Error: interceptor not found at $INTERCEPTOR"
+        echo "Run 'sh build.sh' before running tests."
+        exit 1
+    fi
+    PRELOAD_ENV="${INTERCEPTOR}${LD_PRELOAD:+ ${LD_PRELOAD}}"
+    echo "Using interceptor: $INTERCEPTOR"
+else
+    echo "Non-Linux host detected, skipping LD_PRELOAD setup."
+fi
 
 echo "Starting local test servers..."
 export ECHO_SERVER_HOST=127.0.0.1
@@ -76,16 +113,23 @@ echo "Waiting for servers to start..."
 wait_for_port "$ECHO_SERVER_HOST" "$ECHO_SERVER_PORT"
 wait_for_port "$HTTP_SERVER_HOST" "$HTTP_SERVER_PORT"
 
-PYTEST="$PYTHON_BIN -m pytest"
+run_with_optional_preload() {
+    if [ -n "$PRELOAD_ENV" ]; then
+        LD_PRELOAD="$PRELOAD_ENV" "$@"
+    else
+        "$@"
+    fi
+}
+
 echo "Running unit tests with interceptor..."
-LD_PRELOAD="$INTERCEPTOR" $PYTEST tests/unit -v -s
+run_with_optional_preload "$PYTHON_BIN" -m pytest tests/unit -v -s
 
 echo "Running integration CLI scripts with interceptor..."
 run_integration_script() {
     local script="$1"
     shift
     echo "Running integration script: $script $*"
-    LD_PRELOAD="$INTERCEPTOR" "$PYTHON_BIN" "$script" \
+    run_with_optional_preload "$PYTHON_BIN" "$script" \
         --host "$ECHO_SERVER_HOST" \
         --port "$ECHO_SERVER_PORT" \
         "$@"

@@ -9,7 +9,13 @@ For tuning guidance in longer operational runs, see `docs/operations_tuning.md`.
 ./build.sh
 ```
 
-This builds the Python extension and Rust interceptor artifacts used by examples/tests.
+This builds and stages platform-native artifacts in `src/faultcore/_native/<platform-tag>/`
+before producing `dist/*.whl`.
+
+`build.sh` enforces version alignment between:
+- `pyproject.toml` (`project.version`)
+- `faultcore_interceptor/Cargo.toml`
+- `faultcore_network/Cargo.toml`
 
 ## Validation Path
 
@@ -38,6 +44,10 @@ sh tests.sh
 - Rust tests for `faultcore_network`;
 - Python unit tests with interceptor preloaded;
 - integration CLI scripts in `tests/integration/`.
+
+On Linux, `tests.sh` is strict: if
+`src/faultcore/_native/<platform-tag>/libfaultcore_interceptor.so` is missing,
+it exits with error and asks to run `sh build.sh`.
 
 Includes `record/replay` integration coverage via:
 
@@ -115,3 +125,9 @@ Some examples expect local servers:
 
 `rate_limit(rate=...)` configures bandwidth in bps (string units or numeric conversion), not request-per-second quotas.
 Example output text may refer to "rate setting" or throughput effects.
+
+## Lint Modes
+
+`lint.sh` has two modes:
+- `sh lint.sh` (or `sh lint.sh check`): verification only, no file mutations.
+- `sh lint.sh fix`: applies `ruff --fix` + formatter updates.
