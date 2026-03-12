@@ -79,10 +79,18 @@ lazy_static::lazy_static! {
     pub static ref ORIG_SENDTO: SendToFn = unsafe { get_original_fn("sendto") };
     pub static ref ORIG_RECVFROM: RecvFromFn = unsafe { get_original_fn("recvfrom") };
     pub static ref ORIG_GETADDRINFO: GetAddrInfoFn = unsafe { get_original_fn("getaddrinfo") };
-    pub static ref ORIG_SSL_CTRL: Option<SslCtrlFn> = unsafe { get_optional_original_fn("SSL_ctrl") };
-    pub static ref ORIG_SSL_SET_FD: Option<SslSetFdFn> = unsafe { get_optional_original_fn("SSL_set_fd") };
-    pub static ref ORIG_SSL_GET_FD: Option<SslGetFdFn> = unsafe { get_optional_original_fn("SSL_get_fd") };
-    pub static ref ORIG_SSL_FREE: Option<SslFreeFn> = unsafe { get_optional_original_fn("SSL_free") };
+    pub static ref ORIG_SSL_CTRL: Option<SslCtrlFn> = unsafe {
+        get_optional_ssl_original_fn("SSL_ctrl", Some(SSL_ctrl as *const () as *const c_void))
+    };
+    pub static ref ORIG_SSL_SET_FD: Option<SslSetFdFn> = unsafe {
+        get_optional_ssl_original_fn("SSL_set_fd", Some(SSL_set_fd as *const () as *const c_void))
+    };
+    pub static ref ORIG_SSL_GET_FD: Option<SslGetFdFn> = unsafe {
+        get_optional_ssl_original_fn("SSL_get_fd", None)
+    };
+    pub static ref ORIG_SSL_FREE: Option<SslFreeFn> = unsafe {
+        get_optional_ssl_original_fn("SSL_free", Some(SSL_free as *const () as *const c_void))
+    };
     static ref SNI_BY_SSL: Mutex<HashMap<usize, String>> = Mutex::new(HashMap::new());
     static ref FD_BY_SSL: Mutex<HashMap<usize, c_int>> = Mutex::new(HashMap::new());
 }
@@ -96,13 +104,39 @@ unsafe fn get_original_fn<T>(name: &str) -> T {
     unsafe { std::mem::transmute_copy(&fn_ptr) }
 }
 
-unsafe fn get_optional_original_fn<T>(name: &str) -> Option<T> {
-    let symbol_name = std::ffi::CString::new(name).unwrap();
-    let fn_ptr = unsafe { libc::dlsym(libc::RTLD_NEXT, symbol_name.as_ptr()) };
-    if fn_ptr.is_null() {
-        return None;
+fn is_excluded_symbol(symbol: *mut c_void, exclude: Option<*const c_void>) -> bool {
+    match exclude {
+        Some(excluded) => std::ptr::eq(symbol.cast_const(), excluded),
+        None => false,
     }
-    Some(unsafe { std::mem::transmute_copy(&fn_ptr) })
+}
+
+unsafe fn get_optional_ssl_original_fn<T>(
+    name: &str,
+    exclude_symbol: Option<*const c_void>,
+) -> Option<T> {
+    let symbol_name = std::ffi::CString::new(name).unwrap();
+
+    let next_ptr = unsafe { libc::dlsym(libc::RTLD_NEXT, symbol_name.as_ptr()) };
+    if !next_ptr.is_null() && !is_excluded_symbol(next_ptr, exclude_symbol) {
+        return Some(unsafe { std::mem::transmute_copy(&next_ptr) });
+    }
+
+    // Some Python/OpenSSL builds under LD_PRELOAD expose SSL_* symbols only
+    // through explicit libssl handles, not RTLD_NEXT.
+    for lib_name in [c"libssl.so.3", c"libssl.so.1.1", c"libssl.so"] {
+        let handle = unsafe { libc::dlopen(lib_name.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+        if handle.is_null() {
+            continue;
+        }
+        // Keep libssl handles open because function pointers are cached globally.
+        let ptr = unsafe { libc::dlsym(handle, symbol_name.as_ptr()) };
+        if !ptr.is_null() && !is_excluded_symbol(ptr, exclude_symbol) {
+            return Some(unsafe { std::mem::transmute_copy(&ptr) });
+        }
+    }
+
+    None
 }
 
 fn record_stream_bytes(fd: c_int, bytes: u64) {

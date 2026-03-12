@@ -17,6 +17,11 @@ _DIRECTIONAL_FIELDS = (
     "bandwidth_bps",
 )
 
+_DIRECTIONAL_WRITERS = (
+    ("_uplink_profile", "write_uplink"),
+    ("_downlink_profile", "write_downlink"),
+)
+
 _TARGET_OPTIONAL_FIELDS = (
     "port_start",
     "port_end",
@@ -92,10 +97,12 @@ def _target_write_kwargs(target_profile: dict[str, Any]) -> dict[str, Any]:
         "address_family": target_profile.get("address_family", 0),
         "addr": target_profile.get("addr"),
     }
-    for field in _TARGET_OPTIONAL_FIELDS:
-        value = target_profile.get(field)
-        if value is not None:
-            kwargs[field] = value
+    optional_kwargs = {
+        field: value
+        for field in _TARGET_OPTIONAL_FIELDS
+        if (value := target_profile.get(field)) is not None
+    }
+    kwargs.update(optional_kwargs)
     return kwargs
 
 
@@ -108,7 +115,38 @@ def _write_profile(shm: Any, tid: int, profile: dict[str, Any] | None, writer_na
         return
 
     write_kwargs = {field: profile.get(field, default) for field, default in defaults.items()}
-    getattr(shm, writer_name)(tid, **write_kwargs)
+    writer = getattr(shm, writer_name)
+    writer(tid, **write_kwargs)
+
+
+def _write_schedule_profile(
+    shm: Any,
+    tid: int,
+    schedule_profile: dict[str, Any],
+    *,
+    started_monotonic_ns: int,
+) -> None:
+    shm.write_schedule(
+        tid,
+        schedule_type=schedule_profile.get("schedule_type", 0),
+        param_a_ns=schedule_profile.get("param_a_ns", 0),
+        param_b_ns=schedule_profile.get("param_b_ns", 0),
+        param_c_ns=schedule_profile.get("param_c_ns", 0),
+        started_monotonic_ns=started_monotonic_ns,
+    )
+
+
+def _write_session_budget_profile(shm: Any, tid: int, session_budget_profile: dict[str, Any]) -> None:
+    shm.write_session_budget(
+        tid,
+        max_bytes_tx=session_budget_profile.get("max_bytes_tx"),
+        max_bytes_rx=session_budget_profile.get("max_bytes_rx"),
+        max_ops=session_budget_profile.get("max_ops"),
+        max_duration_ms=session_budget_profile.get("max_duration_ms"),
+        action=session_budget_profile.get("action", 0),
+        budget_timeout_ms=session_budget_profile.get("budget_timeout_ms"),
+        error_kind=session_budget_profile.get("error_kind"),
+    )
 
 
 def _write_scalar_profiles(shm: Any, tid: int, wrapper: Any) -> None:
@@ -121,17 +159,13 @@ def _write_scalar_profiles(shm: Any, tid: int, wrapper: Any) -> None:
 def apply_fault_profiles(shm: Any, tid: int, wrapper: Any, *, started_monotonic_ns: int) -> None:
     _write_scalar_profiles(shm, tid, wrapper)
 
-    if wrapper._timeouts:
-        connect_ms, recv_ms = wrapper._timeouts
+    if (timeouts := wrapper._timeouts):
+        connect_ms, recv_ms = timeouts
         shm.write_timeouts(tid, connect_ms, recv_ms)
 
-    uplink_profile = wrapper._uplink_profile
-    if uplink_profile:
-        _write_direction_profile(tid, shm.write_uplink, uplink_profile)
-
-    downlink_profile = wrapper._downlink_profile
-    if downlink_profile:
-        _write_direction_profile(tid, shm.write_downlink, downlink_profile)
+    for profile_attr, writer_name in _DIRECTIONAL_WRITERS:
+        if profile := getattr(wrapper, profile_attr):
+            _write_direction_profile(tid, getattr(shm, writer_name), profile)
 
     for profile_attr, writer_name, defaults in _PROFILE_WRITERS:
         _write_profile(shm, tid, getattr(wrapper, profile_attr), writer_name, **defaults)
@@ -141,26 +175,8 @@ def apply_fault_profiles(shm: Any, tid: int, wrapper: Any, *, started_monotonic_
     elif wrapper._target_profile:
         shm.write_target(tid, **_target_write_kwargs(wrapper._target_profile))
 
-    schedule_profile = wrapper._schedule_profile
-    if schedule_profile:
-        shm.write_schedule(
-            tid,
-            schedule_type=schedule_profile.get("schedule_type", 0),
-            param_a_ns=schedule_profile.get("param_a_ns", 0),
-            param_b_ns=schedule_profile.get("param_b_ns", 0),
-            param_c_ns=schedule_profile.get("param_c_ns", 0),
-            started_monotonic_ns=started_monotonic_ns,
-        )
+    if schedule_profile := wrapper._schedule_profile:
+        _write_schedule_profile(shm, tid, schedule_profile, started_monotonic_ns=started_monotonic_ns)
 
-    session_budget_profile = wrapper._session_budget_profile
-    if session_budget_profile:
-        shm.write_session_budget(
-            tid,
-            max_bytes_tx=session_budget_profile.get("max_bytes_tx"),
-            max_bytes_rx=session_budget_profile.get("max_bytes_rx"),
-            max_ops=session_budget_profile.get("max_ops"),
-            max_duration_ms=session_budget_profile.get("max_duration_ms"),
-            action=session_budget_profile.get("action", 0),
-            budget_timeout_ms=session_budget_profile.get("budget_timeout_ms"),
-            error_kind=session_budget_profile.get("error_kind"),
-        )
+    if session_budget_profile := wrapper._session_budget_profile:
+        _write_session_budget_profile(shm, tid, session_budget_profile)

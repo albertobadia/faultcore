@@ -3,6 +3,7 @@ import copy
 import importlib
 import json
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -72,6 +73,65 @@ _TRANSPORT_EFFECT_POLICY_KEYS = (
     "session_budget_profile",
 )
 
+_OPTIONAL_MAPPING_PROFILE_SPECS: tuple[
+    tuple[
+        str,
+        str,
+        Callable[..., dict[str, Any]],
+        dict[str, Any],
+    ],
+    ...,
+] = (
+    (
+        "correlated_loss",
+        "correlated_loss_profile",
+        build_correlated_loss_profile,
+        {
+            "p_good_to_bad": 0,
+            "p_bad_to_good": 0,
+            "loss_good": 0,
+            "loss_bad": 0,
+        },
+    ),
+    (
+        "connection_error",
+        "connection_error_profile",
+        build_connection_error_profile,
+        {
+            "kind": "reset",
+            "prob": "100%",
+        },
+    ),
+    (
+        "half_open",
+        "half_open_profile",
+        build_half_open_profile,
+        {
+            "after_bytes": 0,
+            "error": "reset",
+        },
+    ),
+    (
+        "packet_duplicate",
+        "packet_duplicate_profile",
+        build_packet_duplicate_profile,
+        {
+            "prob": "100%",
+            "max_extra": 1,
+        },
+    ),
+    (
+        "packet_reorder",
+        "packet_reorder_profile",
+        build_packet_reorder_profile,
+        {
+            "prob": "100%",
+            "max_delay_ms": 0,
+            "window": 1,
+        },
+    ),
+)
+
 
 def _require_mapping(value: Any, field_name: str) -> dict[str, Any]:
     if not isinstance(value, dict):
@@ -112,10 +172,6 @@ def _build_target_rule(target: str | dict[str, Any], *, include_priority: bool) 
     if not include_priority:
         rule.pop("priority", None)
     return rule
-
-
-def _build_single_target_profile(target: str | dict[str, Any]) -> dict[str, Any]:
-    return _build_target_rule(target, include_priority=False)
 
 
 def _build_target_profiles(targets: list[str | dict[str, Any]]) -> list[dict[str, Any]]:
@@ -189,6 +245,22 @@ def _build_direction_policy(direction: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def _as_mapping(value: dict[str, Any] | None, field_name: str) -> dict[str, Any] | None:
+    return None if value is None else _require_mapping(value, field_name)
+
+
+def _set_direction_profile(
+    policy: dict[str, Any],
+    *,
+    raw_value: dict[str, Any] | None,
+    field_name: str,
+    policy_key: str,
+) -> None:
+    direction_config = _as_mapping(raw_value, field_name)
+    if direction_config is not None:
+        policy[policy_key] = _build_direction_policy(direction_config)
+
+
 def _coerce_timeout_pair(
     connect_timeout_ms: int | None,
     recv_timeout_ms: int | None,
@@ -198,6 +270,37 @@ def _coerce_timeout_pair(
         _coerce_non_negative_int(connect_timeout_ms, error_message) if connect_timeout_ms is not None else 0,
         _coerce_non_negative_int(recv_timeout_ms, error_message) if recv_timeout_ms is not None else 0,
     )
+
+
+def _build_optional_mapping_profile(
+    raw_value: dict[str, Any] | None,
+    field_name: str,
+    builder: Callable[..., dict[str, Any]],
+    **defaults: Any,
+) -> dict[str, Any] | None:
+    config = _as_mapping(raw_value, field_name)
+    if config is None:
+        return None
+    return builder(**{key: config.get(key, default) for key, default in defaults.items()})
+
+
+def _set_optional_mapping_profile(
+    policy: dict[str, Any],
+    *,
+    raw_value: dict[str, Any] | None,
+    field_name: str,
+    builder: Callable[..., dict[str, Any]],
+    policy_key: str,
+    **defaults: Any,
+) -> None:
+    profile = _build_optional_mapping_profile(
+        raw_value,
+        field_name,
+        builder,
+        **defaults,
+    )
+    if profile is not None:
+        policy[policy_key] = profile
 
 
 def get_policy_for_apply(name: str) -> dict[str, Any] | None:
@@ -254,43 +357,36 @@ def register_policy(
         policy["bandwidth_bps"] = parse_rate(rate)
     if connect_timeout_ms is not None or recv_timeout_ms is not None:
         policy["timeouts"] = _coerce_timeout_pair(connect_timeout_ms, recv_timeout_ms)
-    if uplink is not None:
-        policy["uplink_profile"] = _build_direction_policy(_require_mapping(uplink, "uplink"))
-    if downlink is not None:
-        policy["downlink_profile"] = _build_direction_policy(_require_mapping(downlink, "downlink"))
-    if correlated_loss is not None:
-        correlated_loss_config = _require_mapping(correlated_loss, "correlated_loss")
-        policy["correlated_loss_profile"] = build_correlated_loss_profile(
-            p_good_to_bad=correlated_loss_config.get("p_good_to_bad", 0),
-            p_bad_to_good=correlated_loss_config.get("p_bad_to_good", 0),
-            loss_good=correlated_loss_config.get("loss_good", 0),
-            loss_bad=correlated_loss_config.get("loss_bad", 0),
+    _set_direction_profile(
+        policy,
+        raw_value=uplink,
+        field_name="uplink",
+        policy_key="uplink_profile",
+    )
+    _set_direction_profile(
+        policy,
+        raw_value=downlink,
+        field_name="downlink",
+        policy_key="downlink_profile",
+    )
+
+    optional_mapping_values = {
+        "correlated_loss": correlated_loss,
+        "connection_error": connection_error,
+        "half_open": half_open,
+        "packet_duplicate": packet_duplicate,
+        "packet_reorder": packet_reorder,
+    }
+    for field_name, policy_key, builder, defaults in _OPTIONAL_MAPPING_PROFILE_SPECS:
+        _set_optional_mapping_profile(
+            policy,
+            raw_value=optional_mapping_values[field_name],
+            field_name=field_name,
+            builder=builder,
+            policy_key=policy_key,
+            **defaults,
         )
-    if connection_error is not None:
-        connection_error_config = _require_mapping(connection_error, "connection_error")
-        policy["connection_error_profile"] = build_connection_error_profile(
-            kind=connection_error_config.get("kind", "reset"),
-            prob=connection_error_config.get("prob", "100%"),
-        )
-    if half_open is not None:
-        half_open_config = _require_mapping(half_open, "half_open")
-        policy["half_open_profile"] = build_half_open_profile(
-            after_bytes=half_open_config.get("after_bytes", 0),
-            error=half_open_config.get("error", "reset"),
-        )
-    if packet_duplicate is not None:
-        packet_duplicate_config = _require_mapping(packet_duplicate, "packet_duplicate")
-        policy["packet_duplicate_profile"] = build_packet_duplicate_profile(
-            prob=packet_duplicate_config.get("prob", "100%"),
-            max_extra=packet_duplicate_config.get("max_extra", 1),
-        )
-    if packet_reorder is not None:
-        packet_reorder_config = _require_mapping(packet_reorder, "packet_reorder")
-        policy["packet_reorder_profile"] = build_packet_reorder_profile(
-            prob=packet_reorder_config.get("prob", "100%"),
-            max_delay_ms=packet_reorder_config.get("max_delay_ms", 0),
-            window=packet_reorder_config.get("window", 1),
-        )
+
     dns_profile = build_dns_profile(
         delay_ms=dns_delay_ms,
         timeout_ms=dns_timeout_ms,
@@ -299,13 +395,14 @@ def register_policy(
     if dns_profile:
         policy["dns_profile"] = dns_profile
     if target is not None:
-        policy["target_profile"] = _build_single_target_profile(target)
+        policy["target_profile"] = _build_target_rule(target, include_priority=False)
     if targets is not None:
         if not isinstance(targets, list):
             raise ValueError("targets must be a non-empty list when provided")
         policy["target_profiles"] = _build_target_profiles(targets)
-    if schedule is not None:
-        schedule_config = _require_mapping(schedule, "schedule")
+
+    schedule_config = _as_mapping(schedule, "schedule")
+    if schedule_config is not None:
         policy["schedule_profile"] = build_schedule_profile(
             kind=schedule_config.get("kind", ""),
             every_s=schedule_config.get("every_s"),
@@ -314,8 +411,9 @@ def register_policy(
             off_s=schedule_config.get("off_s"),
             ramp_s=schedule_config.get("ramp_s"),
         )
-    if session_budget is not None:
-        session_budget_config = _require_mapping(session_budget, "session_budget")
+
+    session_budget_config = _as_mapping(session_budget, "session_budget")
+    if session_budget_config is not None:
         policy["session_budget_profile"] = build_session_budget_profile(
             max_bytes_tx=session_budget_config.get("max_bytes_tx"),
             max_bytes_rx=session_budget_config.get("max_bytes_rx"),

@@ -38,6 +38,20 @@ U64Field = tuple[int, int]
 OptionalU64Field = tuple[int, int | None]
 DirectionOffsets = tuple[int, int, int, int, int]
 
+
+def _require_in_range(value: int, *, lower: int, upper: int, message: str) -> int:
+    normalized = int(value)
+    if not lower <= normalized <= upper:
+        raise ValueError(message)
+    return normalized
+
+
+def _require_optional_positive(value: int | None, message: str) -> int:
+    normalized = int(value or 0)
+    if value is not None and normalized <= 0:
+        raise ValueError(message)
+    return normalized
+
 _OFFSET_MAGIC = 0
 _OFFSET_LATENCY_NS = 12
 _OFFSET_JITTER_NS = 20
@@ -208,6 +222,38 @@ class SHMWriter:
         self._mmap[base + 88 : base + 120] = hostname
         self._mmap[base + 120 : base + 152] = sni
 
+    def _build_target_rule(
+        self,
+        *,
+        enabled: bool,
+        kind: int,
+        ipv4: int,
+        prefix_len: int,
+        port: int,
+        port_start: int | None,
+        port_end: int | None,
+        protocol: int,
+        address_family: int,
+        addr: bytes | bytearray | Sequence[int] | None,
+        hostname: str | None,
+        sni: str | None,
+    ) -> dict[str, Any]:
+        return {
+            "enabled": 1 if enabled else 0,
+            "priority": 100,
+            "kind": kind,
+            "ipv4": ipv4,
+            "prefix_len": prefix_len,
+            "port": port,
+            "port_start": port_start,
+            "port_end": port_end,
+            "protocol": protocol,
+            "address_family": address_family,
+            "addr": addr,
+            "hostname": hostname,
+            "sni": sni,
+        }
+
     def _write_single_target_fields(self, offset: int, rule: dict[str, Any], idx: int = 0) -> None:
         address_family, addr = normalize_target_address(rule, idx)
         hostname = encode_target_name_bytes(rule.get("hostname"), f"targets[{idx}].hostname")
@@ -243,11 +289,33 @@ class SHMWriter:
         self._mmap[offset + _OFFSET_TARGET_HOSTNAME : offset + _OFFSET_TARGET_HOSTNAME + 32] = b"\x00" * 32
         self._mmap[offset + _OFFSET_TARGET_SNI : offset + _OFFSET_TARGET_SNI + 32] = b"\x00" * 32
 
-    def _write_fields(self, tid: int, fields: tuple[U64Field, ...]) -> None:
-        def writer(offset: int) -> None:
-            self._pack_u64_fields(offset, fields)
+    def _write_primary_target_fields(self, offset: int, *, enabled: bool, rule: dict[str, Any]) -> None:
+        normalized_family, addr_value = normalize_target_address(
+            {
+                "kind": rule["kind"],
+                "ipv4": rule["ipv4"],
+                "address_family": rule["address_family"],
+                "addr": rule["addr"],
+            },
+            0,
+        )
+        port_start_value, _ = resolve_port_range(rule, 0)
+        self._pack_u64_fields(
+            offset,
+            (
+                (_OFFSET_TARGET_ENABLED, 1 if enabled else 0),
+                (_OFFSET_TARGET_KIND, int(rule["kind"])),
+                (_OFFSET_TARGET_IPV4, int(rule["ipv4"])),
+                (_OFFSET_TARGET_PREFIX_LEN, int(rule["prefix_len"])),
+                (_OFFSET_TARGET_PORT, port_start_value),
+                (_OFFSET_TARGET_PROTOCOL, int(rule["protocol"])),
+                (_OFFSET_TARGET_ADDRESS_FAMILY, normalized_family),
+            ),
+        )
+        self._mmap[offset + _OFFSET_TARGET_ADDR : offset + _OFFSET_TARGET_ADDR + 16] = addr_value
 
-        self._write_with_generation_publish(tid, writer)
+    def _write_fields(self, tid: int, fields: tuple[U64Field, ...]) -> None:
+        self._write_with_generation_publish(tid, lambda offset: self._pack_u64_fields(offset, fields))
 
     def _write_direction_profile(
         self,
@@ -473,41 +541,24 @@ class SHMWriter:
     ) -> None:
         tid_slot = self._tid_slot(tid)
         target_rules_offset = self._target_rules_offset_for_slot(tid_slot)
+        rule = self._build_target_rule(
+            enabled=enabled,
+            kind=kind,
+            ipv4=ipv4,
+            prefix_len=prefix_len,
+            port=port,
+            port_start=port_start,
+            port_end=port_end,
+            protocol=protocol,
+            address_family=address_family,
+            addr=addr,
+            hostname=hostname,
+            sni=sni,
+        )
+        validate_target_rule(rule, 0)
 
         def writer(offset: int) -> None:
-            rule = {
-                "enabled": 1 if enabled else 0,
-                "priority": 100,
-                "kind": kind,
-                "ipv4": ipv4,
-                "prefix_len": prefix_len,
-                "port": port,
-                "port_start": port_start,
-                "port_end": port_end,
-                "protocol": protocol,
-                "address_family": address_family,
-                "addr": addr,
-                "hostname": hostname,
-                "sni": sni,
-            }
-            validate_target_rule(rule, 0)
-            normalized_family, addr_value = normalize_target_address(
-                {"kind": kind, "ipv4": ipv4, "address_family": address_family, "addr": addr}, 0
-            )
-            port_start_value, _port_end_value = resolve_port_range(rule, 0)
-            self._pack_u64_fields(
-                offset,
-                (
-                    (_OFFSET_TARGET_ENABLED, 1 if enabled else 0),
-                    (_OFFSET_TARGET_KIND, kind),
-                    (_OFFSET_TARGET_IPV4, ipv4),
-                    (_OFFSET_TARGET_PREFIX_LEN, prefix_len),
-                    (_OFFSET_TARGET_PORT, port_start_value),
-                    (_OFFSET_TARGET_PROTOCOL, protocol),
-                    (_OFFSET_TARGET_ADDRESS_FAMILY, normalized_family),
-                ),
-            )
-            self._mmap[offset + _OFFSET_TARGET_ADDR : offset + _OFFSET_TARGET_ADDR + 16] = addr_value
+            self._write_primary_target_fields(offset, enabled=enabled, rule=rule)
             self._clear_target_rules_table(tid_slot)
             if enabled:
                 self._write_target_rule_row(target_rules_offset, 0, rule)
@@ -574,32 +625,54 @@ class SHMWriter:
         budget_timeout_ms: int | None = None,
         error_kind: int | None = None,
     ) -> None:
-        if action < 1 or action > 3:
-            raise ValueError("session_budget action must be between 1 and 3")
-        if budget_timeout_ms is not None and int(budget_timeout_ms) <= 0:
-            raise ValueError("session_budget budget_timeout_ms must be > 0")
-        if error_kind is not None and (int(error_kind) < 1 or int(error_kind) > 3):
-            raise ValueError("session_budget error_kind must be between 1 and 3")
-        if max_bytes_tx is not None and int(max_bytes_tx) <= 0:
-            raise ValueError("session_budget max_bytes_tx must be > 0")
-        if max_bytes_rx is not None and int(max_bytes_rx) <= 0:
-            raise ValueError("session_budget max_bytes_rx must be > 0")
-        if max_ops is not None and int(max_ops) <= 0:
-            raise ValueError("session_budget max_ops must be > 0")
-        if max_duration_ms is not None and int(max_duration_ms) <= 0:
-            raise ValueError("session_budget max_duration_ms must be > 0")
+        normalized_action = _require_in_range(
+            action,
+            lower=1,
+            upper=3,
+            message="session_budget action must be between 1 and 3",
+        )
+        normalized_error_kind = (
+            _require_in_range(
+                error_kind,
+                lower=1,
+                upper=3,
+                message="session_budget error_kind must be between 1 and 3",
+            )
+            if error_kind is not None
+            else 0
+        )
+        normalized_max_bytes_tx = _require_optional_positive(
+            max_bytes_tx,
+            "session_budget max_bytes_tx must be > 0",
+        )
+        normalized_max_bytes_rx = _require_optional_positive(
+            max_bytes_rx,
+            "session_budget max_bytes_rx must be > 0",
+        )
+        normalized_max_ops = _require_optional_positive(
+            max_ops,
+            "session_budget max_ops must be > 0",
+        )
+        normalized_max_duration_ms = _require_optional_positive(
+            max_duration_ms,
+            "session_budget max_duration_ms must be > 0",
+        )
+        normalized_budget_timeout_ms = _require_optional_positive(
+            budget_timeout_ms,
+            "session_budget budget_timeout_ms must be > 0",
+        )
 
         self._write_fields(
             tid,
             (
                 (_OFFSET_SESSION_BUDGET_ENABLED, 1),
-                (_OFFSET_SESSION_MAX_BYTES_TX, int(max_bytes_tx or 0)),
-                (_OFFSET_SESSION_MAX_BYTES_RX, int(max_bytes_rx or 0)),
-                (_OFFSET_SESSION_MAX_OPS, int(max_ops or 0)),
-                (_OFFSET_SESSION_MAX_DURATION_MS, int(max_duration_ms or 0)),
-                (_OFFSET_SESSION_ACTION, int(action)),
-                (_OFFSET_SESSION_BUDGET_TIMEOUT_MS, int(budget_timeout_ms or 0)),
-                (_OFFSET_SESSION_ERROR_KIND, int(error_kind or 0)),
+                (_OFFSET_SESSION_MAX_BYTES_TX, normalized_max_bytes_tx),
+                (_OFFSET_SESSION_MAX_BYTES_RX, normalized_max_bytes_rx),
+                (_OFFSET_SESSION_MAX_OPS, normalized_max_ops),
+                (_OFFSET_SESSION_MAX_DURATION_MS, normalized_max_duration_ms),
+                (_OFFSET_SESSION_ACTION, normalized_action),
+                (_OFFSET_SESSION_BUDGET_TIMEOUT_MS, normalized_budget_timeout_ms),
+                (_OFFSET_SESSION_ERROR_KIND, normalized_error_kind),
             ),
         )
 

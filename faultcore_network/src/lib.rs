@@ -257,41 +257,27 @@ impl Config {
 
     pub fn effective_for_send(&self) -> Self {
         let mut out = *self;
-        if self.uplink_latency_ns > 0 {
-            out.latency_ns = self.uplink_latency_ns;
-        }
-        if self.uplink_jitter_ns > 0 {
-            out.jitter_ns = self.uplink_jitter_ns;
-        }
-        if self.uplink_packet_loss_ppm > 0 {
-            out.packet_loss_ppm = self.uplink_packet_loss_ppm;
-        }
-        if self.uplink_burst_loss_len > 0 {
-            out.burst_loss_len = self.uplink_burst_loss_len;
-        }
-        if self.uplink_bandwidth_bps > 0 {
-            out.bandwidth_bps = self.uplink_bandwidth_bps;
-        }
+        apply_direction_overrides(
+            &mut out,
+            self.uplink_latency_ns,
+            self.uplink_jitter_ns,
+            self.uplink_packet_loss_ppm,
+            self.uplink_burst_loss_len,
+            self.uplink_bandwidth_bps,
+        );
         out
     }
 
     pub fn effective_for_recv(&self) -> Self {
         let mut out = *self;
-        if self.downlink_latency_ns > 0 {
-            out.latency_ns = self.downlink_latency_ns;
-        }
-        if self.downlink_jitter_ns > 0 {
-            out.jitter_ns = self.downlink_jitter_ns;
-        }
-        if self.downlink_packet_loss_ppm > 0 {
-            out.packet_loss_ppm = self.downlink_packet_loss_ppm;
-        }
-        if self.downlink_burst_loss_len > 0 {
-            out.burst_loss_len = self.downlink_burst_loss_len;
-        }
-        if self.downlink_bandwidth_bps > 0 {
-            out.bandwidth_bps = self.downlink_bandwidth_bps;
-        }
+        apply_direction_overrides(
+            &mut out,
+            self.downlink_latency_ns,
+            self.downlink_jitter_ns,
+            self.downlink_packet_loss_ppm,
+            self.downlink_burst_loss_len,
+            self.downlink_bandwidth_bps,
+        );
         out
     }
 
@@ -449,6 +435,31 @@ impl Config {
 
 fn scale_u64(value: u64, factor: f64) -> u64 {
     ((value as f64) * factor).round() as u64
+}
+
+fn apply_direction_overrides(
+    out: &mut Config,
+    latency_ns: u64,
+    jitter_ns: u64,
+    packet_loss_ppm: u64,
+    burst_loss_len: u64,
+    bandwidth_bps: u64,
+) {
+    if latency_ns > 0 {
+        out.latency_ns = latency_ns;
+    }
+    if jitter_ns > 0 {
+        out.jitter_ns = jitter_ns;
+    }
+    if packet_loss_ppm > 0 {
+        out.packet_loss_ppm = packet_loss_ppm;
+    }
+    if burst_loss_len > 0 {
+        out.burst_loss_len = burst_loss_len;
+    }
+    if bandwidth_bps > 0 {
+        out.bandwidth_bps = bandwidth_bps;
+    }
 }
 
 fn prefix_match(candidate: &[u8; 16], network: &[u8; 16], prefix_len: usize) -> bool {

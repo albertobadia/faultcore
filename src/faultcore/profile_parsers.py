@@ -45,14 +45,24 @@ def _pad_addr16(addr: list[int]) -> list[int]:
     return addr if len(addr) >= 16 else addr + [0] * (16 - len(addr))
 
 
-def _set_port_range(profile: dict[str, object], port_start: int | None, port_end: int | None) -> None:
+def _apply_port_range(profile: dict[str, object], port_start: int | None, port_end: int | None) -> dict[str, object]:
     if port_start is not None and port_end is not None:
         profile["port_start"] = port_start
         profile["port_end"] = port_end
+    return profile
 
 
 def _seconds_to_ns(value: int | float) -> int:
     return int(value * _NS_PER_SECOND)
+
+
+def _schedule_profile(schedule_type: int, param_a_ns: int, param_b_ns: int) -> dict[str, int]:
+    return {
+        "schedule_type": schedule_type,
+        "param_a_ns": param_a_ns,
+        "param_b_ns": param_b_ns,
+        "param_c_ns": 0,
+    }
 
 
 def _rate_to_bps(value: float | int, multiplier: int) -> int:
@@ -367,8 +377,7 @@ def build_target_profile(
             profile["hostname"] = parsed_hostname
         if parsed_sni is not None:
             profile["sni"] = parsed_sni
-        _set_port_range(profile, parsed_port_start, parsed_port_end)
-        return profile
+        return _apply_port_range(profile, parsed_port_start, parsed_port_end)
 
     if parsed_host:
         try:
@@ -380,18 +389,20 @@ def build_target_profile(
         ipv4 = int(address) if is_ipv4 else 0
         prefix_len = 32 if is_ipv4 else 128
         addr = _pad_addr16(list(address.packed))
-        profile = _target_profile_base(
-            kind=1,
-            ipv4=ipv4,
-            prefix_len=prefix_len,
-            port=parsed_port,
-            protocol=parsed_protocol,
-            priority=parsed_priority,
-            address_family=address_family,
-            addr=addr,
+        return _apply_port_range(
+            _target_profile_base(
+                kind=1,
+                ipv4=ipv4,
+                prefix_len=prefix_len,
+                port=parsed_port,
+                protocol=parsed_protocol,
+                priority=parsed_priority,
+                address_family=address_family,
+                addr=addr,
+            ),
+            parsed_port_start,
+            parsed_port_end,
         )
-        _set_port_range(profile, parsed_port_start, parsed_port_end)
-        return profile
 
     try:
         network = ipaddress.ip_network(parsed_cidr, strict=False)
@@ -404,18 +415,20 @@ def build_target_profile(
     addr = _pad_addr16(list(network.network_address.packed))
     if network.prefixlen < 0 or network.prefixlen > max_prefix_len:
         raise ValueError(f"target prefix_len must be between 0 and {max_prefix_len}")
-    profile = _target_profile_base(
-        kind=2,
-        ipv4=ipv4,
-        prefix_len=int(network.prefixlen),
-        port=parsed_port,
-        protocol=parsed_protocol,
-        priority=parsed_priority,
-        address_family=address_family,
-        addr=addr,
+    return _apply_port_range(
+        _target_profile_base(
+            kind=2,
+            ipv4=ipv4,
+            prefix_len=int(network.prefixlen),
+            port=parsed_port,
+            protocol=parsed_protocol,
+            priority=parsed_priority,
+            address_family=address_family,
+            addr=addr,
+        ),
+        parsed_port_start,
+        parsed_port_end,
     )
-    _set_port_range(profile, parsed_port_start, parsed_port_end)
-    return profile
 
 
 def build_schedule_profile(
@@ -435,7 +448,7 @@ def build_schedule_profile(
         active_ns = _seconds_to_ns(duration_s)
         if cycle_ns <= 0 or active_ns <= 0 or active_ns > cycle_ns:
             raise ValueError("spike profile requires 0 < duration_s <= every_s")
-        return {"schedule_type": 2, "param_a_ns": cycle_ns, "param_b_ns": active_ns, "param_c_ns": 0}
+        return _schedule_profile(2, cycle_ns, active_ns)
 
     if normalized == "flapping":
         if on_s is None or off_s is None:
@@ -444,7 +457,7 @@ def build_schedule_profile(
         off_ns = _seconds_to_ns(off_s)
         if on_ns <= 0 or off_ns <= 0:
             raise ValueError("flapping profile requires on_s > 0 and off_s > 0")
-        return {"schedule_type": 3, "param_a_ns": on_ns, "param_b_ns": off_ns, "param_c_ns": 0}
+        return _schedule_profile(3, on_ns, off_ns)
 
     if normalized == "ramp":
         if ramp_s is None:
@@ -452,7 +465,7 @@ def build_schedule_profile(
         ramp_ns = _seconds_to_ns(ramp_s)
         if ramp_ns <= 0:
             raise ValueError("ramp profile requires ramp_s > 0")
-        return {"schedule_type": 1, "param_a_ns": ramp_ns, "param_b_ns": 0, "param_c_ns": 0}
+        return _schedule_profile(1, ramp_ns, 0)
 
     raise ValueError("schedule kind must be one of: ramp, spike, flapping")
 

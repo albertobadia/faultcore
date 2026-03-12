@@ -34,7 +34,6 @@ struct HostnameObservationKey {
     protocol: u64,
 }
 
-#[derive(Clone)]
 struct ObservedName {
     hostname: String,
     observed_at_ns: u64,
@@ -112,8 +111,8 @@ fn observed_hostname_for_slot_endpoint(tid_slot: usize, endpoint: Endpoint) -> O
     let now_ns = monotonic_now_ns();
     let mut map = observed_hostname_by_endpoint().lock();
 
-    let (selected_key, observed) = if let Some(found) = map.get(&key).cloned() {
-        (key, found)
+    let (selected_key, observed_at_ns, hostname) = if let Some(found) = map.get(&key) {
+        (key, found.observed_at_ns, found.hostname.clone())
     } else {
         map.iter()
             .filter(|(candidate, _)| {
@@ -122,14 +121,14 @@ fn observed_hostname_for_slot_endpoint(tid_slot: usize, endpoint: Endpoint) -> O
                     && candidate.addr == endpoint.addr
             })
             .max_by_key(|(_, item)| item.observed_at_ns)
-            .map(|(candidate, item)| (*candidate, item.clone()))?
+            .map(|(candidate, item)| (*candidate, item.observed_at_ns, item.hostname.clone()))?
     };
 
-    if now_ns.saturating_sub(observed.observed_at_ns) > HOSTNAME_OBSERVATION_TTL_NS {
+    if now_ns.saturating_sub(observed_at_ns) > HOSTNAME_OBSERVATION_TTL_NS {
         map.remove(&selected_key);
         return None;
     }
-    Some(observed.hostname)
+    Some(hostname)
 }
 
 pub fn observe_sni_for_fd(fd: c_int, sni: &str) {
