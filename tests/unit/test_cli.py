@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 from typer.testing import CliRunner
@@ -62,6 +63,57 @@ def test_run_command_linux_strict_success_executes_with_ld_preload(monkeypatch):
     assert env["FAULTCORE_SHM_OPEN_MODE"] == "creator"
 
 
+def test_run_command_writes_run_json(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "_is_linux", lambda: False)
+    monkeypatch.setattr(
+        cli,
+        "build_run_record",
+        lambda **kwargs: {
+            "status": "passed",
+            "tool": {"command": kwargs["command"]},
+            "process": {"exit_code": kwargs["returncode"]},
+        },
+    )
+
+    def fake_run(args, *, env, check):
+        _ = env
+        _ = check
+        assert args == ["python", "-V"]
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+
+    run_json = tmp_path / "run.json"
+    result = runner.invoke(cli.app, ["run", "--run-json", str(run_json), "--", "python", "-V"])
+    assert result.exit_code == 0
+    data = json.loads(run_json.read_text(encoding="utf-8"))
+    assert data["status"] == "passed"
+    assert data["tool"]["command"] == ["python", "-V"]
+    assert data["process"]["exit_code"] == 0
+
+
+def test_run_command_strict_failure_writes_run_json(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "_is_linux", lambda: True)
+    monkeypatch.setattr(cli.native, "get_interceptor_path", lambda: "/faultcore/interceptor.so")
+    monkeypatch.setattr(cli, "_probe_interceptor_active", lambda _env: False)
+    monkeypatch.setattr(
+        cli,
+        "build_run_record",
+        lambda **kwargs: {
+            "status": "failed",
+            "tool": {"command": kwargs["command"]},
+            "process": {"exit_code": kwargs["returncode"]},
+        },
+    )
+
+    run_json = tmp_path / "run_fail.json"
+    result = runner.invoke(cli.app, ["run", "--run-json", str(run_json), "--", "python", "-V"])
+    assert result.exit_code == 2
+    data = json.loads(run_json.read_text(encoding="utf-8"))
+    assert data["status"] == "failed"
+    assert data["process"]["exit_code"] == 2
+
+
 def test_doctor_non_linux_fails(monkeypatch):
     monkeypatch.setattr(cli, "_is_linux", lambda: False)
 
@@ -81,11 +133,51 @@ def test_doctor_linux_probe_ok(monkeypatch):
     assert "interceptor_active_probe: ok" in result.stdout
 
 
-def test_report_command_stub(tmp_path):
+def test_report_command_generates_html(tmp_path):
     input_path = tmp_path / "run.json"
-    input_path.write_text("{}", encoding="utf-8")
+    input_path.write_text(
+        json.dumps(
+            {
+                "run_id": "run-123",
+                "status": "passed",
+                "started_at": "2026-03-12T00:00:00.000Z",
+                "ended_at": "2026-03-12T00:00:01.000Z",
+                "duration_ms": 1000,
+                "tool": {"name": "faultcore", "version": "2026.3.8", "command": ["pytest", "-q"]},
+                "environment": {"os": "linux", "arch": "x86_64", "python_version": "3.13.2"},
+                "interceptor": {"active": True, "path": "/tmp/libfaultcore.so"},
+                "faultcore": {"seed": 0},
+                "summary": {
+                    "tests_total": 1,
+                    "tests_passed": 1,
+                    "tests_failed": 0,
+                    "errors": 0,
+                    "fault_events_total": 1,
+                },
+                "events": [
+                    {
+                        "ts": "2026-03-12T00:00:00.500Z",
+                        "severity": "info",
+                        "type": "fault",
+                        "source": "policy",
+                        "name": "latency",
+                        "details": {"ms": 10},
+                    }
+                ],
+                "scenarios": [],
+                "artifacts": [],
+            }
+        ),
+        encoding="utf-8",
+    )
     output_path = tmp_path / "report.html"
 
-    result = runner.invoke(cli.app, ["report", "--input", str(input_path), "--output", str(output_path)])
-    assert result.exit_code == 2
-    assert "not implemented yet" in result.stderr
+    result = runner.invoke(
+        cli.app,
+        ["report", "--input", str(input_path), "--output", str(output_path), "--max-events", "1", "--reverse-events"],
+    )
+    assert result.exit_code == 0
+    assert output_path.exists()
+    html = output_path.read_text(encoding="utf-8")
+    assert "faultcore report" in html
+    assert "events_order=desc" in html

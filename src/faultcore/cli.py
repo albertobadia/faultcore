@@ -2,11 +2,20 @@ import os
 import platform
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import typer
 
 from faultcore import native
+from faultcore.reporting import (
+    build_run_record,
+    load_run_json,
+    render_report_html,
+    utc_now_iso,
+    write_report_html,
+    write_run_json,
+)
 
 app = typer.Typer(help="Faultcore command-line interface.")
 RUN_COMMAND_ARG = typer.Argument(..., help="Command to execute. Use '--' before command args.")
@@ -17,6 +26,18 @@ RUN_STRICT_OPT = typer.Option(
 )
 REPORT_INPUT_OPT = typer.Option(..., "--input", exists=True, dir_okay=False, readable=True)
 REPORT_OUTPUT_OPT = typer.Option(..., "--output", dir_okay=False)
+RUN_JSON_OPT = typer.Option(
+    None,
+    "--run-json",
+    help="Optional output path for run metadata JSON.",
+    dir_okay=False,
+)
+REPORT_MAX_EVENTS_OPT = typer.Option(0, "--max-events", min=0, help="Maximum events to include (0 = all).")
+REPORT_REVERSE_EVENTS_OPT = typer.Option(
+    False,
+    "--reverse-events",
+    help="Render events in reverse chronological order.",
+)
 
 
 def _is_linux() -> bool:
@@ -55,20 +76,61 @@ def _base_env_for_run(*, shm_mode: str = "creator") -> dict[str, str]:
 def run_command(
     command: list[str] = RUN_COMMAND_ARG,
     strict: bool = RUN_STRICT_OPT,
+    run_json: Path | None = RUN_JSON_OPT,
 ) -> None:
     if not command:
         raise typer.BadParameter("Missing command to execute.")
 
+    started_at = utc_now_iso()
+    started_perf = time.perf_counter()
     env = _base_env_for_run()
+    interceptor_path: str | None = None
+    ld_preload_effective = env.get("LD_PRELOAD", "")
+    interceptor_active = False
+
     if _is_linux():
         interceptor_path = native.get_interceptor_path()
         env["LD_PRELOAD"] = _compose_preload(interceptor_path)
+        ld_preload_effective = env["LD_PRELOAD"]
+        interceptor_active = _probe_interceptor_active(env)
 
-        if strict and not _probe_interceptor_active(env):
+        if strict and not interceptor_active:
+            ended_at = utc_now_iso()
+            duration_ms = int((time.perf_counter() - started_perf) * 1000)
+            if run_json is not None:
+                write_run_json(
+                    run_json,
+                    build_run_record(
+                        command=command,
+                        returncode=2,
+                        started_at=started_at,
+                        ended_at=ended_at,
+                        duration_ms=duration_ms,
+                        interceptor_path=interceptor_path,
+                        ld_preload_effective=ld_preload_effective,
+                        interceptor_active=False,
+                    ),
+                )
             typer.echo("error: interceptor probe failed; strict mode requires active interceptor", err=True)
             raise typer.Exit(code=2)
 
     result = subprocess.run(command, env=env, check=False)
+    ended_at = utc_now_iso()
+    duration_ms = int((time.perf_counter() - started_perf) * 1000)
+    if run_json is not None:
+        write_run_json(
+            run_json,
+            build_run_record(
+                command=command,
+                returncode=result.returncode,
+                started_at=started_at,
+                ended_at=ended_at,
+                duration_ms=duration_ms,
+                interceptor_path=interceptor_path,
+                ld_preload_effective=ld_preload_effective,
+                interceptor_active=interceptor_active,
+            ),
+        )
     raise typer.Exit(code=result.returncode)
 
 
@@ -97,11 +159,13 @@ def doctor_command() -> None:
 def report_command(
     input_path: Path = REPORT_INPUT_OPT,
     output_path: Path = REPORT_OUTPUT_OPT,
+    max_events: int = REPORT_MAX_EVENTS_OPT,
+    reverse_events: bool = REPORT_REVERSE_EVENTS_OPT,
 ) -> None:
-    _ = input_path
-    _ = output_path
-    typer.echo("error: report generation is not implemented yet", err=True)
-    raise typer.Exit(code=2)
+    run_data = load_run_json(input_path)
+    html_text = render_report_html(run_data, max_events=max_events, reverse_events=reverse_events)
+    write_report_html(output_path, html_text)
+    typer.echo(f"report written: {output_path}")
 
 
 def main() -> None:
