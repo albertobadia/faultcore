@@ -98,9 +98,7 @@ def _target_write_kwargs(target_profile: dict[str, Any]) -> dict[str, Any]:
         "addr": target_profile.get("addr"),
     }
     optional_kwargs = {
-        field: value
-        for field in _TARGET_OPTIONAL_FIELDS
-        if (value := target_profile.get(field)) is not None
+        field: value for field in _TARGET_OPTIONAL_FIELDS if (value := target_profile.get(field)) is not None
     }
     kwargs.update(optional_kwargs)
     return kwargs
@@ -159,7 +157,7 @@ def _write_scalar_profiles(shm: Any, tid: int, wrapper: Any) -> None:
 def apply_fault_profiles(shm: Any, tid: int, wrapper: Any, *, started_monotonic_ns: int) -> None:
     _write_scalar_profiles(shm, tid, wrapper)
 
-    if (timeouts := wrapper._timeouts):
+    if timeouts := wrapper._timeouts:
         connect_ms, recv_ms = timeouts
         shm.write_timeouts(tid, connect_ms, recv_ms)
 

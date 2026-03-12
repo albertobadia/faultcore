@@ -52,6 +52,7 @@ def _require_optional_positive(value: int | None, message: str) -> int:
         raise ValueError(message)
     return normalized
 
+
 _OFFSET_MAGIC = 0
 _OFFSET_LATENCY_NS = 12
 _OFFSET_JITTER_NS = 20
