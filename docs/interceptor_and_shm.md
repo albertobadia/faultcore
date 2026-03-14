@@ -36,7 +36,7 @@ sequenceDiagram
 
 Diagram focus: end-to-end lifecycle from decorator write to hook behavior.
 
-## Linux `LD_PRELOAD` Usage
+## CLI-First Linux Usage
 
 Build:
 
@@ -44,18 +44,27 @@ Build:
 ./build.sh
 ```
 
-Run:
+Recommended run path:
+
+```bash
+faultcore doctor
+faultcore run -- python your_script.py
+```
+
+Run tests/reports through CLI:
+
+```bash
+faultcore run --run-json artifacts/run.json -- pytest -q
+faultcore report --input artifacts/run.json --output artifacts/report.html
+```
+
+## Advanced Manual `LD_PRELOAD` Usage
+
+For low-level debugging, manual preload is still supported:
 
 ```bash
 LD_PRELOAD=./faultcore_interceptor/target/release/libfaultcore_interceptor.so \
-FAULTCORE_WRAPPER_MODE=shm \
 python your_script.py
-```
-
-Helper script:
-
-```bash
-examples/run_with_preload.sh 01_http_requests.py
 ```
 
 ## Record/Replay Mode
@@ -70,18 +79,14 @@ Typical workflow:
 
 ```bash
 # 1) Record a run
-LD_PRELOAD=./faultcore_interceptor/target/release/libfaultcore_interceptor.so \
-FAULTCORE_WRAPPER_MODE=shm \
 FAULTCORE_RECORD_REPLAY_MODE=record \
 FAULTCORE_RECORD_REPLAY_PATH=/tmp/faultcore_rr.jsonl.gz \
-python your_script.py
+faultcore run -- python your_script.py
 
 # 2) Replay with the same policy/routing shape
-LD_PRELOAD=./faultcore_interceptor/target/release/libfaultcore_interceptor.so \
-FAULTCORE_WRAPPER_MODE=shm \
 FAULTCORE_RECORD_REPLAY_MODE=replay \
 FAULTCORE_RECORD_REPLAY_PATH=/tmp/faultcore_rr.jsonl.gz \
-python your_script.py
+faultcore run -- python your_script.py
 ```
 
 Notes:
@@ -97,7 +102,7 @@ Notes:
 
 ```mermaid
 flowchart TD
-    Start["Decorator invoked"] --> Linux{"Linux + LD_PRELOAD active?"}
+    Start["Decorator invoked"] --> Linux{"Linux + interceptor active?"}
     Linux -->|Yes| SHM["Write/read SHM config"]
     SHM --> Hook["Interceptor applies network effects"]
     Hook --> EndA["Return with injected behavior"]

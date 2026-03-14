@@ -19,3 +19,6 @@ htmlcov/
 target/
 *.so
 Cargo.lock
+
+# project
+artifacts/

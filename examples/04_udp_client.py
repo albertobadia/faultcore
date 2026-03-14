@@ -5,7 +5,7 @@ import time
 from faultcore import connect_timeout, rate_limit
 
 
-def send_udp_message(host: str, port: int, message: str):
+def send_udp_message(host: str, port: int, message: str) -> str:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.sendto(message.encode(), (host, port))
@@ -29,10 +29,6 @@ def slow_udp(host: str, port: int, message: str):
     return send_udp_message(host, port, message)
 
 
-def plain_udp(host: str, port: int, message: str):
-    return send_udp_message(host, port, message)
-
-
 if __name__ == "__main__":
     print("=" * 60)
     print(" UDP Client Examples with faultcore ".center(60, "="))
@@ -45,25 +41,25 @@ if __name__ == "__main__":
     print(f"--- Plain UDP (server: {host}:{port}) ---")
     start = time.time()
     try:
-        response = plain_udp(host, port, message)
+        response = send_udp_message(host, port, message)
         elapsed = time.time() - start
         print(f"Sent: {message}")
         print(f"Received: {response}")
         print(f"Time: {elapsed * 1000:.1f}ms")
-    except Exception as e:
-        print(f"Error: {type(e).__name__}: {e}")
+    except Exception as exc:
+        print(f"Error: {type(exc).__name__}: {exc}")
     print()
 
     print("--- UDP with Rate Setting (10 Mbps equivalent) ---")
     start = time.time()
-    for i in range(5):
+    for i in range(1, 6):
         req_start = time.time()
         try:
-            response = rate_limited_udp(host, port, f"UDP {i + 1}")
+            response = rate_limited_udp(host, port, f"UDP {i}")
             elapsed = time.time() - req_start
-            print(f"Message {i + 1}: {elapsed * 1000:.1f}ms - {response}")
-        except Exception as e:
-            print(f"Message {i + 1}: Error - {type(e).__name__}")
+            print(f"Message {i}: {elapsed * 1000:.1f}ms - {response}")
+        except Exception as exc:
+            print(f"Message {i}: Error - {type(exc).__name__}")
     print(f"Total time: {time.time() - start:.3f}s")
     print()
 
@@ -75,8 +71,8 @@ if __name__ == "__main__":
         print("Sent: Slow UDP")
         print(f"Received: {response}")
         print(f"Time: {elapsed * 1000:.1f}ms")
-    except Exception as e:
-        print(f"Error: {type(e).__name__}: {e}")
+    except Exception as exc:
+        print(f"Error: {type(exc).__name__}: {exc}")
     print()
 
     print("UDP is connectionless, so interception is applied at socket level.")

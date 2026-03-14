@@ -111,9 +111,7 @@ fn observed_hostname_for_slot_endpoint(tid_slot: usize, endpoint: Endpoint) -> O
     let now_ns = monotonic_now_ns();
     let mut map = observed_hostname_by_endpoint().lock();
 
-    let (selected_key, observed_at_ns, hostname) = if let Some(found) = map.get(&key) {
-        (key, found.observed_at_ns, found.hostname.clone())
-    } else {
+    let selected = map.get(&key).map(|item| (key, item.observed_at_ns)).or_else(|| {
         map.iter()
             .filter(|(candidate, _)| {
                 candidate.tid_slot == tid_slot
@@ -121,14 +119,16 @@ fn observed_hostname_for_slot_endpoint(tid_slot: usize, endpoint: Endpoint) -> O
                     && candidate.addr == endpoint.addr
             })
             .max_by_key(|(_, item)| item.observed_at_ns)
-            .map(|(candidate, item)| (*candidate, item.observed_at_ns, item.hostname.clone()))?
-    };
+            .map(|(candidate, item)| (*candidate, item.observed_at_ns))
+    })?;
+    let (selected_key, observed_at_ns) = selected;
 
     if now_ns.saturating_sub(observed_at_ns) > HOSTNAME_OBSERVATION_TTL_NS {
         map.remove(&selected_key);
         return None;
     }
-    Some(hostname)
+
+    map.get(&selected_key).map(|item| item.hostname.clone())
 }
 
 pub fn observe_sni_for_fd(fd: c_int, sni: &str) {
@@ -264,23 +264,17 @@ fn rule_match_class(
         return None;
     }
 
-    if let Some(name) = sni_rule {
+    if let Some((name, candidate, bonus)) = sni_rule
+        .map(|value| (value, semantic.sni, 3))
+        .or_else(|| hostname_rule.map(|value| (value, semantic.hostname, 1)))
+    {
         if rule.protocol > 0 || rule.port > 0 || rule.reserved > 0 {
             let endpoint = endpoint?;
             if !endpoint_matches_rule_filters(rule, endpoint) {
                 return None;
             }
         }
-        return match_name_score(name, semantic.sni).map(|score| score + 3);
-    }
-    if let Some(name) = hostname_rule {
-        if rule.protocol > 0 || rule.port > 0 || rule.reserved > 0 {
-            let endpoint = endpoint?;
-            if !endpoint_matches_rule_filters(rule, endpoint) {
-                return None;
-            }
-        }
-        return match_name_score(name, semantic.hostname).map(|score| score + 1);
+        return match_name_score(name, candidate).map(|score| score + bonus);
     }
 
     let endpoint = endpoint?;

@@ -133,22 +133,41 @@ _DOWNLINK_DIRECTION_OFFSETS: DirectionOffsets = (
 
 class SHMWriter:
     def __init__(self, shm_name: str | None = None):
+        self._raw_name = shm_name
         self._fd = None
         self._mmap = None
         self._lock = threading.Lock()
+        self._try_open()
 
-        raw_name = shm_name or os.environ.get("FAULTCORE_CONFIG_SHM", f"/faultcore_{os.getpid()}_config")
+    def _try_open(self) -> None:
+        if self._mmap is not None:
+            return
+        raw_name = self._raw_name or os.environ.get("FAULTCORE_CONFIG_SHM", f"/faultcore_{os.getpid()}_config")
         name = raw_name.lstrip("/")
+        creator_mode = os.environ.get("FAULTCORE_SHM_OPEN_MODE", "").strip().lower() == "creator"
+        open_flags = os.O_RDWR | (os.O_CREAT if creator_mode else 0)
 
         try:
-            self._fd = os.open(f"/dev/shm/{name}", os.O_RDWR)
-            self._mmap = mmap.mmap(self._fd, 0, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
+            self._fd = os.open(f"/dev/shm/{name}", open_flags, 0o600)
+            if creator_mode:
+                os.ftruncate(self._fd, SHM_SIZE)
+                mmap_size = SHM_SIZE
+            else:
+                mmap_size = 0
+            self._mmap = mmap.mmap(self._fd, mmap_size, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
         except OSError:
             self._fd = None
             self._mmap = None
 
     def _is_available(self) -> bool:
         return self._mmap is not None
+
+    def _ensure_open(self) -> None:
+        if self._is_available():
+            return
+        with self._lock:
+            if not self._is_available():
+                self._try_open()
 
     def _get_offset(self, tid: int) -> int:
         idx = MAX_FDS + self._tid_slot(tid)
@@ -180,6 +199,7 @@ class SHMWriter:
         return None if milliseconds is None else self._ms_to_ns(milliseconds)
 
     def _write_with_generation_publish(self, tid: int, writer: Callable[[int], None]) -> None:
+        self._ensure_open()
         if not self._is_available():
             return
 

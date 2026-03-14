@@ -1,0 +1,10 @@
+FROM python:3.13-slim
+
+WORKDIR /workspace
+ENV PYTHONUNBUFFERED=1
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN pip install --no-cache-dir --upgrade pip
+
+COPY . /workspace
+RUN pip install --no-cache-dir -e /workspace

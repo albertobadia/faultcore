@@ -5,7 +5,7 @@ import time
 from faultcore import connect_timeout, rate_limit
 
 
-def start_echo_client(host: str, port: int, message: str):
+def start_echo_client(host: str, port: int, message: str) -> str:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(5)
     try:
@@ -27,10 +27,6 @@ def slow_echo(host: str, port: int, message: str):
     return start_echo_client(host, port, message)
 
 
-def plain_echo(host: str, port: int, message: str):
-    return start_echo_client(host, port, message)
-
-
 if __name__ == "__main__":
     print("=" * 60)
     print(" TCP Client Examples with faultcore ".center(60, "="))
@@ -43,30 +39,30 @@ if __name__ == "__main__":
     print(f"--- Plain TCP Echo (server: {host}:{port}) ---")
     try:
         start = time.time()
-        response = plain_echo(host, port, message)
+        response = start_echo_client(host, port, message)
         elapsed = time.time() - start
         print(f"Sent: {message}")
         print(f"Received: {response}")
         print(f"Time: {elapsed:.3f}s")
     except ConnectionRefusedError:
         print(f"Error: Connection refused. Is the echo server running on port {port}?")
-    except Exception as e:
-        print(f"Error: {type(e).__name__}: {e}")
+    except Exception as exc:
+        print(f"Error: {type(exc).__name__}: {exc}")
     print()
 
     print("--- TCP Echo with Rate Setting (5 Mbps equivalent) ---")
     try:
         start = time.time()
-        for i in range(5):
+        for i in range(1, 6):
             req_start = time.time()
-            response = rate_limited_echo(host, port, f"Message {i + 1}")
+            response = rate_limited_echo(host, port, f"Message {i}")
             elapsed = time.time() - req_start
-            print(f"Request {i + 1}: {elapsed * 1000:.1f}ms - {response}")
+            print(f"Request {i}: {elapsed * 1000:.1f}ms - {response}")
         print(f"Total time: {time.time() - start:.3f}s")
     except ConnectionRefusedError:
         print(f"Error: Connection refused. Is the echo server running on port {port}?")
-    except Exception as e:
-        print(f"Error: {type(e).__name__}: {e}")
+    except Exception as exc:
+        print(f"Error: {type(exc).__name__}: {exc}")
     print()
 
     print("--- TCP with Latency Injection (200ms) ---")
@@ -79,8 +75,8 @@ if __name__ == "__main__":
         print(f"Time: {elapsed:.3f}s")
     except ConnectionRefusedError:
         print(f"Error: Connection refused. Is the echo server running on port {port}?")
-    except Exception as e:
-        print(f"Error: {type(e).__name__}: {e}")
+    except Exception as exc:
+        print(f"Error: {type(exc).__name__}: {exc}")
     print()
 
     print("Start the echo server first:")

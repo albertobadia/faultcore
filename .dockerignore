@@ -1,6 +1,7 @@
 .git
 .github
 .gitignore
+.dockerignore
 Cargo.lock
 target
 *.pyc
@@ -13,6 +14,14 @@ venv
 *.egg-info
 .env
 .env.local
-**/*.so
 **/*.dylib
 **/*.whl
+.ruff_cache
+.mypy_cache
+.idea
+.vscode
+build
+dist
+artifacts
+faultcore_network
+faultcore_interceptor

@@ -370,17 +370,21 @@ def register_policy(
         policy_key="downlink_profile",
     )
 
-    optional_mapping_values = {
-        "correlated_loss": correlated_loss,
-        "connection_error": connection_error,
-        "half_open": half_open,
-        "packet_duplicate": packet_duplicate,
-        "packet_reorder": packet_reorder,
-    }
-    for field_name, policy_key, builder, defaults in _OPTIONAL_MAPPING_PROFILE_SPECS:
+    optional_mapping_values: tuple[dict[str, Any] | None, ...] = (
+        correlated_loss,
+        connection_error,
+        half_open,
+        packet_duplicate,
+        packet_reorder,
+    )
+    for (field_name, policy_key, builder, defaults), raw_value in zip(
+        _OPTIONAL_MAPPING_PROFILE_SPECS,
+        optional_mapping_values,
+        strict=True,
+    ):
         _set_optional_mapping_profile(
             policy,
-            raw_value=optional_mapping_values[field_name],
+            raw_value=raw_value,
             field_name=field_name,
             builder=builder,
             policy_key=policy_key,

@@ -9,7 +9,7 @@ High-performance fault injection and network simulation for Python, backed by Ru
 - bandwidth throttling (`rate_limit`);
 - latency, jitter, packet loss, and burst loss;
 - `FaultOSI`: OSI-pragmatic L1..L7 fault pipeline in `faultcore_network`;
-- transparent socket interception with `LD_PRELOAD` on Linux.
+- transparent socket interception on Linux via `faultcore run`.
 
 This README is an index. Detailed documentation lives in `docs/`.
 
@@ -18,13 +18,24 @@ This README is an index. Detailed documentation lives in `docs/`.
 Requirements:
 - Python 3.10+
 - Rust toolchain
-- Linux for `LD_PRELOAD` network interception
+- Linux for network interception
 
 Build:
 
 ```bash
 ./build.sh
 ```
+
+CLI-first execution:
+
+```bash
+faultcore doctor
+faultcore run -- python -c "import socket; print('ok')"
+faultcore run --run-json artifacts/run.json -- pytest -q
+faultcore report --input artifacts/run.json --output artifacts/report.html
+```
+
+Manual `LD_PRELOAD` execution remains supported for advanced/debug use.
 
 Minimal usage:
 
@@ -47,7 +58,7 @@ def network_operation():
 | [`docs/api_reference.md`](docs/api_reference.md) | Public Python API and a decorator-family map (Mermaid) for quick navigation |
 | [`docs/architecture.md`](docs/architecture.md) | System architecture with module layout, runtime sequence, and FaultOSI decision diagrams |
 | [`docs/policies_and_context.md`](docs/policies_and_context.md) | Policy lifecycle and timeout precedence flowcharts |
-| [`docs/interceptor_and_shm.md`](docs/interceptor_and_shm.md) | Linux `LD_PRELOAD` runtime sequence and platform compatibility flow |
+| [`docs/interceptor_and_shm.md`](docs/interceptor_and_shm.md) | CLI-first Linux runtime sequence (`faultcore run`) and SHM/interceptor details |
 | [`docs/testing_and_examples.md`](docs/testing_and_examples.md) | Validation path diagram (`lint -> build -> tests.sh -> tests_long.sh`) and execution guidance |
 | [`docs/shm_protocol.md`](docs/shm_protocol.md) | SHM region layout, consistency sequence, and compatibility update flow |
 | [`docs/operations_tuning.md`](docs/operations_tuning.md) | Baseline/tuning/stress operational flowchart for long-running scenarios |

@@ -95,16 +95,22 @@ They are invoked with explicit args from `tests.sh`, for example:
 
 ## Running Examples
 
-Use preload helper:
+CLI-first:
 
 ```bash
-examples/run_with_preload.sh 01_http_requests.py
+faultcore run -- .venv/bin/python examples/01_http_requests.py
 ```
 
 Some examples expect local servers:
 - TCP echo server: `tests/integration/servers/tcp_echo_server.py --host 127.0.0.1 --port 9000`
 - UDP echo server: `tests/integration/servers/udp_echo_server.py --host 127.0.0.1 --port 9001`
 - HTTP test server: `python -m uvicorn tests.integration.servers.http_server:app --host 127.0.0.1 --port 8000`
+
+Advanced/manual path (debugging only):
+
+```bash
+examples/run_with_preload.sh 01_http_requests.py
+```
 
 ## Example Set
 

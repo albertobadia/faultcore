@@ -97,15 +97,16 @@ def _target_write_kwargs(target_profile: dict[str, Any]) -> dict[str, Any]:
         "address_family": target_profile.get("address_family", 0),
         "addr": target_profile.get("addr"),
     }
-    optional_kwargs = {
-        field: value for field in _TARGET_OPTIONAL_FIELDS if (value := target_profile.get(field)) is not None
-    }
-    kwargs.update(optional_kwargs)
+    for field in _TARGET_OPTIONAL_FIELDS:
+        value = target_profile.get(field)
+        if value is not None:
+            kwargs[field] = value
     return kwargs
 
 
 def _write_direction_profile(tid: int, write_method: Any, profile: dict[str, Any]) -> None:
-    write_method(tid, **{field: profile.get(field) for field in _DIRECTIONAL_FIELDS})
+    write_kwargs = {field: profile.get(field) for field in _DIRECTIONAL_FIELDS}
+    write_method(tid, **write_kwargs)
 
 
 def _write_profile(shm: Any, tid: int, profile: dict[str, Any] | None, writer_name: str, **defaults: Any) -> None:

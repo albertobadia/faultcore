@@ -69,6 +69,18 @@ def _rate_to_bps(value: float | int, multiplier: int) -> int:
     return int(_as_non_negative_float(float(value), "rate must be >= 0") * multiplier)
 
 
+def _ppm_from_loss_value(value: float) -> int:
+    if value < 0:
+        raise ValueError("packet_loss must be >= 0")
+    if value <= 1:
+        return int(value * 1_000_000)
+    if value <= 100:
+        return int(value * 10_000)
+    if value <= 1_000_000:
+        return int(value)
+    raise ValueError("packet_loss must be <= 100%, <=1.0 ratio, or <=1000000ppm")
+
+
 def _validate_port_bounds(value: int, field_name: str) -> None:
     _ensure_range(value, 0, 65535, f"target {field_name} must be between 0 and 65535")
 
@@ -146,19 +158,8 @@ def parse_packet_loss(loss: str | int | float) -> int:
             value = float(raw[:-3])
             _ensure_range(value, 0, 1_000_000, "packet_loss ppm must be between 0 and 1000000")
             return int(value)
-        value = float(raw)
-    else:
-        value = float(loss)
-
-    if value < 0:
-        raise ValueError("packet_loss must be >= 0")
-    if value <= 1:
-        return int(value * 1_000_000)
-    if value <= 100:
-        return int(value * 10_000)
-    if value <= 1_000_000:
-        return int(value)
-    raise ValueError("packet_loss must be <= 100%, <=1.0 ratio, or <=1000000ppm")
+        return _ppm_from_loss_value(float(raw))
+    return _ppm_from_loss_value(float(loss))
 
 
 def build_direction_profile(
