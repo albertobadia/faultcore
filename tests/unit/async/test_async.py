@@ -96,7 +96,7 @@ class TestAsyncFaultContext:
         from faultcore.decorator import get_thread_policy
 
         faultcore.set_thread_policy("outer")
-        async with faultcore.fault_context("inner"):
+        async with faultcore.policy_context("inner"):
             assert get_thread_policy() == "inner"
 
         assert get_thread_policy() == "outer"

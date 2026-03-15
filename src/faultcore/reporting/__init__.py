@@ -18,6 +18,26 @@ from .core import (
 from .html_renderer import _normalize_chart_series, render_report_html
 
 _git_value = _core._git_value
+_RUN_RECORD_KEYS = (
+    "command",
+    "returncode",
+    "started_at",
+    "ended_at",
+    "duration_ms",
+    "interceptor_path",
+    "ld_preload_effective",
+    "interceptor_active",
+    "summary_override",
+    "run_json_path",
+    "additional_events",
+    "stdout_excerpt",
+    "stderr_excerpt",
+    "network_metrics",
+    "network_series",
+    "observed_sites",
+    "site_metrics",
+    "record_replay_path",
+)
 
 
 def build_run_record(
@@ -42,26 +62,9 @@ def build_run_record(
     record_replay_path="",
 ):
     _core._git_value = _git_value
-    return _core.build_run_record(
-        command=command,
-        returncode=returncode,
-        started_at=started_at,
-        ended_at=ended_at,
-        duration_ms=duration_ms,
-        interceptor_path=interceptor_path,
-        ld_preload_effective=ld_preload_effective,
-        interceptor_active=interceptor_active,
-        summary_override=summary_override,
-        run_json_path=run_json_path,
-        additional_events=additional_events,
-        stdout_excerpt=stdout_excerpt,
-        stderr_excerpt=stderr_excerpt,
-        network_metrics=network_metrics,
-        network_series=network_series,
-        observed_sites=observed_sites,
-        site_metrics=site_metrics,
-        record_replay_path=record_replay_path,
-    )
+    local_values = locals()
+    run_record_kwargs = {key: local_values[key] for key in _RUN_RECORD_KEYS}
+    return _core.build_run_record(**run_record_kwargs)
 
 
 __all__ = [

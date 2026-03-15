@@ -502,3 +502,8 @@ class TestExports:
         from faultcore import fault_context
 
         assert fault_context is not None
+
+    def test_policy_context_is_exported(self):
+        from faultcore import policy_context
+
+        assert policy_context is not None

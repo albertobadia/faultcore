@@ -105,17 +105,22 @@ def _target_write_kwargs(target_profile: dict[str, Any]) -> dict[str, Any]:
 
 
 def _write_direction_profile(tid: int, write_method: Any, profile: dict[str, Any]) -> None:
-    write_kwargs = {field: profile.get(field) for field in _DIRECTIONAL_FIELDS}
-    write_method(tid, **write_kwargs)
+    kwargs = {field: profile.get(field) for field in _DIRECTIONAL_FIELDS}
+    write_method(tid, **kwargs)
 
 
-def _write_profile(shm: Any, tid: int, profile: dict[str, Any] | None, writer_name: str, **defaults: Any) -> None:
+def _write_profile(
+    shm: Any,
+    tid: int,
+    profile: dict[str, Any] | None,
+    writer_name: str,
+    defaults: dict[str, Any],
+) -> None:
     if not profile:
         return
 
-    write_kwargs = {field: profile.get(field, default) for field, default in defaults.items()}
-    writer = getattr(shm, writer_name)
-    writer(tid, **write_kwargs)
+    kwargs = {field: profile.get(field, default) for field, default in defaults.items()}
+    getattr(shm, writer_name)(tid, **kwargs)
 
 
 def _write_schedule_profile(
@@ -167,7 +172,7 @@ def apply_fault_profiles(shm: Any, tid: int, wrapper: Any, *, started_monotonic_
             _write_direction_profile(tid, getattr(shm, writer_name), profile)
 
     for profile_attr, writer_name, defaults in _PROFILE_WRITERS:
-        _write_profile(shm, tid, getattr(wrapper, profile_attr), writer_name, **defaults)
+        _write_profile(shm, tid, getattr(wrapper, profile_attr), writer_name, defaults)
 
     if wrapper._target_profiles:
         shm.write_targets(tid, wrapper._target_profiles)

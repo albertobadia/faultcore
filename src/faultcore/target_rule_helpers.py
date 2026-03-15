@@ -103,10 +103,9 @@ def validate_target_rule(rule: dict[str, Any], idx: int) -> None:
     has_sni = any(sni_bytes)
     if has_hostname and has_sni:
         raise ValueError(f"targets[{idx}] cannot define both hostname and sni")
-    has_semantic_name = has_hostname or has_sni
-    if has_semantic_name and kind != 0:
+    if (has_hostname or has_sni) and kind != 0:
         raise ValueError(f"targets[{idx}] semantic hostname/sni rules require kind=0")
-    if enabled == 1 and not has_semantic_name and kind == 0:
+    if enabled == 1 and not (has_hostname or has_sni) and kind == 0:
         raise ValueError(f"targets[{idx}] requires kind host/cidr or hostname/sni")
 
     address_family, _ = normalize_target_address(rule, idx)
@@ -119,4 +118,4 @@ def validate_target_rule(rule: dict[str, Any], idx: int) -> None:
     if protocol not in (0, 1, 2):
         raise ValueError(f"targets[{idx}].protocol must be one of 0, 1, 2")
 
-    _ = resolve_port_range(rule, idx)
+    resolve_port_range(rule, idx)

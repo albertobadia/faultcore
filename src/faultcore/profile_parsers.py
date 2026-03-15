@@ -442,33 +442,32 @@ def build_schedule_profile(
     ramp_s: int | float | None = None,
 ) -> dict[str, int]:
     normalized = kind.strip().lower()
-    if normalized == "spike":
-        if every_s is None or duration_s is None:
-            raise ValueError("spike profile requires every_s and duration_s")
-        cycle_ns = _seconds_to_ns(every_s)
-        active_ns = _seconds_to_ns(duration_s)
-        if cycle_ns <= 0 or active_ns <= 0 or active_ns > cycle_ns:
-            raise ValueError("spike profile requires 0 < duration_s <= every_s")
-        return _schedule_profile(2, cycle_ns, active_ns)
-
-    if normalized == "flapping":
-        if on_s is None or off_s is None:
-            raise ValueError("flapping profile requires on_s and off_s")
-        on_ns = _seconds_to_ns(on_s)
-        off_ns = _seconds_to_ns(off_s)
-        if on_ns <= 0 or off_ns <= 0:
-            raise ValueError("flapping profile requires on_s > 0 and off_s > 0")
-        return _schedule_profile(3, on_ns, off_ns)
-
-    if normalized == "ramp":
-        if ramp_s is None:
-            raise ValueError("ramp profile requires ramp_s")
-        ramp_ns = _seconds_to_ns(ramp_s)
-        if ramp_ns <= 0:
-            raise ValueError("ramp profile requires ramp_s > 0")
-        return _schedule_profile(1, ramp_ns, 0)
-
-    raise ValueError("schedule kind must be one of: ramp, spike, flapping")
+    match normalized:
+        case "spike":
+            if every_s is None or duration_s is None:
+                raise ValueError("spike profile requires every_s and duration_s")
+            cycle_ns = _seconds_to_ns(every_s)
+            active_ns = _seconds_to_ns(duration_s)
+            if cycle_ns <= 0 or active_ns <= 0 or active_ns > cycle_ns:
+                raise ValueError("spike profile requires 0 < duration_s <= every_s")
+            return _schedule_profile(2, cycle_ns, active_ns)
+        case "flapping":
+            if on_s is None or off_s is None:
+                raise ValueError("flapping profile requires on_s and off_s")
+            on_ns = _seconds_to_ns(on_s)
+            off_ns = _seconds_to_ns(off_s)
+            if on_ns <= 0 or off_ns <= 0:
+                raise ValueError("flapping profile requires on_s > 0 and off_s > 0")
+            return _schedule_profile(3, on_ns, off_ns)
+        case "ramp":
+            if ramp_s is None:
+                raise ValueError("ramp profile requires ramp_s")
+            ramp_ns = _seconds_to_ns(ramp_s)
+            if ramp_ns <= 0:
+                raise ValueError("ramp profile requires ramp_s > 0")
+            return _schedule_profile(1, ramp_ns, 0)
+        case _:
+            raise ValueError("schedule kind must be one of: ramp, spike, flapping")
 
 
 def build_session_budget_profile(
@@ -497,28 +496,29 @@ def build_session_budget_profile(
         raise ValueError("session_budget requires at least one limit")
 
     normalized_action = action.strip().lower()
-    if normalized_action == "drop":
-        profile["action"] = 1
-        if budget_timeout_ms is not None:
-            raise ValueError("session_budget budget_timeout_ms only applies to action=timeout")
-        if error is not None:
-            raise ValueError("session_budget error only applies to action=connection_error")
-    elif normalized_action == "timeout":
-        profile["action"] = 2
-        if budget_timeout_ms is None:
-            raise ValueError("session_budget budget_timeout_ms is required for action=timeout")
-        timeout_ms = int(budget_timeout_ms)
-        if timeout_ms <= 0:
-            raise ValueError("session_budget budget_timeout_ms must be > 0")
-        profile["budget_timeout_ms"] = timeout_ms
-        if error is not None:
-            raise ValueError("session_budget error only applies to action=connection_error")
-    elif normalized_action == "connection_error":
-        profile["action"] = 3
-        profile["error_kind"] = parse_error_kind(error or "reset")
-        if budget_timeout_ms is not None:
-            raise ValueError("session_budget budget_timeout_ms only applies to action=timeout")
-    else:
-        raise ValueError("session_budget action must be one of: drop, timeout, connection_error")
+    match normalized_action:
+        case "drop":
+            profile["action"] = 1
+            if budget_timeout_ms is not None:
+                raise ValueError("session_budget budget_timeout_ms only applies to action=timeout")
+            if error is not None:
+                raise ValueError("session_budget error only applies to action=connection_error")
+        case "timeout":
+            profile["action"] = 2
+            if budget_timeout_ms is None:
+                raise ValueError("session_budget budget_timeout_ms is required for action=timeout")
+            timeout_ms = int(budget_timeout_ms)
+            if timeout_ms <= 0:
+                raise ValueError("session_budget budget_timeout_ms must be > 0")
+            profile["budget_timeout_ms"] = timeout_ms
+            if error is not None:
+                raise ValueError("session_budget error only applies to action=connection_error")
+        case "connection_error":
+            profile["action"] = 3
+            profile["error_kind"] = parse_error_kind(error or "reset")
+            if budget_timeout_ms is not None:
+                raise ValueError("session_budget budget_timeout_ms only applies to action=timeout")
+        case _:
+            raise ValueError("session_budget action must be one of: drop, timeout, connection_error")
 
     return profile

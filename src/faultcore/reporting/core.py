@@ -5,17 +5,21 @@ import platform
 import re
 import subprocess
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
-UTC_TZ = getattr(datetime, "UTC", timezone.utc)  # noqa: UP017
+UTC_TZ = timezone(timedelta(0))
 _PYTEST_SUMMARY_TIME_RE = re.compile(r"\bin [0-9]+(?:\.[0-9]+)?s\b")
 _PYTEST_TOKEN_RE = re.compile(r"(?P<count>\d+)\s+(?P<label>passed|failed|error|errors)\b", re.IGNORECASE)
 _PYTEST_NO_TESTS_RE = re.compile(r"no tests ran", re.IGNORECASE)
 _PYTEST_FAILED_LINE_RE = re.compile(r"^(FAILED|ERROR)\s+(.+)$")
 _CI_PROVIDER_KEYS = ("GITHUB_ACTIONS", "GITLAB_CI", "BUILDKITE", "CI")
+
+
+def _errors_from_returncode(returncode: int) -> int:
+    return 0 if returncode == 0 else 1
 
 
 def utc_now_iso() -> str:
@@ -44,9 +48,9 @@ def is_pytest_command(command: list[str]) -> bool:
     if not command:
         return False
     command0 = Path(command[0]).name.lower()
-    if command0 in {"pytest", "py.test"}:
-        return True
-    return len(command) >= 3 and command0.startswith("python") and command[1] == "-m" and command[2] == "pytest"
+    return command0 in {"pytest", "py.test"} or (
+        len(command) >= 3 and command0.startswith("python") and command[1] == "-m" and command[2] == "pytest"
+    )
 
 
 def parse_pytest_summary(output_text: str, *, returncode: int) -> dict[str, int] | None:
@@ -55,10 +59,7 @@ def parse_pytest_summary(output_text: str, *, returncode: int) -> dict[str, int]
             line
             for line in reversed(output_text.splitlines())
             if _PYTEST_NO_TESTS_RE.search(line)
-            or (
-                _PYTEST_SUMMARY_TIME_RE.search(line) is not None
-                and _PYTEST_TOKEN_RE.search(line) is not None
-            )
+            or (_PYTEST_SUMMARY_TIME_RE.search(line) is not None and _PYTEST_TOKEN_RE.search(line) is not None)
         ),
         None,
     )
@@ -83,7 +84,7 @@ def parse_pytest_summary(output_text: str, *, returncode: int) -> dict[str, int]
             "tests_total": 0,
             "tests_passed": 0,
             "tests_failed": 0,
-            "errors": 0 if returncode == 0 else 1,
+            "errors": _errors_from_returncode(returncode),
         }
 
     derived_errors = errors
@@ -110,10 +111,7 @@ def parse_pytest_failures(output_text: str, *, max_items: int = 20) -> list[str]
 
 
 def _detect_ci_provider() -> str:
-    for key in _CI_PROVIDER_KEYS:
-        if os.environ.get(key):
-            return key.lower()
-    return ""
+    return next((key.lower() for key in _CI_PROVIDER_KEYS if os.environ.get(key)), "")
 
 
 def _default_summary(returncode: int) -> dict[str, int]:
@@ -121,7 +119,7 @@ def _default_summary(returncode: int) -> dict[str, int]:
         "tests_total": 0,
         "tests_passed": 0,
         "tests_failed": 0,
-        "errors": 0 if returncode == 0 else 1,
+        "errors": _errors_from_returncode(returncode),
         "fault_events_total": 0,
     }
 
@@ -348,9 +346,7 @@ def build_record_replay_timeline_events(
         decision = str(item.get("decision", ""))
         site = str(item.get("site", ""))
         value = item.get("value", 0)
-        severity = "info" if decision == "continue" else "warning"
-        if decision == "error":
-            severity = "error"
+        severity = "error" if decision == "error" else ("info" if decision == "continue" else "warning")
         out.append(
             {
                 "ts": ts,

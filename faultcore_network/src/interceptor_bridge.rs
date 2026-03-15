@@ -1,15 +1,15 @@
 use libc::{c_int, sockaddr, socklen_t};
 use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 
 use crate::{
-    Config, Direction, Endpoint, FaultOsiEngine, LayerDecision, TargetRule, assign_rule_to_fd,
-    clear_rule_for_fd, clone_rule_for_fd, endpoint_for_addr_or_fd, endpoint_for_fd,
-    get_config_for_tid, get_config_for_tid_slot, get_target_rules_for_tid_slot, get_thread_id,
-    get_tid_slot_for_fd, get_tid_slot_for_tid, monotonic_now_ns,
-    record_target_rule_observability_hit, try_open_shm,
+    assign_rule_to_fd, clear_rule_for_fd, clone_rule_for_fd, endpoint_for_addr_or_fd,
+    endpoint_for_fd, get_config_for_tid, get_config_for_tid_slot, get_target_rules_for_tid_slot,
+    get_thread_id, get_tid_slot_for_fd, get_tid_slot_for_tid, monotonic_now_ns,
+    record_target_rule_observability_hit, try_open_shm, Config, Direction, Endpoint,
+    FaultOsiEngine, LayerDecision, TargetRule,
 };
 
 const RULESET_READ_RETRY_LIMIT: usize = 3;
@@ -18,8 +18,9 @@ const HOSTNAME_OBSERVATION_MAX_ENTRIES: usize = 4096;
 static RELOAD_APPLIED_TOTAL: AtomicU64 = AtomicU64::new(0);
 static RELOAD_RETRY_TOTAL: AtomicU64 = AtomicU64::new(0);
 static OBSERVED_SNI_BY_FD: OnceLock<Mutex<HashMap<c_int, String>>> = OnceLock::new();
-static OBSERVED_HOSTNAME_BY_ENDPOINT: OnceLock<Mutex<HashMap<HostnameObservationKey, ObservedName>>> =
-    OnceLock::new();
+static OBSERVED_HOSTNAME_BY_ENDPOINT: OnceLock<
+    Mutex<HashMap<HostnameObservationKey, ObservedName>>,
+> = OnceLock::new();
 
 fn observed_sni_by_fd() -> &'static Mutex<HashMap<c_int, String>> {
     OBSERVED_SNI_BY_FD.get_or_init(|| Mutex::new(HashMap::new()))
@@ -39,7 +40,8 @@ struct ObservedName {
     observed_at_ns: u64,
 }
 
-fn observed_hostname_by_endpoint() -> &'static Mutex<HashMap<HostnameObservationKey, ObservedName>> {
+fn observed_hostname_by_endpoint() -> &'static Mutex<HashMap<HostnameObservationKey, ObservedName>>
+{
     OBSERVED_HOSTNAME_BY_ENDPOINT.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -71,7 +73,10 @@ fn hostname_observation_key(tid_slot: usize, endpoint: Endpoint) -> Option<Hostn
     })
 }
 
-fn prune_hostname_observations(map: &mut HashMap<HostnameObservationKey, ObservedName>, now_ns: u64) {
+fn prune_hostname_observations(
+    map: &mut HashMap<HostnameObservationKey, ObservedName>,
+    now_ns: u64,
+) {
     map.retain(|_, item| now_ns.saturating_sub(item.observed_at_ns) <= HOSTNAME_OBSERVATION_TTL_NS);
     if map.len() <= HOSTNAME_OBSERVATION_MAX_ENTRIES {
         return;
@@ -111,17 +116,19 @@ fn observed_hostname_for_slot_endpoint(tid_slot: usize, endpoint: Endpoint) -> O
     let now_ns = monotonic_now_ns();
     let mut map = observed_hostname_by_endpoint().lock();
 
-    let selected = map.get(&key).map(|item| (key, item.observed_at_ns)).or_else(|| {
-        map.iter()
-            .filter(|(candidate, _)| {
-                candidate.tid_slot == tid_slot
-                    && candidate.address_family == endpoint.address_family
-                    && candidate.addr == endpoint.addr
-            })
-            .max_by_key(|(_, item)| item.observed_at_ns)
-            .map(|(candidate, item)| (*candidate, item.observed_at_ns))
-    })?;
-    let (selected_key, observed_at_ns) = selected;
+    let (selected_key, observed_at_ns) = map
+        .get(&key)
+        .map(|item| (key, item.observed_at_ns))
+        .or_else(|| {
+            map.iter()
+                .filter(|(candidate, _)| {
+                    candidate.tid_slot == tid_slot
+                        && candidate.address_family == endpoint.address_family
+                        && candidate.addr == endpoint.addr
+                })
+                .max_by_key(|(_, item)| item.observed_at_ns)
+                .map(|(candidate, item)| (*candidate, item.observed_at_ns))
+        })?;
 
     if now_ns.saturating_sub(observed_at_ns) > HOSTNAME_OBSERVATION_TTL_NS {
         map.remove(&selected_key);
@@ -238,7 +245,8 @@ fn endpoint_matches_rule_filters(rule: &TargetRule, endpoint: Endpoint) -> bool 
     let endpoint_port = u64::from(endpoint.port);
     let port_start = rule.port;
     let port_end = rule_port_end(rule);
-    if (port_start > 0 || port_end > 0) && (endpoint_port < port_start || endpoint_port > port_end) {
+    if (port_start > 0 || port_end > 0) && (endpoint_port < port_start || endpoint_port > port_end)
+    {
         return false;
     }
 
@@ -291,8 +299,9 @@ fn rule_match_class(
         2 => {
             let max_prefix = if family == 1 { 32 } else { 128 };
             let bounded_prefix = usize::min(rule.prefix_len as usize, max_prefix);
-            (endpoint.address_family == family && prefix_match(&endpoint.addr, &rule.addr, bounded_prefix))
-                .then_some(1)
+            (endpoint.address_family == family
+                && prefix_match(&endpoint.addr, &rule.addr, bounded_prefix))
+            .then_some(1)
         }
         _ => None,
     }
@@ -320,25 +329,25 @@ fn select_best_target_rule(
     rules: &[TargetRule],
     count: usize,
 ) -> Option<(usize, TargetRule)> {
-    let mut selected_idx: Option<usize> = None;
-    let mut selected_priority: u64 = 0;
-    let mut selected_class: u8 = 0;
+    let mut selected: Option<(usize, u64, u8)> = None;
     let limit = usize::min(count, rules.len());
 
     for (idx, rule) in rules.iter().take(limit).enumerate() {
         let Some(match_class) = rule_match_class(rule, endpoint, semantic) else {
             continue;
         };
-        if selected_idx.is_none()
-            || rule.priority > selected_priority
-            || (rule.priority == selected_priority && match_class > selected_class)
-        {
-            selected_idx = Some(idx);
-            selected_priority = rule.priority;
-            selected_class = match_class;
+        let should_replace = match selected {
+            None => true,
+            Some((_, selected_priority, selected_class)) => {
+                rule.priority > selected_priority
+                    || (rule.priority == selected_priority && match_class > selected_class)
+            }
+        };
+        if should_replace {
+            selected = Some((idx, rule.priority, match_class));
         }
     }
-    selected_idx.map(|idx| (idx, rules[idx]))
+    selected.map(|(idx, _, _)| (idx, rules[idx]))
 }
 
 fn target_rule_id_for_slot_idx(tid_slot: usize, idx: usize) -> u64 {
@@ -447,7 +456,8 @@ fn resolve_runtime_config_for_endpoint(fd: c_int, endpoint: Option<Endpoint>) ->
     };
 
     let observed_sni = observed_sni_for_fd(fd);
-    let observed_hostname = endpoint.and_then(|resolved| observed_hostname_for_slot_endpoint(slot, resolved));
+    let observed_hostname =
+        endpoint.and_then(|resolved| observed_hostname_for_slot_endpoint(slot, resolved));
     let semantic = SemanticContext {
         hostname: observed_hostname.as_deref(),
         sni: observed_sni.as_deref(),
@@ -517,8 +527,6 @@ pub unsafe fn uplink_duplicate_count_for_addr_or_fd(
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -526,460 +534,513 @@ mod tests {
     use crate::{global_fault_osi_advanced_metrics_snapshot, reset_advanced_metrics};
     use std::cell::Cell;
     use std::sync::OnceLock;
-    
+
     fn endpoint_v4(ipv4: u32, port: u16, protocol: u64) -> Endpoint {
-       let mut addr = [0u8; 16];
-       addr[..4].copy_from_slice(&ipv4.to_be_bytes());
-       Endpoint {
-           address_family: 1,
-           addr,
-           ipv4,
-           port,
-           protocol,
-       }
+        let mut addr = [0u8; 16];
+        addr[..4].copy_from_slice(&ipv4.to_be_bytes());
+        Endpoint {
+            address_family: 1,
+            addr,
+            ipv4,
+            port,
+            protocol,
+        }
     }
-    
+
     fn addr_v4(ipv4: u32) -> [u8; 16] {
-       let mut addr = [0u8; 16];
-       addr[..4].copy_from_slice(&ipv4.to_be_bytes());
-       addr
+        let mut addr = [0u8; 16];
+        addr[..4].copy_from_slice(&ipv4.to_be_bytes());
+        addr
     }
-    
+
     fn endpoint_v6(addr: [u8; 16], port: u16, protocol: u64) -> Endpoint {
-       Endpoint {
-           address_family: 2,
-           addr,
-           ipv4: 0,
-           port,
-           protocol,
-       }
+        Endpoint {
+            address_family: 2,
+            addr,
+            ipv4: 0,
+            port,
+            protocol,
+        }
     }
-    
+
     fn cfg_with_latency(latency_ns: u64) -> Config {
-       Config {
-           latency_ns,
-           ..Default::default()
-       }
+        Config {
+            latency_ns,
+            ..Default::default()
+        }
     }
 
     fn observed_semantic_test_guard() -> parking_lot::MutexGuard<'static, ()> {
-       static TEST_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
-       TEST_GUARD.get_or_init(|| Mutex::new(())).lock()
+        static TEST_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
+        TEST_GUARD.get_or_init(|| Mutex::new(())).lock()
     }
 
     fn name32(value: &str) -> [u8; 32] {
-       let mut out = [0u8; 32];
-       let bytes = value.as_bytes();
-       out[..bytes.len()].copy_from_slice(bytes);
-       out
+        let mut out = [0u8; 32];
+        let bytes = value.as_bytes();
+        out[..bytes.len()].copy_from_slice(bytes);
+        out
     }
-    
+
     fn select_base_config_for_test(
-       fd: c_int,
-       endpoint: Option<Endpoint>,
-       tid: u64,
-       current_cfg: Option<Config>,
-       owner_slot: Option<usize>,
-       owner_cfg: Option<Config>,
+        endpoint: Option<Endpoint>,
+        tid: u64,
+        current_cfg: Option<Config>,
+        owner_slot: Option<usize>,
+        owner_cfg: Option<Config>,
     ) -> Option<Config> {
-       let (base_cfg, slot) = if let (Some(slot), Some(cfg)) = (owner_slot, owner_cfg) {
-           (cfg, slot)
-       } else {
-           (current_cfg?, get_tid_slot_for_tid(tid))
-       };
-       let _ = fd;
-       apply_multi_target_for_tid(base_cfg, slot, endpoint, SemanticContext::default())
+        let (base_cfg, slot) = if let (Some(slot), Some(cfg)) = (owner_slot, owner_cfg) {
+            (cfg, slot)
+        } else {
+            (current_cfg?, get_tid_slot_for_tid(tid))
+        };
+        apply_multi_target_for_tid(base_cfg, slot, endpoint, SemanticContext::default())
     }
-    
+
     #[test]
     fn select_rule_prefers_higher_priority() {
-       let endpoint = endpoint_v4(0x0A010203, 443, 1);
-       let mut rules = [TargetRule::default(); crate::MAX_TARGET_RULES_PER_TID];
-       rules[0] = TargetRule {
-           enabled: 1,
-           priority: 10,
-           kind: 1,
-           ipv4: endpoint.ipv4 as u64,
-           prefix_len: 32,
-           port: endpoint.port as u64,
-           protocol: endpoint.protocol,
-           reserved: 0,
-           address_family: 1,
-           addr: endpoint.addr,
-           hostname: [0; 32],
-           sni: [0; 32],
-       };
-       rules[1] = TargetRule {
-           enabled: 1,
-           priority: 200,
-           kind: 1,
-           ipv4: endpoint.ipv4 as u64,
-           prefix_len: 32,
-           port: endpoint.port as u64,
-           protocol: endpoint.protocol,
-           reserved: 0,
-           address_family: 1,
-           addr: endpoint.addr,
-           hostname: [0; 32],
-           sni: [0; 32],
-       };
-       let (_, selected) = select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).expect("must select");
-       assert_eq!(selected.priority, 200);
+        let endpoint = endpoint_v4(0x0A010203, 443, 1);
+        let mut rules = [TargetRule::default(); crate::MAX_TARGET_RULES_PER_TID];
+        rules[0] = TargetRule {
+            enabled: 1,
+            priority: 10,
+            kind: 1,
+            ipv4: endpoint.ipv4 as u64,
+            prefix_len: 32,
+            port: endpoint.port as u64,
+            protocol: endpoint.protocol,
+            reserved: 0,
+            address_family: 1,
+            addr: endpoint.addr,
+            hostname: [0; 32],
+            sni: [0; 32],
+        };
+        rules[1] = TargetRule {
+            enabled: 1,
+            priority: 200,
+            kind: 1,
+            ipv4: endpoint.ipv4 as u64,
+            prefix_len: 32,
+            port: endpoint.port as u64,
+            protocol: endpoint.protocol,
+            reserved: 0,
+            address_family: 1,
+            addr: endpoint.addr,
+            hostname: [0; 32],
+            sni: [0; 32],
+        };
+        let (_, selected) = select_best_target_rule(
+            Some(endpoint),
+            SemanticContext::default(),
+            &rules,
+            rules.len(),
+        )
+        .expect("must select");
+        assert_eq!(selected.priority, 200);
     }
-    
+
     #[test]
     fn select_rule_keeps_first_on_priority_tie() {
-       let endpoint = endpoint_v4(0x0A010203, 53, 2);
-       let rules = [
-           TargetRule {
-               enabled: 1,
-               priority: 100,
-               kind: 2,
-               ipv4: 0x0A000000,
-               prefix_len: 8,
-               port: endpoint.port as u64,
-               protocol: endpoint.protocol,
-               reserved: 0,
-               address_family: 1,
-               addr: addr_v4(0x0A000000),
-               hostname: [0; 32],
-               sni: [0; 32],
-           },
-           TargetRule {
-               enabled: 1,
-               priority: 100,
-               kind: 2,
-               ipv4: 0x0A010000,
-               prefix_len: 16,
-               port: endpoint.port as u64,
-               protocol: endpoint.protocol,
-               reserved: 0,
-               address_family: 1,
-               addr: addr_v4(0x0A010000),
-               hostname: [0; 32],
-               sni: [0; 32],
-           },
-       ];
-       let (_, selected) = select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).expect("must select");
-       assert_eq!(selected.ipv4, 0x0A000000);
-       assert_eq!(selected.prefix_len, 8);
+        let endpoint = endpoint_v4(0x0A010203, 53, 2);
+        let rules = [
+            TargetRule {
+                enabled: 1,
+                priority: 100,
+                kind: 2,
+                ipv4: 0x0A000000,
+                prefix_len: 8,
+                port: endpoint.port as u64,
+                protocol: endpoint.protocol,
+                reserved: 0,
+                address_family: 1,
+                addr: addr_v4(0x0A000000),
+                hostname: [0; 32],
+                sni: [0; 32],
+            },
+            TargetRule {
+                enabled: 1,
+                priority: 100,
+                kind: 2,
+                ipv4: 0x0A010000,
+                prefix_len: 16,
+                port: endpoint.port as u64,
+                protocol: endpoint.protocol,
+                reserved: 0,
+                address_family: 1,
+                addr: addr_v4(0x0A010000),
+                hostname: [0; 32],
+                sni: [0; 32],
+            },
+        ];
+        let (_, selected) = select_best_target_rule(
+            Some(endpoint),
+            SemanticContext::default(),
+            &rules,
+            rules.len(),
+        )
+        .expect("must select");
+        assert_eq!(selected.ipv4, 0x0A000000);
+        assert_eq!(selected.prefix_len, 8);
     }
-    
+
     #[test]
     fn select_rule_returns_none_when_no_match() {
-       let endpoint = endpoint_v4(0xC0A80101, 80, 1);
-       let rules = [TargetRule {
-           enabled: 1,
-           priority: 100,
-           kind: 1,
-           ipv4: 0x0A000001,
-           prefix_len: 32,
-           port: endpoint.port as u64,
-           protocol: endpoint.protocol,
-           reserved: 0,
-           address_family: 1,
-           addr: addr_v4(0x0A000001),
-           hostname: [0; 32],
-           sni: [0; 32],
-       }];
-       assert!(select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).is_none());
+        let endpoint = endpoint_v4(0xC0A80101, 80, 1);
+        let rules = [TargetRule {
+            enabled: 1,
+            priority: 100,
+            kind: 1,
+            ipv4: 0x0A000001,
+            prefix_len: 32,
+            port: endpoint.port as u64,
+            protocol: endpoint.protocol,
+            reserved: 0,
+            address_family: 1,
+            addr: addr_v4(0x0A000001),
+            hostname: [0; 32],
+            sni: [0; 32],
+        }];
+        assert!(select_best_target_rule(
+            Some(endpoint),
+            SemanticContext::default(),
+            &rules,
+            rules.len()
+        )
+        .is_none());
     }
-    
+
     #[test]
     fn select_rule_skips_disabled_entries() {
-       let endpoint = endpoint_v4(0x0A010203, 443, 1);
-       let rules = [
-           TargetRule {
-               enabled: 0,
-               priority: 1_000,
-               kind: 1,
-               ipv4: endpoint.ipv4 as u64,
-               prefix_len: 32,
-               port: endpoint.port as u64,
-               protocol: endpoint.protocol,
-               reserved: 0,
-               address_family: 1,
-               addr: endpoint.addr,
-               hostname: [0; 32],
-               sni: [0; 32],
-           },
-           TargetRule {
-               enabled: 1,
-               priority: 100,
-               kind: 1,
-               ipv4: endpoint.ipv4 as u64,
-               prefix_len: 32,
-               port: endpoint.port as u64,
-               protocol: endpoint.protocol,
-               reserved: 0,
-               address_family: 1,
-               addr: endpoint.addr,
-               hostname: [0; 32],
-               sni: [0; 32],
-           },
-       ];
-       let (_, selected) = select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).expect("must select");
-       assert_eq!(selected.priority, 100);
+        let endpoint = endpoint_v4(0x0A010203, 443, 1);
+        let rules = [
+            TargetRule {
+                enabled: 0,
+                priority: 1_000,
+                kind: 1,
+                ipv4: endpoint.ipv4 as u64,
+                prefix_len: 32,
+                port: endpoint.port as u64,
+                protocol: endpoint.protocol,
+                reserved: 0,
+                address_family: 1,
+                addr: endpoint.addr,
+                hostname: [0; 32],
+                sni: [0; 32],
+            },
+            TargetRule {
+                enabled: 1,
+                priority: 100,
+                kind: 1,
+                ipv4: endpoint.ipv4 as u64,
+                prefix_len: 32,
+                port: endpoint.port as u64,
+                protocol: endpoint.protocol,
+                reserved: 0,
+                address_family: 1,
+                addr: endpoint.addr,
+                hostname: [0; 32],
+                sni: [0; 32],
+            },
+        ];
+        let (_, selected) = select_best_target_rule(
+            Some(endpoint),
+            SemanticContext::default(),
+            &rules,
+            rules.len(),
+        )
+        .expect("must select");
+        assert_eq!(selected.priority, 100);
     }
-    
+
     #[test]
     fn select_rule_respects_protocol_and_port_filters() {
-       let endpoint = endpoint_v4(0x0A010203, 53, 2);
-       let rules = [
-           TargetRule {
-               enabled: 1,
-               priority: 50,
-               kind: 1,
-               ipv4: endpoint.ipv4 as u64,
-               prefix_len: 32,
-               port: 443,
-               protocol: endpoint.protocol,
-               reserved: 0,
-               address_family: 1,
-               addr: endpoint.addr,
-               hostname: [0; 32],
-               sni: [0; 32],
-           },
-           TargetRule {
-               enabled: 1,
-               priority: 60,
-               kind: 1,
-               ipv4: endpoint.ipv4 as u64,
-               prefix_len: 32,
-               port: endpoint.port as u64,
-               protocol: 1,
-               reserved: 0,
-               address_family: 1,
-               addr: endpoint.addr,
-               hostname: [0; 32],
-               sni: [0; 32],
-           },
-           TargetRule {
-               enabled: 1,
-               priority: 70,
-               kind: 1,
-               ipv4: endpoint.ipv4 as u64,
-               prefix_len: 32,
-               port: endpoint.port as u64,
-               protocol: endpoint.protocol,
-               reserved: 0,
-               address_family: 1,
-               addr: endpoint.addr,
-               hostname: [0; 32],
-               sni: [0; 32],
-           },
-       ];
-       let (_, selected) = select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).expect("must select");
-       assert_eq!(selected.priority, 70);
+        let endpoint = endpoint_v4(0x0A010203, 53, 2);
+        let rules = [
+            TargetRule {
+                enabled: 1,
+                priority: 50,
+                kind: 1,
+                ipv4: endpoint.ipv4 as u64,
+                prefix_len: 32,
+                port: 443,
+                protocol: endpoint.protocol,
+                reserved: 0,
+                address_family: 1,
+                addr: endpoint.addr,
+                hostname: [0; 32],
+                sni: [0; 32],
+            },
+            TargetRule {
+                enabled: 1,
+                priority: 60,
+                kind: 1,
+                ipv4: endpoint.ipv4 as u64,
+                prefix_len: 32,
+                port: endpoint.port as u64,
+                protocol: 1,
+                reserved: 0,
+                address_family: 1,
+                addr: endpoint.addr,
+                hostname: [0; 32],
+                sni: [0; 32],
+            },
+            TargetRule {
+                enabled: 1,
+                priority: 70,
+                kind: 1,
+                ipv4: endpoint.ipv4 as u64,
+                prefix_len: 32,
+                port: endpoint.port as u64,
+                protocol: endpoint.protocol,
+                reserved: 0,
+                address_family: 1,
+                addr: endpoint.addr,
+                hostname: [0; 32],
+                sni: [0; 32],
+            },
+        ];
+        let (_, selected) = select_best_target_rule(
+            Some(endpoint),
+            SemanticContext::default(),
+            &rules,
+            rules.len(),
+        )
+        .expect("must select");
+        assert_eq!(selected.priority, 70);
     }
-    
+
     #[test]
     fn select_rule_respects_port_range() {
-       let endpoint = endpoint_v4(0x0A010203, 8080, 1);
-       let rules = [TargetRule {
-           enabled: 1,
-           priority: 70,
-           kind: 1,
-           ipv4: endpoint.ipv4 as u64,
-           prefix_len: 32,
-           port: 8000,
-           protocol: endpoint.protocol,
-           reserved: 9000,
-           address_family: 1,
-           addr: endpoint.addr,
-           hostname: [0; 32],
-           sni: [0; 32],
-       }];
-       let (_, selected) = select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).expect("must select");
-       assert_eq!(selected.priority, 70);
+        let endpoint = endpoint_v4(0x0A010203, 8080, 1);
+        let rules = [TargetRule {
+            enabled: 1,
+            priority: 70,
+            kind: 1,
+            ipv4: endpoint.ipv4 as u64,
+            prefix_len: 32,
+            port: 8000,
+            protocol: endpoint.protocol,
+            reserved: 9000,
+            address_family: 1,
+            addr: endpoint.addr,
+            hostname: [0; 32],
+            sni: [0; 32],
+        }];
+        let (_, selected) = select_best_target_rule(
+            Some(endpoint),
+            SemanticContext::default(),
+            &rules,
+            rules.len(),
+        )
+        .expect("must select");
+        assert_eq!(selected.priority, 70);
     }
-    
+
     #[test]
     fn select_rule_rejects_port_range_miss() {
-       let endpoint = endpoint_v4(0x0A010203, 9100, 1);
-       let rules = [TargetRule {
-           enabled: 1,
-           priority: 70,
-           kind: 1,
-           ipv4: endpoint.ipv4 as u64,
-           prefix_len: 32,
-           port: 8000,
-           protocol: endpoint.protocol,
-           reserved: 9000,
-           address_family: 1,
-           addr: endpoint.addr,
-           hostname: [0; 32],
-           sni: [0; 32],
-       }];
-       assert!(select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).is_none());
+        let endpoint = endpoint_v4(0x0A010203, 9100, 1);
+        let rules = [TargetRule {
+            enabled: 1,
+            priority: 70,
+            kind: 1,
+            ipv4: endpoint.ipv4 as u64,
+            prefix_len: 32,
+            port: 8000,
+            protocol: endpoint.protocol,
+            reserved: 9000,
+            address_family: 1,
+            addr: endpoint.addr,
+            hostname: [0; 32],
+            sni: [0; 32],
+        }];
+        assert!(select_best_target_rule(
+            Some(endpoint),
+            SemanticContext::default(),
+            &rules,
+            rules.len()
+        )
+        .is_none());
     }
-    
+
     #[test]
     fn select_rule_cidr_zero_prefix_matches_any_ipv4() {
-       let endpoint = endpoint_v4(0xC0A8010A, 8080, 1);
-       let rules = [TargetRule {
-           enabled: 1,
-           priority: 10,
-           kind: 2,
-           ipv4: 0,
-           prefix_len: 0,
-           port: 0,
-           protocol: 0,
-           reserved: 0,
-           address_family: 1,
-           addr: addr_v4(0),
-           hostname: [0; 32],
-           sni: [0; 32],
-       }];
-       let (_, selected) = select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).expect("must select");
-       assert_eq!(selected.kind, 2);
-       assert_eq!(selected.prefix_len, 0);
+        let endpoint = endpoint_v4(0xC0A8010A, 8080, 1);
+        let rules = [TargetRule {
+            enabled: 1,
+            priority: 10,
+            kind: 2,
+            ipv4: 0,
+            prefix_len: 0,
+            port: 0,
+            protocol: 0,
+            reserved: 0,
+            address_family: 1,
+            addr: addr_v4(0),
+            hostname: [0; 32],
+            sni: [0; 32],
+        }];
+        let (_, selected) = select_best_target_rule(
+            Some(endpoint),
+            SemanticContext::default(),
+            &rules,
+            rules.len(),
+        )
+        .expect("must select");
+        assert_eq!(selected.kind, 2);
+        assert_eq!(selected.prefix_len, 0);
     }
 
     #[test]
     fn select_rule_prioritizes_sni_over_ip_on_tie() {
-       let endpoint = endpoint_v4(0x0A010203, 443, 1);
-       let rules = [
-           TargetRule {
-               enabled: 1,
-               priority: 100,
-               kind: 1,
-               ipv4: endpoint.ipv4 as u64,
-               prefix_len: 32,
-               port: endpoint.port as u64,
-               protocol: endpoint.protocol,
-               reserved: 0,
-               address_family: 1,
-               addr: endpoint.addr,
-               hostname: [0; 32],
-               sni: [0; 32],
-           },
-           TargetRule {
-               enabled: 1,
-               priority: 100,
-               kind: 0,
-               ipv4: 0,
-               prefix_len: 0,
-               port: endpoint.port as u64,
-               protocol: endpoint.protocol,
-               reserved: 0,
-               address_family: 0,
-               addr: [0; 16],
-               hostname: [0; 32],
-               sni: name32("api.foo.com"),
-           },
-       ];
-       let (_, selected) = select_best_target_rule(
-           Some(endpoint),
-           SemanticContext { hostname: None, sni: Some("api.foo.com") },
-           &rules,
-           rules.len(),
-       )
-       .expect("must select");
-       assert_eq!(selected.kind, 0);
-       assert_eq!(&selected.sni[0..11], b"api.foo.com");
+        let endpoint = endpoint_v4(0x0A010203, 443, 1);
+        let rules = [
+            TargetRule {
+                enabled: 1,
+                priority: 100,
+                kind: 1,
+                ipv4: endpoint.ipv4 as u64,
+                prefix_len: 32,
+                port: endpoint.port as u64,
+                protocol: endpoint.protocol,
+                reserved: 0,
+                address_family: 1,
+                addr: endpoint.addr,
+                hostname: [0; 32],
+                sni: [0; 32],
+            },
+            TargetRule {
+                enabled: 1,
+                priority: 100,
+                kind: 0,
+                ipv4: 0,
+                prefix_len: 0,
+                port: endpoint.port as u64,
+                protocol: endpoint.protocol,
+                reserved: 0,
+                address_family: 0,
+                addr: [0; 16],
+                hostname: [0; 32],
+                sni: name32("api.foo.com"),
+            },
+        ];
+        let (_, selected) = select_best_target_rule(
+            Some(endpoint),
+            SemanticContext {
+                hostname: None,
+                sni: Some("api.foo.com"),
+            },
+            &rules,
+            rules.len(),
+        )
+        .expect("must select");
+        assert_eq!(selected.kind, 0);
+        assert_eq!(&selected.sni[0..11], b"api.foo.com");
     }
 
     #[test]
     fn select_rule_matches_hostname_wildcard_for_dns_query() {
-       let rules = [TargetRule {
-           enabled: 1,
-           priority: 100,
-           kind: 0,
-           ipv4: 0,
-           prefix_len: 0,
-           port: 0,
-           protocol: 0,
-           reserved: 0,
-           address_family: 0,
-           addr: [0; 16],
-           hostname: name32("*.foo.com"),
-           sni: [0; 32],
-       }];
-       let (_, selected) = select_best_target_rule(
-           None,
-           SemanticContext { hostname: Some("api.foo.com"), sni: None },
-           &rules,
-           rules.len(),
-       )
-       .expect("must select");
-       assert_eq!(selected.kind, 0);
+        let rules = [TargetRule {
+            enabled: 1,
+            priority: 100,
+            kind: 0,
+            ipv4: 0,
+            prefix_len: 0,
+            port: 0,
+            protocol: 0,
+            reserved: 0,
+            address_family: 0,
+            addr: [0; 16],
+            hostname: name32("*.foo.com"),
+            sni: [0; 32],
+        }];
+        let (_, selected) = select_best_target_rule(
+            None,
+            SemanticContext {
+                hostname: Some("api.foo.com"),
+                sni: None,
+            },
+            &rules,
+            rules.len(),
+        )
+        .expect("must select");
+        assert_eq!(selected.kind, 0);
     }
 
     #[test]
     fn select_rule_rejects_semantic_rule_when_hostname_not_observable() {
-       let endpoint = endpoint_v4(0x0A010203, 443, 1);
-       let rules = [TargetRule {
-           enabled: 1,
-           priority: 100,
-           kind: 0,
-           ipv4: 0,
-           prefix_len: 0,
-           port: endpoint.port as u64,
-           protocol: endpoint.protocol,
-           reserved: 0,
-           address_family: 0,
-           addr: [0; 16],
-           hostname: name32("api.foo.com"),
-           sni: [0; 32],
-       }];
-       assert!(
-           select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len())
-               .is_none()
-       );
+        let endpoint = endpoint_v4(0x0A010203, 443, 1);
+        let rules = [TargetRule {
+            enabled: 1,
+            priority: 100,
+            kind: 0,
+            ipv4: 0,
+            prefix_len: 0,
+            port: endpoint.port as u64,
+            protocol: endpoint.protocol,
+            reserved: 0,
+            address_family: 0,
+            addr: [0; 16],
+            hostname: name32("api.foo.com"),
+            sni: [0; 32],
+        }];
+        assert!(select_best_target_rule(
+            Some(endpoint),
+            SemanticContext::default(),
+            &rules,
+            rules.len()
+        )
+        .is_none());
     }
-    
+
     #[test]
     fn fd_owner_slot_config_takes_precedence_over_current_tid_config() {
-       let current_tid = 42_u64;
-       let owner_slot = Some(7_usize);
-       let selected = select_base_config_for_test(
-           10,
-           None,
-           current_tid,
-           Some(cfg_with_latency(111)),
-           owner_slot,
-           Some(cfg_with_latency(777)),
-       )
-       .expect("config should resolve");
-       assert_eq!(selected.latency_ns, 777);
+        let current_tid = 42_u64;
+        let owner_slot = Some(7_usize);
+        let selected = select_base_config_for_test(
+            None,
+            current_tid,
+            Some(cfg_with_latency(111)),
+            owner_slot,
+            Some(cfg_with_latency(777)),
+        )
+        .expect("config should resolve");
+        assert_eq!(selected.latency_ns, 777);
     }
-    
+
     #[test]
     fn falls_back_to_current_tid_config_when_fd_owner_slot_is_missing() {
-       let current_tid = 42_u64;
-       let selected = select_base_config_for_test(
-           10,
-           None,
-           current_tid,
-           Some(cfg_with_latency(111)),
-           Some(7_usize),
-           None,
-       )
-       .expect("config should resolve from current tid");
-       assert_eq!(selected.latency_ns, 111);
+        let current_tid = 42_u64;
+        let selected = select_base_config_for_test(
+            None,
+            current_tid,
+            Some(cfg_with_latency(111)),
+            Some(7_usize),
+            None,
+        )
+        .expect("config should resolve from current tid");
+        assert_eq!(selected.latency_ns, 111);
     }
 
     #[test]
     fn observed_sni_state_clones_and_clears_by_fd() {
-       let _guard = observed_semantic_test_guard();
-       observe_sni_for_fd(12, "Api.Foo.com.");
-       assert_eq!(observed_sni_for_fd(12).as_deref(), Some("api.foo.com"));
+        let _guard = observed_semantic_test_guard();
+        observe_sni_for_fd(12, "Api.Foo.com.");
+        assert_eq!(observed_sni_for_fd(12).as_deref(), Some("api.foo.com"));
 
-       clone_observed_semantic_for_fd(12, 13);
-       assert_eq!(observed_sni_for_fd(13).as_deref(), Some("api.foo.com"));
+        clone_observed_semantic_for_fd(12, 13);
+        assert_eq!(observed_sni_for_fd(13).as_deref(), Some("api.foo.com"));
 
-       clear_observed_semantic_for_fd(12);
-       clear_observed_semantic_for_fd(13);
-       assert!(observed_sni_for_fd(12).is_none());
-       assert!(observed_sni_for_fd(13).is_none());
+        clear_observed_semantic_for_fd(12);
+        clear_observed_semantic_for_fd(13);
+        assert!(observed_sni_for_fd(12).is_none());
+        assert!(observed_sni_for_fd(13).is_none());
     }
 
     #[test]
     fn observed_hostname_state_is_slot_and_endpoint_scoped() {
-       let _guard = observed_semantic_test_guard();
-       let endpoint = endpoint_v4(0x7F000001, 443, 1);
-       let slot = 7077usize;
+        let _guard = observed_semantic_test_guard();
+        let endpoint = endpoint_v4(0x7F000001, 443, 1);
+        let slot = 7077usize;
         observed_hostname_by_endpoint().lock().clear();
         observe_hostname_for_slot_endpoint(slot, endpoint, "Api.Foo.com.");
         assert_eq!(
@@ -992,9 +1053,9 @@ mod tests {
 
     #[test]
     fn observed_hostname_state_distinguishes_same_ip_with_different_ports() {
-       let _guard = observed_semantic_test_guard();
-       let endpoint_443 = endpoint_v4(0x7F000001, 443, 1);
-       let endpoint_8443 = endpoint_v4(0x7F000001, 8443, 1);
+        let _guard = observed_semantic_test_guard();
+        let endpoint_443 = endpoint_v4(0x7F000001, 443, 1);
+        let endpoint_8443 = endpoint_v4(0x7F000001, 8443, 1);
         let slot = 7843usize;
         observed_hostname_by_endpoint().lock().clear();
 
@@ -1011,261 +1072,273 @@ mod tests {
         );
         observed_hostname_by_endpoint().lock().clear();
     }
-    
+
     #[test]
     fn lockstep_retries_on_generation_change_and_then_applies_rule() {
-       let endpoint = endpoint_v4(0x0A010203, 443, 1);
-       let mut base_cfg = cfg_with_latency(500);
-       base_cfg.target_enabled = 2;
-       base_cfg.ruleset_generation = 10;
-    
-       let rules = [TargetRule {
-           enabled: 1,
-           priority: 100,
-           kind: 1,
-           ipv4: endpoint.ipv4 as u64,
-           prefix_len: 32,
-           port: endpoint.port as u64,
-           protocol: endpoint.protocol,
-           reserved: 0,
-           address_family: 1,
-           addr: endpoint.addr,
-           hostname: [0; 32],
-           sni: [0; 32],
-       }; crate::MAX_TARGET_RULES_PER_TID];
-    
-       let cfg_reads = Cell::new(0usize);
-       let result = apply_multi_target_for_tid_with_reader(
+        let endpoint = endpoint_v4(0x0A010203, 443, 1);
+        let mut base_cfg = cfg_with_latency(500);
+        base_cfg.target_enabled = 2;
+        base_cfg.ruleset_generation = 10;
+
+        let rules = [TargetRule {
+            enabled: 1,
+            priority: 100,
+            kind: 1,
+            ipv4: endpoint.ipv4 as u64,
+            prefix_len: 32,
+            port: endpoint.port as u64,
+            protocol: endpoint.protocol,
+            reserved: 0,
+            address_family: 1,
+            addr: endpoint.addr,
+            hostname: [0; 32],
+            sni: [0; 32],
+        }; crate::MAX_TARGET_RULES_PER_TID];
+
+        let cfg_reads = Cell::new(0usize);
+        let result = apply_multi_target_for_tid_with_reader(
             base_cfg,
             0,
             Some(endpoint),
             SemanticContext::default(),
-           || Some(rules),
-           || {
-               let n = cfg_reads.get();
-               cfg_reads.set(n + 1);
-               let mut refreshed = cfg_with_latency(500);
-               refreshed.target_enabled = 2;
-               refreshed.ruleset_generation = 11;
-               Some(refreshed)
-           },
-       )
-       .expect("rule should apply after generation stabilizes");
-    
-       assert_eq!(cfg_reads.get(), 2);
-       assert_eq!(result.target_enabled, 0);
-       assert_eq!(result.target_kind, 1);
-       assert_eq!(result.target_address_family, 1);
-       assert_eq!(result.target_addr, endpoint.addr);
+            || Some(rules),
+            || {
+                let n = cfg_reads.get();
+                cfg_reads.set(n + 1);
+                let mut refreshed = cfg_with_latency(500);
+                refreshed.target_enabled = 2;
+                refreshed.ruleset_generation = 11;
+                Some(refreshed)
+            },
+        )
+        .expect("rule should apply after generation stabilizes");
+
+        assert_eq!(cfg_reads.get(), 2);
+        assert_eq!(result.target_enabled, 0);
+        assert_eq!(result.target_kind, 1);
+        assert_eq!(result.target_address_family, 1);
+        assert_eq!(result.target_addr, endpoint.addr);
     }
-    
+
     #[test]
     fn lockstep_returns_none_when_generation_never_stabilizes() {
-       let endpoint = endpoint_v4(0x0A010203, 443, 1);
-       let mut base_cfg = cfg_with_latency(500);
-       base_cfg.target_enabled = 2;
-       base_cfg.ruleset_generation = 20;
-    
-       let rules = [TargetRule {
-           enabled: 1,
-           priority: 100,
-           kind: 1,
-           ipv4: endpoint.ipv4 as u64,
-           prefix_len: 32,
-           port: endpoint.port as u64,
-           protocol: endpoint.protocol,
-           reserved: 0,
-           address_family: 1,
-           addr: endpoint.addr,
-           hostname: [0; 32],
-           sni: [0; 32],
-       }; crate::MAX_TARGET_RULES_PER_TID];
-    
-       let cfg_reads = Cell::new(0usize);
-       let result = apply_multi_target_for_tid_with_reader(
+        let endpoint = endpoint_v4(0x0A010203, 443, 1);
+        let mut base_cfg = cfg_with_latency(500);
+        base_cfg.target_enabled = 2;
+        base_cfg.ruleset_generation = 20;
+
+        let rules = [TargetRule {
+            enabled: 1,
+            priority: 100,
+            kind: 1,
+            ipv4: endpoint.ipv4 as u64,
+            prefix_len: 32,
+            port: endpoint.port as u64,
+            protocol: endpoint.protocol,
+            reserved: 0,
+            address_family: 1,
+            addr: endpoint.addr,
+            hostname: [0; 32],
+            sni: [0; 32],
+        }; crate::MAX_TARGET_RULES_PER_TID];
+
+        let cfg_reads = Cell::new(0usize);
+        let result = apply_multi_target_for_tid_with_reader(
             base_cfg,
             0,
             Some(endpoint),
             SemanticContext::default(),
-           || Some(rules),
-           || {
-               let n = cfg_reads.get();
-               cfg_reads.set(n + 1);
-               let mut refreshed = cfg_with_latency(500);
-               refreshed.target_enabled = 2;
-               refreshed.ruleset_generation = 21 + (n as u64);
-               Some(refreshed)
-           },
-       );
-    
-       assert!(result.is_none());
-       assert_eq!(cfg_reads.get(), RULESET_READ_RETRY_LIMIT);
+            || Some(rules),
+            || {
+                let n = cfg_reads.get();
+                cfg_reads.set(n + 1);
+                let mut refreshed = cfg_with_latency(500);
+                refreshed.target_enabled = 2;
+                refreshed.ruleset_generation = 21 + (n as u64);
+                Some(refreshed)
+            },
+        );
+
+        assert!(result.is_none());
+        assert_eq!(cfg_reads.get(), RULESET_READ_RETRY_LIMIT);
     }
 
     #[test]
     fn reload_metrics_count_retry_and_apply() {
-       reset_runtime_reload_metrics();
-       let (applied_before, retry_before) = runtime_reload_metrics_snapshot();
-       let endpoint = endpoint_v4(0x0A010203, 443, 1);
-       let mut base_cfg = cfg_with_latency(500);
-       base_cfg.target_enabled = 1;
-       base_cfg.ruleset_generation = 10;
+        reset_runtime_reload_metrics();
+        let (applied_before, retry_before) = runtime_reload_metrics_snapshot();
+        let endpoint = endpoint_v4(0x0A010203, 443, 1);
+        let mut base_cfg = cfg_with_latency(500);
+        base_cfg.target_enabled = 1;
+        base_cfg.ruleset_generation = 10;
 
-       let rules = [TargetRule {
-           enabled: 1,
-           priority: 100,
-           kind: 1,
-           ipv4: endpoint.ipv4 as u64,
-           prefix_len: 32,
-           port: endpoint.port as u64,
-           protocol: endpoint.protocol,
-           reserved: 0,
-           address_family: 1,
-           addr: endpoint.addr,
-           hostname: [0; 32],
-           sni: [0; 32],
-       }; crate::MAX_TARGET_RULES_PER_TID];
+        let rules = [TargetRule {
+            enabled: 1,
+            priority: 100,
+            kind: 1,
+            ipv4: endpoint.ipv4 as u64,
+            prefix_len: 32,
+            port: endpoint.port as u64,
+            protocol: endpoint.protocol,
+            reserved: 0,
+            address_family: 1,
+            addr: endpoint.addr,
+            hostname: [0; 32],
+            sni: [0; 32],
+        }; crate::MAX_TARGET_RULES_PER_TID];
 
-       let cfg_reads = Cell::new(0usize);
-       let _ = apply_multi_target_for_tid_with_reader(
-           base_cfg,
-           0,
-           Some(endpoint),
-           SemanticContext::default(),
-           || Some(rules),
-           || {
-               let n = cfg_reads.get();
-               cfg_reads.set(n + 1);
-               let mut refreshed = cfg_with_latency(500);
-               refreshed.target_enabled = 1;
-               refreshed.ruleset_generation = 11;
-               Some(refreshed)
-           },
-       );
+        let cfg_reads = Cell::new(0usize);
+        let _ = apply_multi_target_for_tid_with_reader(
+            base_cfg,
+            0,
+            Some(endpoint),
+            SemanticContext::default(),
+            || Some(rules),
+            || {
+                let n = cfg_reads.get();
+                cfg_reads.set(n + 1);
+                let mut refreshed = cfg_with_latency(500);
+                refreshed.target_enabled = 1;
+                refreshed.ruleset_generation = 11;
+                Some(refreshed)
+            },
+        );
 
-       let (applied, retry) = runtime_reload_metrics_snapshot();
-       assert!(applied.saturating_sub(applied_before) >= 1);
-       assert!(retry.saturating_sub(retry_before) >= 1);
-       reset_runtime_reload_metrics();
+        let (applied, retry) = runtime_reload_metrics_snapshot();
+        assert!(applied.saturating_sub(applied_before) >= 1);
+        assert!(retry.saturating_sub(retry_before) >= 1);
+        reset_runtime_reload_metrics();
     }
-    
+
     #[test]
     fn select_rule_ipv6_host_exact_match() {
-       let endpoint = endpoint_v6(
-           [
-               0x20, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10,
-           ],
-           443,
-           1,
-       );
-       let rules = [TargetRule {
-           enabled: 1,
-           priority: 300,
-           kind: 1,
-           ipv4: 0,
-           prefix_len: 128,
-           port: 443,
-           protocol: 1,
-           reserved: 0,
-           address_family: 2,
-           addr: [
-               0x20, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10,
-           ],
-           hostname: [0; 32],
-           sni: [0; 32],
-       }];
-       let (_, selected) = select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).expect("must select");
-       assert_eq!(selected.priority, 300);
+        let endpoint = endpoint_v6(
+            [
+                0x20, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10,
+            ],
+            443,
+            1,
+        );
+        let rules = [TargetRule {
+            enabled: 1,
+            priority: 300,
+            kind: 1,
+            ipv4: 0,
+            prefix_len: 128,
+            port: 443,
+            protocol: 1,
+            reserved: 0,
+            address_family: 2,
+            addr: [
+                0x20, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10,
+            ],
+            hostname: [0; 32],
+            sni: [0; 32],
+        }];
+        let (_, selected) = select_best_target_rule(
+            Some(endpoint),
+            SemanticContext::default(),
+            &rules,
+            rules.len(),
+        )
+        .expect("must select");
+        assert_eq!(selected.priority, 300);
     }
-    
+
     #[test]
     fn select_rule_ipv6_cidr_match() {
-       let endpoint = endpoint_v6(
-           [
-               0x20, 0x01, 0x0D, 0xB8, 0xAB, 0xCD, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10,
-           ],
-           443,
-           1,
-       );
-       let rules = [TargetRule {
-           enabled: 1,
-           priority: 300,
-           kind: 2,
-           ipv4: 0,
-           prefix_len: 48,
-           port: 443,
-           protocol: 1,
-           reserved: 0,
-           address_family: 2,
-           addr: [
-               0x20, 0x01, 0x0D, 0xB8, 0xAB, 0xCD, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-           ],
-           hostname: [0; 32],
-           sni: [0; 32],
-       }];
-       let (_, selected) = select_best_target_rule(Some(endpoint), SemanticContext::default(), &rules, rules.len()).expect("must select");
-       assert_eq!(selected.kind, 2);
-       assert_eq!(selected.prefix_len, 48);
+        let endpoint = endpoint_v6(
+            [
+                0x20, 0x01, 0x0D, 0xB8, 0xAB, 0xCD, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10,
+            ],
+            443,
+            1,
+        );
+        let rules = [TargetRule {
+            enabled: 1,
+            priority: 300,
+            kind: 2,
+            ipv4: 0,
+            prefix_len: 48,
+            port: 443,
+            protocol: 1,
+            reserved: 0,
+            address_family: 2,
+            addr: [
+                0x20, 0x01, 0x0D, 0xB8, 0xAB, 0xCD, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ],
+            hostname: [0; 32],
+            sni: [0; 32],
+        }];
+        let (_, selected) = select_best_target_rule(
+            Some(endpoint),
+            SemanticContext::default(),
+            &rules,
+            rules.len(),
+        )
+        .expect("must select");
+        assert_eq!(selected.kind, 2);
+        assert_eq!(selected.prefix_len, 48);
     }
 
     #[test]
     fn target_rule_hit_metrics_record_selected_rule_id() {
-       let _guard = advanced_metrics_test_guard();
-       reset_advanced_metrics();
-       let endpoint = endpoint_v4(0x0A010203, 443, 1);
-       let mut base_cfg = cfg_with_latency(500);
-       base_cfg.target_enabled = 2;
-       base_cfg.ruleset_generation = 22;
-       let fallback_cfg = base_cfg;
-       let tid_slot = 9usize;
+        let _guard = advanced_metrics_test_guard();
+        reset_advanced_metrics();
+        let endpoint = endpoint_v4(0x0A010203, 443, 1);
+        let mut base_cfg = cfg_with_latency(500);
+        base_cfg.target_enabled = 2;
+        base_cfg.ruleset_generation = 22;
+        let fallback_cfg = base_cfg;
+        let tid_slot = 9usize;
 
-       let mut rules = [TargetRule::default(); crate::MAX_TARGET_RULES_PER_TID];
-       rules[0] = TargetRule {
-           enabled: 1,
-           priority: 10,
-           kind: 1,
-           ipv4: endpoint.ipv4 as u64,
-           prefix_len: 32,
-           port: endpoint.port as u64,
-           protocol: endpoint.protocol,
-           reserved: 0,
-           address_family: 1,
-           addr: endpoint.addr,
-           hostname: [0; 32],
-           sni: [0; 32],
-       };
-       rules[1] = TargetRule {
-           enabled: 1,
-           priority: 200,
-           kind: 1,
-           ipv4: endpoint.ipv4 as u64,
-           prefix_len: 32,
-           port: endpoint.port as u64,
-           protocol: endpoint.protocol,
-           reserved: 0,
-           address_family: 1,
-           addr: endpoint.addr,
-           hostname: [0; 32],
-           sni: [0; 32],
-       };
+        let mut rules = [TargetRule::default(); crate::MAX_TARGET_RULES_PER_TID];
+        rules[0] = TargetRule {
+            enabled: 1,
+            priority: 10,
+            kind: 1,
+            ipv4: endpoint.ipv4 as u64,
+            prefix_len: 32,
+            port: endpoint.port as u64,
+            protocol: endpoint.protocol,
+            reserved: 0,
+            address_family: 1,
+            addr: endpoint.addr,
+            hostname: [0; 32],
+            sni: [0; 32],
+        };
+        rules[1] = TargetRule {
+            enabled: 1,
+            priority: 200,
+            kind: 1,
+            ipv4: endpoint.ipv4 as u64,
+            prefix_len: 32,
+            port: endpoint.port as u64,
+            protocol: endpoint.protocol,
+            reserved: 0,
+            address_family: 1,
+            addr: endpoint.addr,
+            hostname: [0; 32],
+            sni: [0; 32],
+        };
 
-       let selected_cfg = apply_multi_target_for_tid_with_reader(
-           base_cfg,
-           tid_slot,
-           Some(endpoint),
-           SemanticContext::default(),
-           || Some(rules),
-           || Some(fallback_cfg),
+        let selected_cfg = apply_multi_target_for_tid_with_reader(
+            base_cfg,
+            tid_slot,
+            Some(endpoint),
+            SemanticContext::default(),
+            || Some(rules),
+            || Some(fallback_cfg),
         )
-       .expect("rule must match");
-       assert_eq!(selected_cfg.target_enabled, 0);
+        .expect("rule must match");
+        assert_eq!(selected_cfg.target_enabled, 0);
 
-       let snapshot = global_fault_osi_advanced_metrics_snapshot();
-       assert_eq!(snapshot.target_rule_top_len, 1);
-       assert_eq!(
-           snapshot.target_rule_top[0].target_rule_id,
-           target_rule_id_for_slot_idx(tid_slot, 1)
-       );
-       assert_eq!(snapshot.target_rule_top[0].hits, 1);
+        let snapshot = global_fault_osi_advanced_metrics_snapshot();
+        assert_eq!(snapshot.target_rule_top_len, 1);
+        assert_eq!(
+            snapshot.target_rule_top[0].target_rule_id,
+            target_rule_id_for_slot_idx(tid_slot, 1)
+        );
+        assert_eq!(snapshot.target_rule_top[0].hits, 1);
     }
 }

@@ -49,6 +49,25 @@ REPORT_REVERSE_EVENTS_OPT = typer.Option(
     help="Render events in reverse chronological order.",
 )
 
+_SCENARIO_INT_METRICS = (
+    ("scenario_iterations", "scenario", "iterations"),
+    ("scenario_duration_ms", "scenario", "duration_ms"),
+    ("tcp_throughput_bps", "throughput_bps", "tcp"),
+    ("udp_throughput_bps", "throughput_bps", "udp"),
+    ("http_throughput_bps", "throughput_bps", "http"),
+    ("total_bytes", "bytes", "total"),
+    ("total_throughput_bps", "throughput_bps", "total"),
+)
+
+_SCENARIO_FLOAT_METRICS = (
+    ("tcp_latency_avg_ms", "latency_ms", "tcp_avg"),
+    ("udp_latency_avg_ms", "latency_ms", "udp_avg"),
+    ("http_latency_avg_ms", "latency_ms", "http_avg"),
+    ("tcp_jitter_ms", "jitter_ms", "tcp"),
+    ("udp_jitter_ms", "jitter_ms", "udp"),
+    ("http_jitter_ms", "jitter_ms", "http"),
+)
+
 _INTERCEPTOR_PROBE_CODE = """import ctypes
 import sys
 ok = False
@@ -87,12 +106,15 @@ def _extract_scenario_metrics_path(command: list[str], env: dict[str, str]) -> P
     explicit = env.get("FAULTCORE_SCENARIO_METRICS_PATH", "").strip()
     if explicit:
         return Path(explicit)
+
     for idx, token in enumerate(command):
         if token == "--metrics-out" and idx + 1 < len(command):
             return Path(command[idx + 1])
-        key, sep, value = token.partition("=")
-        if key == "--metrics-out" and sep and value:
-            return Path(value)
+        if token.startswith("--metrics-out="):
+            value = token[len("--metrics-out=") :]
+            if value:
+                return Path(value)
+
     return None
 
 
@@ -120,10 +142,111 @@ def _as_dict(value: object) -> dict[str, object]:
     return value if isinstance(value, dict) else {}
 
 
+def _as_list(value: object) -> list[object]:
+    return value if isinstance(value, list) else []
+
+
 def _normalize_series_entry(key: str, value: object) -> int:
     if key.endswith("_ms"):
         return int(round(_coerce_float(value, default=0.0) * 1_000_000))
     return _coerce_int(value)
+
+
+def _write_strict_probe_failure_run_json(
+    run_json: Path,
+    *,
+    command: list[str],
+    started_at: str,
+    ended_at: str,
+    duration_ms: int,
+    interceptor_path: str | None,
+    ld_preload_effective: str,
+) -> None:
+    write_run_json(
+        run_json,
+        build_run_record(
+            command=command,
+            returncode=2,
+            started_at=started_at,
+            ended_at=ended_at,
+            duration_ms=duration_ms,
+            interceptor_path=interceptor_path,
+            ld_preload_effective=ld_preload_effective,
+            interceptor_active=False,
+            run_json_path=str(run_json),
+        ),
+    )
+
+
+def _configure_record_replay(env: dict[str, str], run_json: Path | None) -> str:
+    if run_json is None:
+        return ""
+
+    rr_mode = env.get("FAULTCORE_RECORD_REPLAY_MODE", "").strip().lower()
+    if rr_mode in {"", "off"}:
+        env["FAULTCORE_RECORD_REPLAY_MODE"] = "record"
+        rr_mode = "record"
+
+    if rr_mode not in {"record", "replay"}:
+        return ""
+
+    explicit_path = env.get("FAULTCORE_RECORD_REPLAY_PATH", "").strip()
+    if explicit_path:
+        return explicit_path
+
+    generated_path = str(run_json.with_suffix(".rr.jsonl.gz"))
+    env["FAULTCORE_RECORD_REPLAY_PATH"] = generated_path
+    return generated_path
+
+
+def _run_subprocess(command: list[str], env: dict[str, str]) -> tuple[subprocess.CompletedProcess[str], str, str, str]:
+    capture_output = is_pytest_command(command)
+    result = subprocess.run(command, env=env, check=False, capture_output=capture_output, text=capture_output)
+    if not capture_output:
+        return result, "", "", ""
+
+    stdout_text = result.stdout or ""
+    stderr_text = result.stderr or ""
+    if stdout_text:
+        typer.echo(stdout_text, nl=False)
+    if stderr_text:
+        typer.echo(stderr_text, err=True, nl=False)
+    combined_output = f"{stdout_text}\n{stderr_text}".strip()
+    return result, stdout_text, stderr_text, combined_output
+
+
+def _build_pytest_additional_events(
+    *,
+    ended_at: str,
+    returncode: int,
+    combined_output: str,
+    summary_override: dict[str, object] | None,
+) -> list[dict[str, object]]:
+    if summary_override is None:
+        return []
+
+    events: list[dict[str, object]] = [
+        {
+            "ts": ended_at,
+            "severity": "info" if returncode == 0 else "warning",
+            "type": "pytest.summary",
+            "source": "faultcore.cli",
+            "name": "pytest_summary",
+            "details": summary_override,
+        }
+    ]
+    for failure_name in parse_pytest_failures(combined_output):
+        events.append(
+            {
+                "ts": ended_at,
+                "severity": "error",
+                "type": "pytest.failure",
+                "source": "pytest",
+                "name": failure_name,
+                "details": {},
+            }
+        )
+    return events
 
 
 def _load_scenario_metrics(path: Path | None) -> tuple[Path | None, dict[str, object]]:
@@ -151,37 +274,27 @@ def _merge_scenario_metrics_into_run_record(
     if not scenario_metrics:
         return
 
-    latency_map = _as_dict(scenario_metrics.get("latency_ms"))
-    jitter_map = _as_dict(scenario_metrics.get("jitter_ms"))
-    bytes_map = _as_dict(scenario_metrics.get("bytes"))
-    throughput_map = _as_dict(scenario_metrics.get("throughput_bps"))
-    scenario_map = _as_dict(scenario_metrics.get("scenario"))
+    metric_sources = {
+        "latency_ms": _as_dict(scenario_metrics.get("latency_ms")),
+        "jitter_ms": _as_dict(scenario_metrics.get("jitter_ms")),
+        "bytes": _as_dict(scenario_metrics.get("bytes")),
+        "throughput_bps": _as_dict(scenario_metrics.get("throughput_bps")),
+        "scenario": _as_dict(scenario_metrics.get("scenario")),
+    }
     functions_map = _as_dict(scenario_metrics.get("functions"))
     series_map = _as_dict(scenario_metrics.get("series"))
 
-    existing_network_metrics_raw = record.get("network_metrics")
-    network_metrics = dict(existing_network_metrics_raw) if isinstance(existing_network_metrics_raw, dict) else {}
-    network_metrics.update(
-        {
-            "scenario_iterations": _coerce_int(scenario_map.get("iterations")),
-            "scenario_duration_ms": _coerce_int(scenario_map.get("duration_ms")),
-            "tcp_latency_avg_ms": _coerce_float(latency_map.get("tcp_avg")),
-            "udp_latency_avg_ms": _coerce_float(latency_map.get("udp_avg")),
-            "http_latency_avg_ms": _coerce_float(latency_map.get("http_avg")),
-            "tcp_jitter_ms": _coerce_float(jitter_map.get("tcp")),
-            "udp_jitter_ms": _coerce_float(jitter_map.get("udp")),
-            "http_jitter_ms": _coerce_float(jitter_map.get("http")),
-            "tcp_throughput_bps": _coerce_int(throughput_map.get("tcp")),
-            "udp_throughput_bps": _coerce_int(throughput_map.get("udp")),
-            "http_throughput_bps": _coerce_int(throughput_map.get("http")),
-            "total_bytes": _coerce_int(bytes_map.get("total")),
-            "total_throughput_bps": _coerce_int(throughput_map.get("total")),
-        }
-    )
+    network_metrics = dict(_as_dict(record.get("network_metrics")))
+
+    for metric_name, source_name, source_key in _SCENARIO_INT_METRICS:
+        network_metrics[metric_name] = _coerce_int(metric_sources[source_name].get(source_key))
+
+    for metric_name, source_name, source_key in _SCENARIO_FLOAT_METRICS:
+        network_metrics[metric_name] = _coerce_float(metric_sources[source_name].get(source_key))
+
     record["network_metrics"] = network_metrics
 
-    existing_series_raw = record.get("network_series")
-    merged_series = dict(existing_series_raw) if isinstance(existing_series_raw, dict) else {}
+    merged_series = dict(_as_dict(record.get("network_series")))
     for key, values in series_map.items():
         if not (isinstance(key, str) and isinstance(values, list)):
             continue
@@ -192,8 +305,7 @@ def _merge_scenario_metrics_into_run_record(
     if functions_map:
         record["function_metrics"] = functions_map
 
-    events_raw = record.get("events")
-    events = list(events_raw) if isinstance(events_raw, list) else []
+    events = list(_as_list(record.get("events")))
     events.append(
         {
             "ts": ended_at,
@@ -202,18 +314,17 @@ def _merge_scenario_metrics_into_run_record(
             "source": "faultcore.cli",
             "name": "multi_protocol_summary",
             "details": {
-                "total_throughput_bps": _coerce_int(throughput_map.get("total")),
-                "tcp_latency_avg_ms": _coerce_float(latency_map.get("tcp_avg")),
-                "udp_latency_avg_ms": _coerce_float(latency_map.get("udp_avg")),
-                "http_latency_avg_ms": _coerce_float(latency_map.get("http_avg")),
+                "total_throughput_bps": _coerce_int(metric_sources["throughput_bps"].get("total")),
+                "tcp_latency_avg_ms": _coerce_float(metric_sources["latency_ms"].get("tcp_avg")),
+                "udp_latency_avg_ms": _coerce_float(metric_sources["latency_ms"].get("udp_avg")),
+                "http_latency_avg_ms": _coerce_float(metric_sources["latency_ms"].get("http_avg")),
             },
         }
     )
     record["events"] = events
 
     if scenario_metrics_path is not None:
-        artifacts_raw = record.get("artifacts")
-        artifacts = list(artifacts_raw) if isinstance(artifacts_raw, list) else []
+        artifacts = list(_as_list(record.get("artifacts")))
         metrics_artifact = {"kind": "scenario_metrics", "path": str(scenario_metrics_path)}
         if metrics_artifact not in artifacts:
             artifacts.append(metrics_artifact)
@@ -235,7 +346,7 @@ def run_command(
     interceptor_path: str | None = None
     ld_preload_effective = env.get("LD_PRELOAD", "")
     interceptor_active = False
-    record_replay_path = ""
+    record_replay_path = _configure_record_replay(env, run_json)
 
     if _is_linux():
         interceptor_path = native.get_interceptor_path()
@@ -247,76 +358,32 @@ def run_command(
             ended_at = utc_now_iso()
             duration_ms = int((time.perf_counter() - started_perf) * 1000)
             if run_json is not None:
-                write_run_json(
+                _write_strict_probe_failure_run_json(
                     run_json,
-                    build_run_record(
-                        command=command,
-                        returncode=2,
-                        started_at=started_at,
-                        ended_at=ended_at,
-                        duration_ms=duration_ms,
-                        interceptor_path=interceptor_path,
-                        ld_preload_effective=ld_preload_effective,
-                        interceptor_active=False,
-                        run_json_path=str(run_json),
-                    ),
+                    command=command,
+                    started_at=started_at,
+                    ended_at=ended_at,
+                    duration_ms=duration_ms,
+                    interceptor_path=interceptor_path,
+                    ld_preload_effective=ld_preload_effective,
                 )
             typer.echo("error: interceptor probe failed; strict mode requires active interceptor", err=True)
             raise typer.Exit(code=2)
 
-    if run_json is not None:
-        rr_mode = env.get("FAULTCORE_RECORD_REPLAY_MODE", "").strip().lower()
-        if rr_mode in {"", "off"}:
-            env["FAULTCORE_RECORD_REPLAY_MODE"] = "record"
-            rr_mode = "record"
-        if rr_mode in {"record", "replay"}:
-            explicit_path = env.get("FAULTCORE_RECORD_REPLAY_PATH", "").strip()
-            if explicit_path:
-                record_replay_path = explicit_path
-            else:
-                record_replay_path = str(run_json.with_suffix(".rr.jsonl.gz"))
-                env["FAULTCORE_RECORD_REPLAY_PATH"] = record_replay_path
-
-    capture_output = is_pytest_command(command)
     scenario_metrics_path = _extract_scenario_metrics_path(command, env) if run_json is not None else None
-    result = subprocess.run(command, env=env, check=False, capture_output=capture_output, text=capture_output)
-    stdout_text = ""
-    stderr_text = ""
-    if capture_output:
-        stdout_text = result.stdout or ""
-        stderr_text = result.stderr or ""
-        if stdout_text:
-            typer.echo(stdout_text, nl=False)
-        if stderr_text:
-            typer.echo(stderr_text, err=True, nl=False)
-    combined_output = f"{stdout_text}\n{stderr_text}".strip() if capture_output else ""
+    result, stdout_text, stderr_text, combined_output = _run_subprocess(command, env)
 
     ended_at = utc_now_iso()
     duration_ms = int((time.perf_counter() - started_perf) * 1000)
-    summary_override = parse_pytest_summary(combined_output, returncode=result.returncode) if capture_output else None
-    additional_events: list[dict[str, object]] = []
-    if capture_output and summary_override is not None:
-        additional_events.append(
-            {
-                "ts": ended_at,
-                "severity": "info" if result.returncode == 0 else "warning",
-                "type": "pytest.summary",
-                "source": "faultcore.cli",
-                "name": "pytest_summary",
-                "details": summary_override,
-            }
-        )
-        for failure_name in parse_pytest_failures(combined_output):
-            additional_events.append(
-                {
-                    "ts": ended_at,
-                    "severity": "error",
-                    "type": "pytest.failure",
-                    "source": "pytest",
-                    "name": failure_name,
-                    "details": {},
-                }
-            )
+    summary_override = (
+        parse_pytest_summary(combined_output, returncode=result.returncode) if combined_output else None
+    )
+    additional_events = _build_pytest_additional_events(
+        ended_at=ended_at,
+        returncode=result.returncode,
+        combined_output=combined_output,
+        summary_override=summary_override,
+    )
     network_metrics: dict[str, int] | None = None
     network_series: dict[str, list[int]] | None = None
     observed_sites: list[str] | None = None

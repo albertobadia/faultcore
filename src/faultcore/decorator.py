@@ -64,17 +64,6 @@ def _with_wrapper(**wrapper_kwargs: Any) -> Callable[[Callable[..., Any]], "Faul
     return decorator
 
 
-def _with_parsed_wrapper_value(
-    field_name: str,
-    value: Any,
-    parser: Callable[[Any], Any],
-) -> Callable[[Callable[..., Any]], "FaultWrapper"]:
-    def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        return FaultWrapper(func, **{field_name: parser(value)})
-
-    return decorator
-
-
 def _build_directional_profile_or_raise(
     direction_name: str,
     *,
@@ -145,10 +134,7 @@ def _policy_to_wrapper_kwargs(policy: dict[str, Any]) -> dict[str, Any]:
 
 
 def _resolve_runtime_policy_name(policy_name: str) -> str:
-    if policy_name != "auto":
-        return policy_name
-    thread_policy = get_thread_policy()
-    return thread_policy or ""
+    return policy_name if policy_name != "auto" else (get_thread_policy() or "")
 
 
 def _with_dns_profile(**dns_kwargs: int | str | float) -> Callable[[Callable[..., Any]], "FaultWrapper"]:
@@ -211,9 +197,7 @@ class FaultWrapper:
         return getattr(self._func, name)
 
     def __get__(self, obj: Any, objtype: type | None = None) -> Any:
-        if obj is None:
-            return self
-        return functools.partial(self.__call__, obj)
+        return self if obj is None else functools.partial(self.__call__, obj)
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         tid = threading.get_native_id()
@@ -235,12 +219,12 @@ class FaultWrapper:
 
     async def _run_async(
         self,
-        result: Any,
+        awaitable_result: Any,
         shm: Any,
         tid: int,
     ) -> Any:
         try:
-            return await result
+            return await awaitable_result
         finally:
             shm.clear(tid)
 
@@ -285,11 +269,11 @@ def recv_timeout(timeout_ms: int) -> Callable[[Callable[..., Any]], FaultWrapper
 
 
 def rate_limit(rate: str | int) -> Callable[[Callable[..., Any]], FaultWrapper]:
-    return _with_parsed_wrapper_value("bandwidth_bps", rate, _parse_rate)
+    return _with_wrapper(bandwidth_bps=_parse_rate(rate))
 
 
 def packet_loss(loss: str | int | float) -> Callable[[Callable[..., Any]], FaultWrapper]:
-    return _with_parsed_wrapper_value("packet_loss_ppm", loss, _parse_packet_loss)
+    return _with_wrapper(packet_loss_ppm=_parse_packet_loss(loss))
 
 
 def burst_loss(length: int) -> Callable[[Callable[..., Any]], FaultWrapper]:
@@ -480,15 +464,10 @@ def fault(policy_name: str = "auto") -> Callable[[Callable[..., Any]], FaultWrap
         @functools.wraps(func)
         def runtime_dispatch(*args: Any, **kwargs: Any) -> Any:
             name = _resolve_runtime_policy_name(policy_name)
-            if not name:
-                return func(*args, **kwargs)
-
-            policy = get_policy_for_apply(name)
+            policy = get_policy_for_apply(name) if name else None
             if policy is None:
                 return func(*args, **kwargs)
-
-            wrapped = FaultWrapper(func, **_policy_to_wrapper_kwargs(policy))
-            return wrapped(*args, **kwargs)
+            return FaultWrapper(func, **_policy_to_wrapper_kwargs(policy))(*args, **kwargs)
 
         return runtime_dispatch
 

@@ -226,9 +226,6 @@ class TestPolicyRegistry:
                 mock_shm.clear.assert_called_once_with(5150)
 
     def test_fault_auto_reads_thread_policy(self):
-        faultcore.register_policy("auto_policy", packet_loss="0.1%")
-        faultcore.set_thread_policy("auto_policy")
-
         mock_shm = MagicMock()
         mock_shm.write_packet_loss = MagicMock()
         mock_shm.clear = MagicMock()
@@ -240,40 +237,33 @@ class TestPolicyRegistry:
                 def op():
                     return "ok"
 
-                assert op() == "ok"
+                with faultcore.policy_context(packet_loss="0.1%"):
+                    assert op() == "ok"
                 mock_shm.write_packet_loss.assert_called_once_with(5151, 1_000)
                 mock_shm.clear.assert_called_once_with(5151)
 
-        faultcore.set_thread_policy(None)
-
     def test_fault_auto_resolves_policy_at_call_time(self):
-        faultcore.register_policy("auto_policy_a", packet_loss="0.1%")
-        faultcore.register_policy("auto_policy_b", packet_loss="0.2%")
-
         mock_shm = MagicMock()
         mock_shm.write_packet_loss = MagicMock()
         mock_shm.clear = MagicMock()
 
         with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
             with patch("faultcore.decorator.threading.get_native_id", return_value=5159):
-                faultcore.set_thread_policy("auto_policy_a")
 
                 @faultcore.fault()
                 def op():
                     return "ok"
 
-                assert op() == "ok"
-
-                faultcore.set_thread_policy("auto_policy_b")
-                assert op() == "ok"
+                with faultcore.policy_context(packet_loss="0.1%"):
+                    assert op() == "ok"
+                with faultcore.policy_context(packet_loss="0.2%"):
+                    assert op() == "ok"
 
                 assert mock_shm.write_packet_loss.call_args_list == [
                     ((5159, 1_000),),
                     ((5159, 2_000),),
                 ]
                 assert mock_shm.clear.call_count == 2
-
-        faultcore.set_thread_policy(None)
 
     def test_fault_context_sets_and_restores_thread_policy(self):
         faultcore.set_thread_policy("outer")

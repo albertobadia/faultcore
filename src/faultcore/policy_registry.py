@@ -266,41 +266,44 @@ def _coerce_timeout_pair(
     recv_timeout_ms: int | None,
 ) -> tuple[int, int]:
     error_message = "connect_timeout_ms and recv_timeout_ms must be >= 0"
-    return (
-        _coerce_non_negative_int(connect_timeout_ms, error_message) if connect_timeout_ms is not None else 0,
-        _coerce_non_negative_int(recv_timeout_ms, error_message) if recv_timeout_ms is not None else 0,
-    )
+    connect_timeout = 0 if connect_timeout_ms is None else _coerce_non_negative_int(connect_timeout_ms, error_message)
+    recv_timeout = 0 if recv_timeout_ms is None else _coerce_non_negative_int(recv_timeout_ms, error_message)
+    return connect_timeout, recv_timeout
 
 
-def _build_optional_mapping_profile(
-    raw_value: dict[str, Any] | None,
-    field_name: str,
-    builder: Callable[..., dict[str, Any]],
-    **defaults: Any,
-) -> dict[str, Any] | None:
-    config = _as_mapping(raw_value, field_name)
-    if config is None:
-        return None
-    return builder(**{key: config.get(key, default) for key, default in defaults.items()})
-
-
-def _set_optional_mapping_profile(
+def _set_non_negative_optional(
     policy: dict[str, Any],
     *,
-    raw_value: dict[str, Any] | None,
-    field_name: str,
-    builder: Callable[..., dict[str, Any]],
+    source_value: Any,
     policy_key: str,
-    **defaults: Any,
+    error_message: str,
 ) -> None:
-    profile = _build_optional_mapping_profile(
-        raw_value,
-        field_name,
-        builder,
-        **defaults,
-    )
-    if profile is not None:
-        policy[policy_key] = profile
+    if source_value is not None:
+        policy[policy_key] = _coerce_non_negative_int(source_value, error_message)
+
+
+def _build_optional_mapping_profiles(
+    *,
+    correlated_loss: dict[str, Any] | None,
+    connection_error: dict[str, Any] | None,
+    half_open: dict[str, Any] | None,
+    packet_duplicate: dict[str, Any] | None,
+    packet_reorder: dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    raw_values = {
+        "correlated_loss": correlated_loss,
+        "connection_error": connection_error,
+        "half_open": half_open,
+        "packet_duplicate": packet_duplicate,
+        "packet_reorder": packet_reorder,
+    }
+    profiles: dict[str, dict[str, Any]] = {}
+    for field_name, policy_key, builder, defaults in _OPTIONAL_MAPPING_PROFILE_SPECS:
+        config = _as_mapping(raw_values[field_name], field_name)
+        if config is None:
+            continue
+        profiles[policy_key] = builder(**{key: config.get(key, default) for key, default in defaults.items()})
+    return profiles
 
 
 def get_policy_for_apply(name: str) -> dict[str, Any] | None:
@@ -340,19 +343,32 @@ def register_policy(
     policy: dict[str, Any] = {}
     if target is not None and targets is not None:
         raise ValueError("target and targets are mutually exclusive")
-    if seed is not None:
-        policy["seed"] = _coerce_non_negative_int(seed, "seed must be >= 0")
-    if latency_ms is not None:
-        policy["latency_ms"] = _coerce_non_negative_int(latency_ms, "latency_ms must be >= 0")
-    if jitter_ms is not None:
-        policy["jitter_ms"] = _coerce_non_negative_int(jitter_ms, "jitter_ms must be >= 0")
+    _set_non_negative_optional(
+        policy,
+        source_value=seed,
+        policy_key="seed",
+        error_message="seed must be >= 0",
+    )
+    _set_non_negative_optional(
+        policy,
+        source_value=latency_ms,
+        policy_key="latency_ms",
+        error_message="latency_ms must be >= 0",
+    )
+    _set_non_negative_optional(
+        policy,
+        source_value=jitter_ms,
+        policy_key="jitter_ms",
+        error_message="jitter_ms must be >= 0",
+    )
     if packet_loss is not None:
         policy["packet_loss_ppm"] = parse_packet_loss(packet_loss)
-    if burst_loss_len is not None:
-        policy["burst_loss_len"] = _coerce_non_negative_int(
-            burst_loss_len,
-            "burst_loss_len must be >= 0",
-        )
+    _set_non_negative_optional(
+        policy,
+        source_value=burst_loss_len,
+        policy_key="burst_loss_len",
+        error_message="burst_loss_len must be >= 0",
+    )
     if rate is not None:
         policy["bandwidth_bps"] = parse_rate(rate)
     if connect_timeout_ms is not None or recv_timeout_ms is not None:
@@ -370,26 +386,15 @@ def register_policy(
         policy_key="downlink_profile",
     )
 
-    optional_mapping_values: tuple[dict[str, Any] | None, ...] = (
-        correlated_loss,
-        connection_error,
-        half_open,
-        packet_duplicate,
-        packet_reorder,
-    )
-    for (field_name, policy_key, builder, defaults), raw_value in zip(
-        _OPTIONAL_MAPPING_PROFILE_SPECS,
-        optional_mapping_values,
-        strict=True,
-    ):
-        _set_optional_mapping_profile(
-            policy,
-            raw_value=raw_value,
-            field_name=field_name,
-            builder=builder,
-            policy_key=policy_key,
-            **defaults,
+    policy.update(
+        _build_optional_mapping_profiles(
+            correlated_loss=correlated_loss,
+            connection_error=connection_error,
+            half_open=half_open,
+            packet_duplicate=packet_duplicate,
+            packet_reorder=packet_reorder,
         )
+    )
 
     dns_profile = build_dns_profile(
         delay_ms=dns_delay_ms,
