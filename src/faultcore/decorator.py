@@ -434,27 +434,20 @@ def profile(
         burst_loss_len=burst_loss_len,
         rate=rate,
     )
-
-    def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        return FaultWrapper(
-            func,
-            latency_ms=direction_profile.get("latency_ms"),
-            jitter_ms=direction_profile.get("jitter_ms"),
-            packet_loss_ppm=direction_profile.get("packet_loss_ppm"),
-            burst_loss_len=direction_profile.get("burst_loss_len"),
-            bandwidth_bps=direction_profile.get("bandwidth_bps"),
-            schedule_profile=schedule_profile,
-        )
-
-    return decorator
+    return _with_wrapper(
+        latency_ms=direction_profile.get("latency_ms"),
+        jitter_ms=direction_profile.get("jitter_ms"),
+        packet_loss_ppm=direction_profile.get("packet_loss_ppm"),
+        burst_loss_len=direction_profile.get("burst_loss_len"),
+        bandwidth_bps=direction_profile.get("bandwidth_bps"),
+        schedule_profile=schedule_profile,
+    )
 
 
 def apply_policy(policy_name: str) -> Callable[[Callable[..., Any]], FaultWrapper]:
     def decorator(func: Callable[..., Any]) -> FaultWrapper:
         policy = get_policy_for_apply(policy_name)
-        if policy is None:
-            return FaultWrapper(func)
-        return FaultWrapper(func, **_policy_to_wrapper_kwargs(policy))
+        return FaultWrapper(func, **_policy_to_wrapper_kwargs(policy)) if policy else FaultWrapper(func)
 
     return decorator
 

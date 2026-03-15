@@ -122,14 +122,11 @@ unsafe fn get_optional_ssl_original_fn<T>(
         return Some(unsafe { std::mem::transmute_copy(&next_ptr) });
     }
 
-    // Some Python/OpenSSL builds under LD_PRELOAD expose SSL_* symbols only
-    // through explicit libssl handles, not RTLD_NEXT.
     for lib_name in [c"libssl.so.3", c"libssl.so.1.1", c"libssl.so"] {
         let handle = unsafe { libc::dlopen(lib_name.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
         if handle.is_null() {
             continue;
         }
-        // Keep libssl handles open because function pointers are cached globally.
         let ptr = unsafe { libc::dlsym(handle, symbol_name.as_ptr()) };
         if !ptr.is_null() && !is_excluded_symbol(ptr, exclude_symbol) {
             return Some(unsafe { std::mem::transmute_copy(&ptr) });
@@ -143,22 +140,25 @@ fn record_stream_bytes(fd: c_int, bytes: u64) {
     global_fault_osi_engine().record_stream_bytes(fd, bytes);
 }
 
+fn duplicate_count_from_decision(decision: LayerDecision) -> u64 {
+    match decision {
+        LayerDecision::Duplicate(count) => count,
+        _ => 0,
+    }
+}
+
 fn maybe_duplicate_send(fd: c_int, b: *const c_void, sent: ssize_t, f: c_int) {
     if sent <= 0 {
         return;
     }
-    let decision = record_replay_evaluate_or_replay("stream_uplink_post_send", || {
+    let count = duplicate_count_from_decision(record_replay_evaluate_or_replay("stream_uplink_post_send", || {
         let count = uplink_duplicate_count_for_fd(global_fault_osi_engine(), fd);
         if count > 0 {
             LayerDecision::Duplicate(count)
         } else {
             LayerDecision::Continue
         }
-    });
-    let count = match decision {
-        LayerDecision::Duplicate(n) => n,
-        _ => 0,
-    };
+    }));
     for _ in 0..count {
         unsafe {
             let _ = (ORIG_SEND)(fd, b, sent as size_t, f);
@@ -170,18 +170,14 @@ fn maybe_duplicate_write(fd: c_int, b: *const c_void, sent: ssize_t) {
     if sent <= 0 {
         return;
     }
-    let decision = record_replay_evaluate_or_replay("stream_uplink_post_write", || {
+    let count = duplicate_count_from_decision(record_replay_evaluate_or_replay("stream_uplink_post_write", || {
         let count = uplink_duplicate_count_for_fd(global_fault_osi_engine(), fd);
         if count > 0 {
             LayerDecision::Duplicate(count)
         } else {
             LayerDecision::Continue
         }
-    });
-    let count = match decision {
-        LayerDecision::Duplicate(n) => n,
-        _ => 0,
-    };
+    }));
     for _ in 0..count {
         unsafe {
             let _ = (ORIG_WRITE)(fd, b, sent as size_t);
@@ -200,7 +196,7 @@ fn maybe_duplicate_sendto(
     if sent <= 0 {
         return;
     }
-    let decision = record_replay_evaluate_or_replay("stream_uplink_post_sendto", || {
+    let count = duplicate_count_from_decision(record_replay_evaluate_or_replay("stream_uplink_post_sendto", || {
         let count = unsafe {
             uplink_duplicate_count_for_addr_or_fd(global_fault_osi_engine(), fd, addr, addr_len)
         };
@@ -209,11 +205,7 @@ fn maybe_duplicate_sendto(
         } else {
             LayerDecision::Continue
         }
-    });
-    let count = match decision {
-        LayerDecision::Duplicate(n) => n,
-        _ => 0,
-    };
+    }));
     for _ in 0..count {
         unsafe {
             let _ = (ORIG_SENDTO)(fd, b, sent as size_t, f, addr, addr_len);

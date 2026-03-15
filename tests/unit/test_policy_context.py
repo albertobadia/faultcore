@@ -55,4 +55,3 @@ def test_temporary_policy_context_applies_with_fault_auto():
 
     mock_shm.write_latency.assert_called_once_with(5154, 25)
     mock_shm.clear.assert_called_once_with(5154)
-

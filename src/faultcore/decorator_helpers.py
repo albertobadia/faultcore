@@ -105,8 +105,7 @@ def _target_write_kwargs(target_profile: dict[str, Any]) -> dict[str, Any]:
 
 
 def _write_direction_profile(tid: int, write_method: Any, profile: dict[str, Any]) -> None:
-    kwargs = {field: profile.get(field) for field in _DIRECTIONAL_FIELDS}
-    write_method(tid, **kwargs)
+    write_method(tid, **{field: profile.get(field) for field in _DIRECTIONAL_FIELDS})
 
 
 def _write_profile(
@@ -118,9 +117,7 @@ def _write_profile(
 ) -> None:
     if not profile:
         return
-
-    kwargs = {field: profile.get(field, default) for field, default in defaults.items()}
-    getattr(shm, writer_name)(tid, **kwargs)
+    getattr(shm, writer_name)(tid, **{field: profile.get(field, default) for field, default in defaults.items()})
 
 
 def _write_schedule_profile(

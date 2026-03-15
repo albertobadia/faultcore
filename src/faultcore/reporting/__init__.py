@@ -1,3 +1,5 @@
+from typing import Any
+
 from . import core as _core
 from .core import (
     apply_event_view,
@@ -18,53 +20,50 @@ from .core import (
 from .html_renderer import _normalize_chart_series, render_report_html
 
 _git_value = _core._git_value
-_RUN_RECORD_KEYS = (
-    "command",
-    "returncode",
-    "started_at",
-    "ended_at",
-    "duration_ms",
-    "interceptor_path",
-    "ld_preload_effective",
-    "interceptor_active",
-    "summary_override",
-    "run_json_path",
-    "additional_events",
-    "stdout_excerpt",
-    "stderr_excerpt",
-    "network_metrics",
-    "network_series",
-    "observed_sites",
-    "site_metrics",
-    "record_replay_path",
-)
 
 
 def build_run_record(
     *,
-    command,
-    returncode,
-    started_at,
-    ended_at,
-    duration_ms,
-    interceptor_path,
-    ld_preload_effective,
-    interceptor_active,
-    summary_override=None,
-    run_json_path=None,
-    additional_events=None,
-    stdout_excerpt="",
-    stderr_excerpt="",
-    network_metrics=None,
-    network_series=None,
-    observed_sites=None,
-    site_metrics=None,
+    command: list[str],
+    returncode: int,
+    started_at: str,
+    ended_at: str,
+    duration_ms: int,
+    interceptor_path: str | None,
+    ld_preload_effective: str,
+    interceptor_active: bool,
+    summary_override: dict[str, int] | None = None,
+    run_json_path: str | None = None,
+    additional_events: list[dict[str, Any]] | None = None,
+    stdout_excerpt: str = "",
+    stderr_excerpt: str = "",
+    network_metrics: dict[str, Any] | None = None,
+    network_series: dict[str, list[int]] | None = None,
+    observed_sites: list[str] | None = None,
+    site_metrics: dict[str, dict[str, Any]] | None = None,
     record_replay_path="",
-):
+) -> dict[str, Any]:
     _core._git_value = _git_value
-    local_values = locals()
-    run_record_kwargs = {key: local_values[key] for key in _RUN_RECORD_KEYS}
-    return _core.build_run_record(**run_record_kwargs)
+    return _core.build_run_record(
+        command=command,
+        returncode=returncode,
+        started_at=started_at,
+        ended_at=ended_at,
+        duration_ms=duration_ms,
+        interceptor_path=interceptor_path,
+        ld_preload_effective=ld_preload_effective,
+        interceptor_active=interceptor_active,
+        summary_override=summary_override,
+        run_json_path=run_json_path,
+        additional_events=additional_events,
+        stdout_excerpt=stdout_excerpt,
+        stderr_excerpt=stderr_excerpt,
+        network_metrics=network_metrics,
+        network_series=network_series,
+        observed_sites=observed_sites,
+        site_metrics=site_metrics,
+        record_replay_path=record_replay_path,
+    )
 
 
 __all__ = [

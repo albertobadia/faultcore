@@ -11,7 +11,7 @@ High-performance fault injection and network simulation for Python, backed by Ru
 - `FaultOSI`: OSI-pragmatic L1..L7 fault pipeline in `faultcore_network`;
 - transparent socket interception on Linux via `faultcore run`.
 
-This README is an index. Detailed documentation lives in `docs/`.
+Detailed documentation lives in `docs/`.
 
 ## Quick Start
 
@@ -35,7 +35,7 @@ faultcore run --run-json artifacts/run.json -- pytest -q
 faultcore report --input artifacts/run.json --output artifacts/report.html
 ```
 
-Manual `LD_PRELOAD` execution remains supported for advanced/debug use.
+Manual `LD_PRELOAD` execution is still available for advanced debugging.
 
 Minimal usage:
 

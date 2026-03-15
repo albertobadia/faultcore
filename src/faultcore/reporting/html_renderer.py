@@ -11,6 +11,19 @@ _REPORT_TEMPLATE_PATH = Path(__file__).parent / "templates" / "report_page.mako"
 _REPORT_PAGE_TEMPLATE = Template(filename=str(_REPORT_TEMPLATE_PATH), input_encoding="utf-8")
 _NO_DATA_HTML = "<div class='muted'>No data</div>"
 _PROTOCOL_ORDER = ("tcp", "udp", "http", "total")
+_SERIES_COLOR_MAP = {
+    "tcp": "#68a7db",
+    "udp": "#6bc46d",
+    "http": "#d2b35a",
+    "total": "#de6f6f",
+}
+_SERIES_FALLBACK_COLORS = ["#9ac0ff", "#84d487", "#e9a96d", "#d98b8b"]
+_SINGLE_SERIES_COLORS = [*(_SERIES_COLOR_MAP[protocol] for protocol in _PROTOCOL_ORDER), "#9ac0ff", "#e9a96d"]
+
+
+def _median(values: list[int]) -> int:
+    sorted_values = sorted(values)
+    return sorted_values[len(sorted_values) // 2]
 
 
 def _render_line_chart_svg(
@@ -79,19 +92,12 @@ def _render_multi_line_chart_svg(
     should_normalize = bool(non_zero_ranges and min_range > 0 and (max_range / min_range) >= 8.0)
     max_len = max(len(values) for values in normalized_series.values())
     span = max(1, max_len - 1)
-    palette = {
-        "tcp": "#68a7db",
-        "udp": "#6bc46d",
-        "http": "#d2b35a",
-        "total": "#de6f6f",
-    }
-    fallback_palette = ["#9ac0ff", "#84d487", "#e9a96d", "#d98b8b"]
     fallback_idx = 0
     polylines: list[str] = []
     legend_items: list[str] = []
 
     for name, values in sorted(normalized_series.items()):
-        color, fallback_idx = _resolve_series_color(name, palette, fallback_palette, fallback_idx)
+        color, fallback_idx = _resolve_series_color(name, fallback_idx)
         points: list[str] = []
         line_min = min(values)
         line_max = max(values)
@@ -169,12 +175,11 @@ def _render_series_charts(series_map: dict[str, list[int]]) -> str:
         pretty_title = base_name.replace("_", " ")
         series_chart_blocks.append(_render_multi_metric_chart(pretty_title, chart_series))
 
-    palette = ["#68a7db", "#6bc46d", "#d2b35a", "#de6f6f", "#9ac0ff", "#e9a96d"]
     palette_idx = 0
     for series_name, values in sorted(filtered_series.items()):
         if series_name in consumed:
             continue
-        color = palette[palette_idx % len(palette)]
+        color = _SINGLE_SERIES_COLORS[palette_idx % len(_SINGLE_SERIES_COLORS)]
         palette_idx += 1
         series_chart_blocks.append(_render_metric_chart(series_name, values, stroke=color))
     return "".join(series_chart_blocks)
@@ -186,11 +191,8 @@ def _normalize_series_units(series_name: str, values: list[int]) -> list[int]:
         return values
     if "ms" in lowered:
         non_zero = [abs(value) for value in values if value != 0]
-        if non_zero:
-            sorted_vals = sorted(non_zero)
-            median = sorted_vals[len(sorted_vals) // 2]
-            if median >= 100_000:
-                return [int(round(value / 1_000_000.0)) for value in values]
+        if non_zero and _median(non_zero) >= 100_000:
+            return [int(round(value / 1_000_000.0)) for value in values]
     return values
 
 
@@ -237,7 +239,7 @@ def _rounded_int_or_zero(value: Any) -> int:
 
 def _split_protocol_series_name(series_name: str) -> tuple[str, str] | None:
     lowered = series_name.lower()
-    for candidate in ("tcp_", "udp_", "http_", "total_"):
+    for candidate in (f"{protocol}_" for protocol in _PROTOCOL_ORDER):
         if not lowered.startswith(candidate):
             continue
         base = series_name[len(candidate) :]
@@ -247,17 +249,12 @@ def _split_protocol_series_name(series_name: str) -> tuple[str, str] | None:
     return None
 
 
-def _resolve_series_color(
-    name: str,
-    palette: dict[str, str],
-    fallback_palette: list[str],
-    fallback_idx: int,
-) -> tuple[str, int]:
+def _resolve_series_color(name: str, fallback_idx: int) -> tuple[str, int]:
     key = name.lower()
-    for proto, proto_color in palette.items():
+    for proto, proto_color in _SERIES_COLOR_MAP.items():
         if key.startswith(proto):
             return proto_color, fallback_idx
-    color = fallback_palette[fallback_idx % len(fallback_palette)]
+    color = _SERIES_FALLBACK_COLORS[fallback_idx % len(_SERIES_FALLBACK_COLORS)]
     return color, fallback_idx + 1
 
 
@@ -267,8 +264,7 @@ def _trim_initial_warmup_outlier(values: list[int]) -> list[int]:
     window = values[1 : min(len(values), 11)]
     if not window:
         return values
-    sorted_window = sorted(window)
-    median = sorted_window[len(sorted_window) // 2]
+    median = _median(window)
     if median == 0:
         return values
     first = values[0]

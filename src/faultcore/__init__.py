@@ -75,7 +75,7 @@ class fault_context(policy_context):
     pass
 
 
-def set_thread_policy(policy_name: str | None):
+def set_thread_policy(policy_name: str | None) -> None:
     _set_thread_policy(policy_name)
 
 

@@ -54,15 +54,12 @@ def is_pytest_command(command: list[str]) -> bool:
 
 
 def parse_pytest_summary(output_text: str, *, returncode: int) -> dict[str, int] | None:
-    summary_line = next(
-        (
-            line
-            for line in reversed(output_text.splitlines())
-            if _PYTEST_NO_TESTS_RE.search(line)
-            or (_PYTEST_SUMMARY_TIME_RE.search(line) is not None and _PYTEST_TOKEN_RE.search(line) is not None)
-        ),
-        None,
-    )
+    def is_summary_line(line: str) -> bool:
+        return _PYTEST_NO_TESTS_RE.search(line) is not None or (
+            _PYTEST_SUMMARY_TIME_RE.search(line) is not None and _PYTEST_TOKEN_RE.search(line) is not None
+        )
+
+    summary_line = next((line for line in reversed(output_text.splitlines()) if is_summary_line(line)), None)
     if summary_line is None:
         return None
 
@@ -128,9 +125,8 @@ def _percentile(values: list[int], percentile: int) -> int:
     if not values:
         return 0
     sorted_values = sorted(values)
-    rank = max(1, (len(sorted_values) * percentile + 99) // 100)
-    idx = min(rank - 1, len(sorted_values) - 1)
-    return int(sorted_values[idx])
+    rank_index = max(0, min((len(sorted_values) * percentile + 99) // 100 - 1, len(sorted_values) - 1))
+    return int(sorted_values[rank_index])
 
 
 def _to_int(value: object, default: int = 0) -> int:

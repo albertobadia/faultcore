@@ -65,6 +65,13 @@ def _schedule_profile(schedule_type: int, param_a_ns: int, param_b_ns: int) -> d
     }
 
 
+def _non_empty_normalized(value: str, error_message: str) -> str:
+    normalized = value.strip().lower()
+    if not normalized:
+        raise ValueError(error_message)
+    return normalized
+
+
 def _rate_to_bps(value: float | int, multiplier: int) -> int:
     return int(_as_non_negative_float(float(value), "rate must be >= 0") * multiplier)
 
@@ -118,6 +125,27 @@ def _target_profile_base(
     }
 
 
+def _network_target_profile(
+    network: ipaddress.IPv4Network | ipaddress.IPv6Network,
+    *,
+    kind: int,
+    port: int,
+    protocol: int,
+    priority: int,
+) -> dict[str, object]:
+    is_ipv4 = isinstance(network, ipaddress.IPv4Network)
+    return _target_profile_base(
+        kind=kind,
+        ipv4=int(network.network_address) if is_ipv4 else 0,
+        prefix_len=int(network.prefixlen),
+        port=port,
+        protocol=protocol,
+        priority=priority,
+        address_family=1 if is_ipv4 else 2,
+        addr=_pad_addr16(list(network.network_address.packed)),
+    )
+
+
 def _parse_priority(priority: int | None) -> int:
     parsed_priority = int(priority) if priority is not None else 100
     _ensure_range(parsed_priority, 0, 65535, "target priority must be between 0 and 65535")
@@ -139,7 +167,7 @@ def parse_rate(rate: str | int | float) -> int:
     if isinstance(rate, (int, float)):
         return _rate_to_bps(rate, 1_000_000)
 
-    normalized_rate = rate.strip().lower()
+    normalized_rate = _non_empty_normalized(rate, "rate must be non-empty")
     for suffix, multiplier in _RATE_SUFFIX_MULTIPLIERS.items():
         if normalized_rate.endswith(suffix):
             return _rate_to_bps(normalized_rate[: -len(suffix)], multiplier)
@@ -149,7 +177,7 @@ def parse_rate(rate: str | int | float) -> int:
 
 def parse_packet_loss(loss: str | int | float) -> int:
     if isinstance(loss, str):
-        raw = loss.strip().lower()
+        raw = _non_empty_normalized(loss, "packet_loss must be non-empty")
         if raw.endswith("%"):
             value = float(raw[:-1])
             _ensure_range(value, 0, 100, "packet_loss percentage must be between 0 and 100")
@@ -264,11 +292,10 @@ def build_dns_profile(
 def parse_target_protocol(protocol: str | None) -> int:
     if protocol is None:
         return 0
-    normalized = protocol.strip().lower()
-    parsed = _TARGET_PROTOCOL_MAP.get(normalized)
-    if parsed is None:
-        raise ValueError("target protocol must be one of: any, tcp, udp")
-    return parsed
+    try:
+        return _TARGET_PROTOCOL_MAP[_non_empty_normalized(protocol, "target protocol must be non-empty")]
+    except KeyError as exc:
+        raise ValueError("target protocol must be one of: any, tcp, udp") from exc
 
 
 def _parse_target_host_port(raw: str) -> tuple[str, int]:
@@ -296,6 +323,63 @@ def _parse_target_host_port(raw: str) -> tuple[str, int]:
     return raw, 0
 
 
+def _parse_target_string(
+    target: str,
+    *,
+    parsed_protocol: int,
+    parsed_port: int,
+    parsed_port_start: int | None,
+    parsed_port_end: int | None,
+) -> tuple[int, str | None, str | None, int]:
+    raw = target.strip()
+    if not raw:
+        raise ValueError("target must be non-empty")
+
+    if "://" in raw:
+        proto_raw, raw = raw.split("://", 1)
+        proto_from_target = parse_target_protocol(proto_raw)
+        if parsed_protocol and parsed_protocol != proto_from_target:
+            raise ValueError("target protocol conflicts with protocol parameter")
+        parsed_protocol = proto_from_target
+
+    if "/" in raw:
+        return parsed_protocol, None, raw, parsed_port
+
+    host, target_port = _parse_target_host_port(raw)
+    if parsed_port != 0 and target_port != 0 and parsed_port != target_port:
+        raise ValueError("target port conflicts with port parameter")
+    if target_port != 0 and (parsed_port_start is not None or parsed_port_end is not None):
+        raise ValueError("target port conflicts with port_start/port_end parameters")
+
+    resolved_port = target_port or parsed_port
+    return parsed_protocol, host, None, resolved_port
+
+
+def _semantic_target_profile(
+    *,
+    hostname: str | None,
+    sni: str | None,
+    port: int,
+    protocol: int,
+    priority: int,
+) -> dict[str, object]:
+    profile = _target_profile_base(
+        kind=0,
+        ipv4=0,
+        prefix_len=0,
+        port=port,
+        protocol=protocol,
+        priority=priority,
+        address_family=0,
+        addr=[0] * 16,
+    )
+    if hostname is not None:
+        profile["hostname"] = hostname
+    if sni is not None:
+        profile["sni"] = sni
+    return profile
+
+
 def build_target_profile(
     *,
     target: str | None = None,
@@ -319,26 +403,17 @@ def build_target_profile(
     parsed_sni = normalize_target_name(sni, "target sni") if sni is not None else None
 
     if target is not None:
-        raw = target.strip()
-        if not raw:
-            raise ValueError("target must be non-empty")
-        if "://" in raw:
-            proto_raw, raw = raw.split("://", 1)
-            proto_from_target = parse_target_protocol(proto_raw)
-            if parsed_protocol and parsed_protocol != proto_from_target:
-                raise ValueError("target protocol conflicts with protocol parameter")
-            parsed_protocol = proto_from_target
-        if "/" in raw:
-            parsed_cidr = raw
-        else:
-            host_part, port_from_target = _parse_target_host_port(raw)
-            if parsed_port != 0 and port_from_target != 0 and parsed_port != port_from_target:
-                raise ValueError("target port conflicts with port parameter")
-            if port_from_target != 0 and (parsed_port_start is not None or parsed_port_end is not None):
-                raise ValueError("target port conflicts with port_start/port_end parameters")
-            if port_from_target != 0:
-                parsed_port = port_from_target
-            parsed_host = host_part
+        parsed_protocol, target_host, target_cidr, parsed_port = _parse_target_string(
+            target,
+            parsed_protocol=parsed_protocol,
+            parsed_port=parsed_port,
+            parsed_port_start=parsed_port_start,
+            parsed_port_end=parsed_port_end,
+        )
+        if target_host is not None:
+            parsed_host = target_host
+        if target_cidr is not None:
+            parsed_cidr = target_cidr
 
     _validate_port_bounds(parsed_port, "port")
     if parsed_port != 0 and (parsed_port_start is not None or parsed_port_end is not None):
@@ -364,42 +439,32 @@ def build_target_profile(
         raise ValueError("target requires either host or cidr")
 
     if has_semantic_name:
-        profile = _target_profile_base(
-            kind=0,
-            ipv4=0,
-            prefix_len=0,
-            port=parsed_port,
-            protocol=parsed_protocol,
-            priority=parsed_priority,
-            address_family=0,
-            addr=[0] * 16,
+        return _apply_port_range(
+            _semantic_target_profile(
+                hostname=parsed_hostname,
+                sni=parsed_sni,
+                port=parsed_port,
+                protocol=parsed_protocol,
+                priority=parsed_priority,
+            ),
+            parsed_port_start,
+            parsed_port_end,
         )
-        if parsed_hostname is not None:
-            profile["hostname"] = parsed_hostname
-        if parsed_sni is not None:
-            profile["sni"] = parsed_sni
-        return _apply_port_range(profile, parsed_port_start, parsed_port_end)
 
     if parsed_host:
         try:
             address = ipaddress.ip_address(parsed_host)
         except ValueError as exc:
             raise ValueError("target host must be a valid IPv4 or IPv6 address") from exc
-        is_ipv4 = isinstance(address, ipaddress.IPv4Address)
-        address_family = 1 if is_ipv4 else 2
-        ipv4 = int(address) if is_ipv4 else 0
-        prefix_len = 32 if is_ipv4 else 128
-        addr = _pad_addr16(list(address.packed))
+        prefix_len = 32 if isinstance(address, ipaddress.IPv4Address) else 128
+        network = ipaddress.ip_network(f"{address}/{prefix_len}", strict=False)
         return _apply_port_range(
-            _target_profile_base(
+            _network_target_profile(
+                network,
                 kind=1,
-                ipv4=ipv4,
-                prefix_len=prefix_len,
                 port=parsed_port,
                 protocol=parsed_protocol,
                 priority=parsed_priority,
-                address_family=address_family,
-                addr=addr,
             ),
             parsed_port_start,
             parsed_port_end,
@@ -409,23 +474,16 @@ def build_target_profile(
         network = ipaddress.ip_network(parsed_cidr, strict=False)
     except ValueError as exc:
         raise ValueError("target cidr must be a valid IPv4 or IPv6 CIDR") from exc
-    is_ipv4_network = isinstance(network, ipaddress.IPv4Network)
-    address_family = 1 if is_ipv4_network else 2
-    ipv4 = int(network.network_address) if is_ipv4_network else 0
-    max_prefix_len = 32 if is_ipv4_network else 128
-    addr = _pad_addr16(list(network.network_address.packed))
+    max_prefix_len = 32 if isinstance(network, ipaddress.IPv4Network) else 128
     if network.prefixlen < 0 or network.prefixlen > max_prefix_len:
         raise ValueError(f"target prefix_len must be between 0 and {max_prefix_len}")
     return _apply_port_range(
-        _target_profile_base(
+        _network_target_profile(
+            network,
             kind=2,
-            ipv4=ipv4,
-            prefix_len=int(network.prefixlen),
             port=parsed_port,
             protocol=parsed_protocol,
             priority=parsed_priority,
-            address_family=address_family,
-            addr=addr,
         ),
         parsed_port_start,
         parsed_port_end,
@@ -441,7 +499,7 @@ def build_schedule_profile(
     off_s: int | float | None = None,
     ramp_s: int | float | None = None,
 ) -> dict[str, int]:
-    normalized = kind.strip().lower()
+    normalized = _non_empty_normalized(kind, "schedule kind must be non-empty")
     match normalized:
         case "spike":
             if every_s is None or duration_s is None:
@@ -495,7 +553,7 @@ def build_session_budget_profile(
     if not profile:
         raise ValueError("session_budget requires at least one limit")
 
-    normalized_action = action.strip().lower()
+    normalized_action = _non_empty_normalized(action, "session_budget action must be non-empty")
     match normalized_action:
         case "drop":
             profile["action"] = 1

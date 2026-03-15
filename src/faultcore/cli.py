@@ -152,6 +152,24 @@ def _normalize_series_entry(key: str, value: object) -> int:
     return _coerce_int(value)
 
 
+_SCENARIO_SUMMARY_FIELDS = (
+    ("total_throughput_bps", "throughput_bps", "total", _coerce_int),
+    ("tcp_latency_avg_ms", "latency_ms", "tcp_avg", _coerce_float),
+    ("udp_latency_avg_ms", "latency_ms", "udp_avg", _coerce_float),
+    ("http_latency_avg_ms", "latency_ms", "http_avg", _coerce_float),
+)
+
+
+def _metric_details(
+    metric_sources: dict[str, dict[str, object]],
+    fields: tuple[tuple[str, str, str, object], ...],
+) -> dict[str, object]:
+    return {
+        metric_name: coercer(metric_sources[source_name].get(source_key))
+        for metric_name, source_name, source_key, coercer in fields
+    }
+
+
 def _write_strict_probe_failure_run_json(
     run_json: Path,
     *,
@@ -313,12 +331,7 @@ def _merge_scenario_metrics_into_run_record(
             "type": "scenario.metrics",
             "source": "faultcore.cli",
             "name": "multi_protocol_summary",
-            "details": {
-                "total_throughput_bps": _coerce_int(metric_sources["throughput_bps"].get("total")),
-                "tcp_latency_avg_ms": _coerce_float(metric_sources["latency_ms"].get("tcp_avg")),
-                "udp_latency_avg_ms": _coerce_float(metric_sources["latency_ms"].get("udp_avg")),
-                "http_latency_avg_ms": _coerce_float(metric_sources["latency_ms"].get("http_avg")),
-            },
+            "details": _metric_details(metric_sources, _SCENARIO_SUMMARY_FIELDS),
         }
     )
     record["events"] = events
@@ -375,9 +388,7 @@ def run_command(
 
     ended_at = utc_now_iso()
     duration_ms = int((time.perf_counter() - started_perf) * 1000)
-    summary_override = (
-        parse_pytest_summary(combined_output, returncode=result.returncode) if combined_output else None
-    )
+    summary_override = parse_pytest_summary(combined_output, returncode=result.returncode) if combined_output else None
     additional_events = _build_pytest_additional_events(
         ended_at=ended_at,
         returncode=result.returncode,
