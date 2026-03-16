@@ -114,6 +114,14 @@ _OFFSET_SESSION_BUDGET_TIMEOUT_MS = 520
 _OFFSET_SESSION_ERROR_KIND = 528
 _OFFSET_POLICY_SEED = 536
 
+# PolicyState offsets (within policy region)
+_POLICY_STATE_MAGIC_OFFSET = 0
+_POLICY_STATE_NAME_OFFSET = 4
+_POLICY_STATE_ENABLED_OFFSET = 36
+_POLICY_STATE_TOTAL_CALLS_OFFSET = 40
+_POLICY_STATE_TOTAL_FAILURES_OFFSET = 48
+POLICY_STATE_SIZE = 56
+
 _UPLINK_DIRECTION_OFFSETS: DirectionOffsets = (
     _OFFSET_UPLINK_LATENCY_NS,
     _OFFSET_UPLINK_JITTER_NS,
@@ -701,6 +709,12 @@ class SHMWriter:
         if int(seed) < 0:
             raise ValueError("policy seed must be >= 0")
         self._write_fields(tid, ((_OFFSET_POLICY_SEED, int(seed)),))
+
+    def write_policy_name(self, name: str | None) -> None:
+        name_bytes = name.encode("utf-8")[:32] if name else b"\x00" * 32
+        name_bytes = name_bytes.ljust(32, b"\x00")
+        offset = _POLICY_REGION_OFFSET
+        self._mmap[offset + _POLICY_STATE_NAME_OFFSET : offset + _POLICY_STATE_NAME_OFFSET + 32] = name_bytes
 
     def clear(self, tid: int) -> None:
         tid_slot = self._tid_slot(tid)

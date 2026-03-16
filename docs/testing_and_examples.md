@@ -1,6 +1,6 @@
 # Testing and Examples
 
-This document describes build/test commands and example execution.
+This document covers build and test commands plus example execution.
 For tuning guidance in longer operational runs, see `docs/operations_tuning.md`.
 
 ## Build
@@ -29,7 +29,7 @@ flowchart LR
     TL --> Done2["Done for stress gate"]
 ```
 
-Diagram focus: recommended execution order for fast and long validation paths.
+Recommended execution order for fast and long validation paths.
 
 ## Primary Test Entry Point
 

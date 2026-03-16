@@ -151,6 +151,7 @@ class FaultWrapper:
     def __init__(
         self,
         func: Callable[..., Any],
+        policy_name: str | None = None,
         seed: int | None = None,
         latency_ms: int | None = None,
         jitter_ms: int | None = None,
@@ -173,6 +174,7 @@ class FaultWrapper:
     ):
         functools.update_wrapper(self, func)
         self._func = func
+        self._policy_name = policy_name
         self._seed = seed
         self._latency_ms = latency_ms
         self._jitter_ms = jitter_ms
@@ -204,6 +206,8 @@ class FaultWrapper:
         shm = get_shm_writer()
         async_handoff = False
         try:
+            if self._policy_name:
+                shm.write_policy_name(self._policy_name)
             apply_fault_profiles(shm, tid, self, started_monotonic_ns=time.monotonic_ns())
 
             result = self._func(*args, **kwargs)
@@ -447,12 +451,13 @@ def profile(
 def apply_policy(policy_name: str) -> Callable[[Callable[..., Any]], FaultWrapper]:
     def decorator(func: Callable[..., Any]) -> FaultWrapper:
         policy = get_policy_for_apply(policy_name)
-        return FaultWrapper(func, **_policy_to_wrapper_kwargs(policy)) if policy else FaultWrapper(func)
+        kwargs = _policy_to_wrapper_kwargs(policy) if policy else {}
+        return FaultWrapper(func, policy_name=policy_name, **kwargs)
 
     return decorator
 
 
-def fault(policy_name: str = "auto") -> Callable[[Callable[..., Any]], FaultWrapper]:
+def fault(policy_name: str = "auto") -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(func)
         def runtime_dispatch(*args: Any, **kwargs: Any) -> Any:
@@ -460,7 +465,8 @@ def fault(policy_name: str = "auto") -> Callable[[Callable[..., Any]], FaultWrap
             policy = get_policy_for_apply(name) if name else None
             if policy is None:
                 return func(*args, **kwargs)
-            return FaultWrapper(func, **_policy_to_wrapper_kwargs(policy))(*args, **kwargs)
+            kwargs_wrapper = _policy_to_wrapper_kwargs(policy)
+            return FaultWrapper(func, policy_name=name, **kwargs_wrapper)(*args, **kwargs)
 
         return runtime_dispatch
 

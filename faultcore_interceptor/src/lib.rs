@@ -2,7 +2,8 @@ use faultcore_network::{
     Config, Direction, FaultOsiAdvancedMetricsSnapshot, FaultOsiMetricsSnapshot, LayerDecision,
     PendingDatagram,
     SetpriorityCompatOutcome, apply_connect_directive, apply_stream_directive,
-    bind_fd_to_current_thread, clear_fd_binding, clone_fd_binding, global_fault_osi_engine,
+    bind_fd_to_current_thread, clear_fd_binding, clone_fd_binding, get_current_policy_name,
+    global_fault_osi_engine,
     global_interceptor_runtime, handle_setpriority_compat, init_runtime_shm,
     observe_hostname_for_current_thread_addr, observe_sni_for_fd,
     record_replay_evaluate_or_replay,
@@ -1190,6 +1191,18 @@ pub extern "C" fn faultcore_metrics_reset() {
     reset_global_fault_osi_metrics();
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn faultcore_get_policy_name() -> *const std::os::raw::c_char {
+    match get_current_policy_name() {
+        Some(name) => {
+            static LAST_NAME: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+            let mut guard = LAST_NAME.lock().unwrap();
+            *guard = Some(name);
+            guard.as_ref().unwrap().as_ptr() as *const std::os::raw::c_char
+        }
+        None => std::ptr::null(),
+    }
+}
 
 
 #[cfg(test)]

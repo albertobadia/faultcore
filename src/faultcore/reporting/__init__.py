@@ -7,6 +7,7 @@ from .core import (
     build_record_replay_site_metrics,
     build_record_replay_sites,
     build_record_replay_timeline_events,
+    extract_policy_sources,
     is_pytest_command,
     load_record_replay_events,
     load_run_json,
@@ -41,7 +42,8 @@ def build_run_record(
     network_series: dict[str, list[int]] | None = None,
     observed_sites: list[str] | None = None,
     site_metrics: dict[str, dict[str, Any]] | None = None,
-    record_replay_path="",
+    record_replay_path: str = "",
+    policy_sources: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     _core._git_value = _git_value
     return _core.build_run_record(
@@ -63,6 +65,7 @@ def build_run_record(
         observed_sites=observed_sites,
         site_metrics=site_metrics,
         record_replay_path=record_replay_path,
+        policy_sources=policy_sources,
     )
 
 
@@ -74,6 +77,7 @@ __all__ = [
     "build_record_replay_sites",
     "build_record_replay_timeline_events",
     "build_run_record",
+    "extract_policy_sources",
     "is_pytest_command",
     "load_record_replay_events",
     "load_run_json",

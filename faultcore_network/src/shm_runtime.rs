@@ -2,6 +2,8 @@ use crate::{
     FAULTCORE_MAGIC, FAULTCORE_SHM_SIZE, FaultcoreConfig, MAX_FDS, MAX_POLICIES,
     MAX_TARGET_RULES_PER_TID, MAX_TIDS, PolicyState, TargetRule,
 };
+
+const POLICY_STATE_NAME_OFFSET: usize = 4;
 use libc::{
     MAP_SHARED, O_RDWR, PROT_READ, PROT_WRITE, c_int, fstat, ftruncate, mmap, shm_open, stat,
 };
@@ -251,6 +253,27 @@ pub fn get_config_for_tid_slot(slot: usize) -> Option<FaultcoreConfig> {
         }
         let config_ptr = (ptr_val as *mut FaultcoreConfig).add(MAX_FDS + slot);
         read_stable_config(config_ptr)
+    }
+}
+
+pub fn get_current_policy_name() -> Option<String> {
+    if !is_shm_open() {
+        return None;
+    }
+
+    unsafe {
+        let ptr_val = *SHM_POINTER.read();
+        if ptr_val == 0 {
+            return None;
+        }
+        let name_ptr = ptr_val + POLICY_REGION_OFFSET + POLICY_STATE_NAME_OFFSET;
+        let name_slice = std::slice::from_raw_parts(name_ptr as *const u8, 32);
+        let name_bytes: Vec<u8> = name_slice.iter().copied().take_while(|&b| b != 0).collect();
+        if name_bytes.is_empty() {
+            None
+        } else {
+            String::from_utf8(name_bytes).ok()
+        }
     }
 }
 

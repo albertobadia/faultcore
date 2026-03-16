@@ -1,4 +1,5 @@
 use crate::LayerDecision;
+use crate::shm_runtime::get_current_policy_name;
 use flate2::Compression;
 use flate2::read::MultiGzDecoder;
 use flate2::write::GzEncoder;
@@ -20,6 +21,7 @@ pub struct RecordReplayEvent {
     pub site: String,
     pub decision: String,
     pub value: u64,
+    pub policy_name: Option<String>,
 }
 
 impl RecordReplayEvent {
@@ -39,7 +41,13 @@ impl RecordReplayEvent {
             site: site.to_string(),
             decision: kind.to_string(),
             value,
+            policy_name: None,
         }
+    }
+
+    pub fn with_policy_name(mut self, policy_name: Option<String>) -> Self {
+        self.policy_name = policy_name;
+        self
     }
 
     pub fn to_decision(&self) -> Option<LayerDecision> {
@@ -93,7 +101,8 @@ impl RecordReplayCore {
             RecordReplayMode::Off => (evaluate(), None),
             RecordReplayMode::Record => {
                 let decision = evaluate();
-                let event = RecordReplayEvent::from_decision(site, &decision);
+                let policy_name = get_current_policy_name();
+                let event = RecordReplayEvent::from_decision(site, &decision).with_policy_name(policy_name);
                 (decision, Some(event))
             }
             RecordReplayMode::Replay => {
@@ -239,6 +248,7 @@ mod tests {
             site: "connect_pre".to_string(),
             decision: "continue".to_string(),
             value: 0,
+            policy_name: None,
         });
         let mut core = RecordReplayCore::new(RecordReplayMode::Replay, replay_events);
         let (decision, record) = core.evaluate_or_replay("dns_lookup", || LayerDecision::Continue);

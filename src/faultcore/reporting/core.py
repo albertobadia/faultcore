@@ -187,6 +187,15 @@ def summarize_record_replay(events: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
+def extract_policy_sources(events: list[dict[str, Any]]) -> list[dict[str, str]]:
+    policy_names: set[str] = set()
+    for event in events:
+        policy_name = event.get("policy_name")
+        if policy_name:
+            policy_names.add(policy_name)
+    return [{"kind": "record_replay", "name": name} for name in sorted(policy_names)]
+
+
 def build_record_replay_series(events: list[dict[str, Any]], *, max_points: int = 400) -> dict[str, list[int]]:
     delay_series: list[int] = []
     cumulative_fault_events: list[int] = []
@@ -376,6 +385,7 @@ def build_run_record(
     observed_sites: list[str] | None = None,
     site_metrics: dict[str, dict[str, Any]] | None = None,
     record_replay_path: str = "",
+    policy_sources: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     mode = "ld_preload" if interceptor_path else "none"
     status = status_from_returncode(returncode)
@@ -452,7 +462,7 @@ def build_run_record(
             "shm_open_mode": os.environ.get("FAULTCORE_SHM_OPEN_MODE", ""),
             "record_replay_mode": os.environ.get("FAULTCORE_RECORD_REPLAY_MODE", "off"),
             "record_replay_path": record_replay_path,
-            "policy_sources": [],
+            "policy_sources": policy_sources or [],
         },
         "summary": summary,
         "scenarios": scenarios,

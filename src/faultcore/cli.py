@@ -15,6 +15,7 @@ from faultcore.reporting import (
     build_record_replay_sites,
     build_record_replay_timeline_events,
     build_run_record,
+    extract_policy_sources,
     is_pytest_command,
     load_record_replay_events,
     load_run_json,
@@ -399,12 +400,14 @@ def run_command(
     network_series: dict[str, list[int]] | None = None
     observed_sites: list[str] | None = None
     site_metrics: dict[str, dict[str, object]] | None = None
+    policy_sources: list[dict[str, str]] | None = None
     if record_replay_path:
         rr_events = load_record_replay_events(Path(record_replay_path))
         network_metrics = summarize_record_replay(rr_events)
         network_series = build_record_replay_series(rr_events)
         observed_sites = build_record_replay_sites(rr_events)
         site_metrics = build_record_replay_site_metrics(rr_events)
+        policy_sources = extract_policy_sources(rr_events)
         additional_events.extend(build_record_replay_timeline_events(rr_events, ts=ended_at))
         if summary_override is None:
             summary_override = {}
@@ -430,6 +433,7 @@ def run_command(
             observed_sites=observed_sites,
             site_metrics=site_metrics,
             record_replay_path=record_replay_path,
+            policy_sources=policy_sources,
         )
         resolved_scenario_metrics_path, scenario_metrics = _load_scenario_metrics(scenario_metrics_path)
         _merge_scenario_metrics_into_run_record(
