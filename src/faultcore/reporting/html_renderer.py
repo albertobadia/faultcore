@@ -3,12 +3,18 @@ import json
 from pathlib import Path
 from typing import Any
 
-from mako.template import Template
+from mako.lookup import TemplateLookup
 
 from .core import apply_event_view
 
-_REPORT_TEMPLATE_PATH = Path(__file__).parent / "templates" / "report_page.mako"
-_REPORT_PAGE_TEMPLATE = Template(filename=str(_REPORT_TEMPLATE_PATH), input_encoding="utf-8")
+_TEMPLATES_DIR = Path(__file__).parent / "templates"
+_TEMPLATE_LOOKUP = TemplateLookup(directories=[str(_TEMPLATES_DIR)], input_encoding="utf-8", filesystem_checks=True)
+_REPORT_TEMPLATE = _TEMPLATE_LOOKUP.get_template("report_page.mako")
+_CHARTS_TEMPLATE = _TEMPLATE_LOOKUP.get_template("charts.mako")
+_NETWORK_METRICS_TEMPLATE = _TEMPLATE_LOOKUP.get_template("network_metrics_panel.mako")
+_NETWORK_PARTS_TEMPLATE = _TEMPLATE_LOOKUP.get_template("network_metrics_parts.mako")
+_SITE_DETAILS_TEMPLATE = _TEMPLATE_LOOKUP.get_template("site_details.mako")
+_DETAILS_TEMPLATE = _TEMPLATE_LOOKUP.get_template("details.mako")
 _NO_DATA_HTML = "<div class='muted'>No data</div>"
 _PROTOCOL_ORDER = ("tcp", "udp", "http", "total")
 _SERIES_COLOR_MAP = {
@@ -70,7 +76,8 @@ def _render_line_chart_svg(
 
 
 def _render_metric_chart(title: str, values: list[int], *, stroke: str = "#68a7db") -> str:
-    return f"<div class='metric-chart'>{_render_line_chart_svg(values, stroke=stroke, title=title)}</div>"
+    chart_html = _render_line_chart_svg(values, stroke=stroke, title=title)
+    return _CHARTS_TEMPLATE.get_def("metric_chart").render(title=title, chart_html=chart_html)
 
 
 def _render_multi_line_chart_svg(
@@ -144,7 +151,8 @@ def _render_multi_line_chart_svg(
 
 
 def _render_multi_metric_chart(title: str, series_map: dict[str, list[int]]) -> str:
-    return f"<div class='metric-chart'>{_render_multi_line_chart_svg(series_map, title=title)}</div>"
+    chart_html = _render_multi_line_chart_svg(series_map, title=title)
+    return _CHARTS_TEMPLATE.get_def("metric_chart").render(title=title, chart_html=chart_html)
 
 
 def _render_series_charts(series_map: dict[str, list[int]]) -> str:
@@ -289,12 +297,7 @@ def _sum_series_by_index(series_by_name: dict[str, list[int]]) -> list[int]:
 
 
 def _render_kpi_card(label: str, value: str) -> str:
-    return (
-        "<div class='network-kpi-card'>"
-        f"<div class='network-kpi-label'>{_safe(label)}</div>"
-        f"<div class='network-kpi-value'>{_safe(value)}</div>"
-        "</div>"
-    )
+    return _CHARTS_TEMPLATE.get_def("kpi_card").render(label=label, value=value)
 
 
 def _render_event_rows(events: list[dict[str, Any]]) -> str:
@@ -320,6 +323,8 @@ def _metric_group_for_key(key: str) -> str:
     if "throughput" in lowered or "bytes" in lowered:
         return "Traffic"
     if "latency" in lowered or "jitter" in lowered:
+        if "tcp_" in lowered or "udp_" in lowered or "http_" in lowered:
+            return "Other"
         return "Latency/Jitter"
     if "events" in lowered or lowered.endswith("_count"):
         return "Events/Counters"
@@ -346,17 +351,16 @@ def _render_network_metrics_panel(
     *,
     max_items_per_group: int = 12,
     group_limits_override: dict[str, int] | None = None,
-    balanced_layout: bool = False,
 ) -> str:
     if not isinstance(metrics, dict) or not metrics:
-        return "<p class='muted'>No network metrics captured</p>"
+        return _NETWORK_PARTS_TEMPLATE.get_def("no_data_message").render(msg="No network metrics captured")
     numeric_items = [
         (str(key), float(value))
         for key, value in metrics.items()
         if not isinstance(value, bool) and isinstance(value, (int, float))
     ]
     if not numeric_items:
-        return "<p class='muted'>No numeric metrics captured</p>"
+        return _NETWORK_PARTS_TEMPLATE.get_def("no_data_message").render(msg="No numeric metrics captured")
     metric_map = dict(numeric_items)
     kpi_order = [
         ("total_throughput_bps", "Throughput"),
@@ -415,51 +419,37 @@ def _render_network_metrics_panel(
         for key, value in items:
             width_pct = min(96.0, (abs(value) / local_max) * 96.0)
             rows.append(
-                "<div class='metric-row'>"
-                f"<div class='metric-name'>{_safe(key)}</div>"
-                "<div class='metric-track'>"
-                f"<div class='metric-fill' style='width:{width_pct:.2f}%'></div>"
-                "</div>"
-                f"<div class='metric-value'>{_safe(_format_metric_value(key, value))}</div>"
-                "</div>"
+                _NETWORK_PARTS_TEMPLATE.get_def("metric_row").render(
+                    key=_safe(key),
+                    value=value,
+                    formatted_value=_safe(_format_metric_value(key, value)),
+                    width_pct=f"{width_pct:.2f}",
+                )
             )
-        group_html = (
-            f"<div class='metric-group'><div class='metric-group-title'>{_safe(group_name)}</div>{''.join(rows)}</div>"
-        )
+        group_html = _NETWORK_PARTS_TEMPLATE.get_def("metric_group").render(name=_safe(group_name), rows="".join(rows))
         group_blocks.append(group_html)
         group_block_map[group_name] = group_html
 
     groups_html = "".join(group_blocks)
-    if balanced_layout and "Events/Counters" in group_block_map:
+    if "Events/Counters" in group_block_map:
         left_blocks: list[str] = []
-        for name in ("Latency/Jitter", "Other"):
+        for name in ("Events/Counters", "Other"):
             block = group_block_map.get(name)
             if block:
                 left_blocks.append(block)
-        if left_blocks:
-            consumed = {"Events/Counters", "Latency/Jitter", "Other"}
-            rest_blocks = [
-                group_block_map[name] for name in group_order if name in group_block_map and name not in consumed
-            ]
-            rest_html = "<div class='metric-groups-grid'>" + "".join(rest_blocks) + "</div>" if rest_blocks else ""
-            groups_html = (
-                "<div class='metric-groups-balanced'>"
-                "<div class='metric-left-stack'>"
-                f"{''.join(left_blocks)}"
-                "</div>"
-                "<div class='metric-right-single'>"
-                f"{group_block_map['Events/Counters']}"
-                "</div>"
-                "</div>"
-                f"{rest_html}"
+        right_blocks: list[str] = []
+        for name in ("Traffic", "Latency/Jitter"):
+            block = group_block_map.get(name)
+            if block:
+                right_blocks.append(block)
+        if left_blocks and right_blocks:
+            groups_html = _NETWORK_PARTS_TEMPLATE.get_def("balanced_layout").render(
+                left_blocks="".join(left_blocks), right_blocks="".join(right_blocks)
             )
 
-    kpi_html = "".join(kpi_cards) or "<div class='muted'>No KPI metrics</div>"
-    return (
-        "<div class='network-metrics-panel'>"
-        f"<div class='network-kpi-grid'>{kpi_html}</div>"
-        f"<div class='metric-groups-grid-wrap'>{groups_html}</div>"
-        "</div>"
+    kpi_html = "".join(kpi_cards) or _NETWORK_PARTS_TEMPLATE.get_def("no_data_message").render(msg="No KPI metrics")
+    return _NETWORK_PARTS_TEMPLATE.get_def("network_metrics_panel").render(
+        kpi_grid_html=kpi_html, groups_html=groups_html
     )
 
 
@@ -513,7 +503,6 @@ def _render_site_details(site_metrics: dict[str, Any], *, run_duration_ms: int =
             site_panel_metrics,
             max_items_per_group=8,
             group_limits_override={"Latency/Jitter": 3},
-            balanced_layout=True,
         )
         decision_flags_html = _render_multi_metric_chart(
             "Decision Flags (0/1)",
@@ -528,18 +517,22 @@ def _render_site_details(site_metrics: dict[str, Any], *, run_duration_ms: int =
             },
         )
         blocks.append(
-            f"<details class='metric-details site-item' "
-            f"data-item-name='{_safe(site_name.lower())}' "
-            f"data-fault-events='{_safe(raw_data.get('fault_events', 0))}'>"
-            f"<summary><code>{_safe(site_name)}</code> | fault_rate={_safe(raw_data.get('fault_rate_pct', 0.0))}% | "
-            f"fault_events={_safe(raw_data.get('fault_events', 0))}</summary>"
-            f"{network_panel_html}"
-            f"{_render_metric_chart('Delay Timeline (ns)', delay_chart_values, stroke='#8dd0a8')}"
-            f"{decision_flags_html}"
-            f"{bucket_counters_html}"
-            "</details>"
+            _DETAILS_TEMPLATE.get_def("details_item").render(
+                class_name="site-item",
+                item_name=_safe(site_name.lower()),
+                fault_events=_safe(raw_data.get("fault_events", 0)),
+                summary_html=_DETAILS_TEMPLATE.get_def("site_summary").render(
+                    name=_safe(site_name),
+                    fault_rate=_safe(raw_data.get("fault_rate_pct", 0.0)),
+                    fault_events=_safe(raw_data.get("fault_events", 0)),
+                ),
+                content_html=network_panel_html
+                + _render_metric_chart("Delay Timeline (ns)", delay_chart_values, stroke="#8dd0a8")
+                + decision_flags_html
+                + bucket_counters_html,
+            )
         )
-    return "".join(blocks) or "<p class='muted'>No per-site metrics captured</p>"
+    return "".join(blocks) or _DETAILS_TEMPLATE.get_def("no_data").render(msg="No per-site metrics captured")
 
 
 def _render_function_metrics_details(function_metrics: dict[str, Any]) -> str:
@@ -572,20 +565,21 @@ def _render_function_metrics_details(function_metrics: dict[str, Any]) -> str:
             function_panel_metrics,
             max_items_per_group=8,
             group_limits_override={"Latency/Jitter": 3},
-            balanced_layout=True,
         )
         blocks.append(
-            f"<details class='metric-details function-item' data-item-name='{_safe(func_name.lower())}' "
-            f"data-fault-events='{_safe(raw_data.get('fault_events', 0))}'>"
-            "<summary>"
-            f"<code>{_safe(func_name)}</code> | "
-            f"throughput_bps={_safe(raw_data.get('throughput_bps', 0))}"
-            "</summary>"
-            f"{network_panel_html}"
-            f"{timeline_charts_html}"
-            "</details>"
+            _DETAILS_TEMPLATE.get_def("details_item").render(
+                class_name="function-item",
+                item_name=_safe(func_name.lower()),
+                fault_events=0,
+                summary_html=_DETAILS_TEMPLATE.get_def("function_summary").render(
+                    name=_safe(func_name), throughput=_safe(raw_data.get("throughput_bps", 0))
+                ),
+                content_html=network_panel_html + timeline_charts_html,
+            )
         )
-    return "".join(blocks) or "<p class='muted'>No function-level network metrics captured</p>"
+    return "".join(blocks) or _DETAILS_TEMPLATE.get_def("no_data").render(
+        msg="No function-level network metrics captured"
+    )
 
 
 def _render_report_html_document(
@@ -624,15 +618,7 @@ def _render_report_html_document(
     site_metrics = run_data.get("site_metrics", {})
     function_metrics = run_data.get("function_metrics", {})
     network_metrics_html = _render_network_metrics_panel(network_metrics)
-    config_items = "".join(
-        (
-            f"<li>seed={_safe(faultcore.get('seed', 0))}</li>",
-            f"<li>shm_open_mode={_safe(faultcore.get('shm_open_mode', ''))}</li>",
-            f"<li>record_replay_mode={_safe(faultcore.get('record_replay_mode', 'off'))}</li>",
-            f"<li>interceptor_mode={_safe(interceptor.get('mode', 'none'))}</li>",
-            f"<li>interceptor_active={_safe(interceptor.get('active', False))}</li>",
-        )
-    )
+    config_items = ""
     delay_values = network_series.get("delay_ns", []) if isinstance(network_series, dict) else []
     delay_chart = ""
     if isinstance(delay_values, list) and delay_values:
@@ -671,29 +657,6 @@ def _render_report_html_document(
     ]
     failures_count = len(failures)
     artifacts_count = len(artifacts)
-    scenario_compact = (
-        ", ".join(
-            f"{_safe(item.get('name', 'default'))}:"
-            f"{_safe(item.get('status', 'unknown'))}"
-            f"({_safe(item.get('duration_ms', 0))}ms)"
-            for item in scenarios
-        )
-        or "none"
-    )
-    artifact_items = (
-        "".join(
-            f"<li>{_safe(item.get('kind', 'artifact'))}: <code>{_safe(item.get('path', ''))}</code></li>"
-            for item in artifacts
-        )
-        or "<li>No artifacts</li>"
-    )
-    failure_items = (
-        "".join(
-            f"<li>{_safe(item.get('ts', ''))} {_safe(item.get('type', ''))}: {_safe(item.get('name', ''))}</li>"
-            for item in failures
-        )
-        or "<li>No failures/errors in current view</li>"
-    )
 
     duration_ms = _safe(run_data.get("duration_ms", 0))
     events_meta = (
@@ -704,7 +667,7 @@ def _render_report_html_document(
     )
 
     return str(
-        _REPORT_PAGE_TEMPLATE.render(
+        _REPORT_TEMPLATE.render(
             run_data=run_data,
             viewed_events=viewed_events,
             status=status,
@@ -725,13 +688,10 @@ def _render_report_html_document(
             function_details_html=function_details_html,
             failures_count=failures_count,
             artifacts_count=artifacts_count,
-            scenario_compact=scenario_compact,
-            artifact_items=artifact_items,
-            failure_items=failure_items,
             duration_ms=duration_ms,
             events_meta=events_meta,
             safe=_safe,
-            render_event_rows=_render_event_rows,
+            failures=failures,
         )
     )
 
