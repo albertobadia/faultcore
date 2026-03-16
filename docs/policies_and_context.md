@@ -11,6 +11,8 @@ A policy is a named set of optional fields:
 - `burst_loss_len`
 - `rate` (converted to bps)
 - `connect_timeout_ms` / `recv_timeout_ms`
+- `session_budget` (max bytes, operations, or duration limits with terminal actions)
+- `seed` (optional random seed for deterministic behavior)
 
 Policies are stored in a process-local registry protected by a lock.
 
@@ -51,7 +53,7 @@ faultcore.register_policy(
     jitter_ms=10,
     packet_loss="1%",
     burst_loss_len=3,
-    rate="2mbps",
+    rate=2,
     connect_timeout_ms=20,
     recv_timeout_ms=20,
 )
@@ -94,6 +96,22 @@ with faultcore.fault_context("inner"):
 
 The previous thread policy is restored on context exit.
 
+## Inline Policy Context
+
+`policy_context` allows inline policy definition without registering a named policy:
+
+```python
+import faultcore
+
+with faultcore.policy_context(latency_ms=50, jitter_ms=10, packet_loss="1%"):
+    @faultcore.fault()
+    def op():
+        return "ok"
+    op()
+```
+
+This creates a temporary policy that is automatically unregistered on context exit.
+
 ## Load Policies from File
 
 JSON and YAML are supported:
@@ -112,7 +130,7 @@ File format:
     "jitter_ms": 3,
     "packet_loss": "0.2%",
     "burst_loss_len": 2,
-    "rate": "1mbps",
+    "rate": 1,
     "connect_timeout_ms": 9,
     "recv_timeout_ms": 9
   }

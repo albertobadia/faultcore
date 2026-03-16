@@ -6,6 +6,7 @@ For tuning guidance in longer operational runs, see `docs/operations_tuning.md`.
 ## Build
 
 ```bash
+uv sync
 ./build.sh
 ```
 
@@ -88,9 +89,9 @@ Current files in `tests/integration/` are CLI-oriented network probes (not pytes
 They are invoked with explicit args from `tests.sh`, for example:
 
 ```bash
-.venv/bin/python tests/integration/test_latency.py --host 127.0.0.1 --port 9000 --mode latency --count 3
-.venv/bin/python tests/integration/test_timeout.py --host 127.0.0.1 --port 9000 --mode recv --timeout 500
-.venv/bin/python tests/integration/test_bandwidth.py --host 127.0.0.1 --port 9000 --mode throughput --messages 20
+python tests/integration/test_latency.py --host 127.0.0.1 --port 9000 --mode latency --count 3
+python tests/integration/test_timeout.py --host 127.0.0.1 --port 9000 --mode recv --timeout 500
+python tests/integration/test_bandwidth.py --host 127.0.0.1 --port 9000 --mode throughput --messages 20
 ```
 
 ## Running Examples
@@ -98,12 +99,12 @@ They are invoked with explicit args from `tests.sh`, for example:
 CLI-first:
 
 ```bash
-faultcore run -- .venv/bin/python examples/01_http_requests.py
+faultcore run -- python examples/1_http_requests.py
 ```
 
 Some examples expect local servers:
-- TCP echo server: `tests/integration/servers/tcp_echo_server.py --host 127.0.0.1 --port 9000`
-- UDP echo server: `tests/integration/servers/udp_echo_server.py --host 127.0.0.1 --port 9001`
+- TCP echo server: `python tests/integration/servers/tcp_echo_server.py --host 127.0.0.1 --port 9000`
+- UDP echo server: `python tests/integration/servers/udp_echo_server.py --host 127.0.0.1 --port 9001`
 - HTTP test server: `python -m uvicorn tests.integration.servers.http_server:app --host 127.0.0.1 --port 8000`
 
 Advanced/manual path (debugging only):
@@ -114,14 +115,15 @@ examples/run_with_preload.sh 01_http_requests.py
 
 ## Example Set
 
-- `examples/01_http_requests.py`
-- `examples/02_http_async.py`
-- `examples/03_tcp_client.py`
-- `examples/04_udp_client.py`
-- `examples/05_rate_limit.py`
-- `examples/06_multi_protocol.py`
-- `examples/08_bandwidth_throttle.py`
-- `examples/09_network_timeout.py`
+- `examples/1_http_requests.py`
+- `examples/2_http_async.py`
+- `examples/3_tcp_client.py`
+- `examples/4_udp_client.py`
+- `examples/5_rate_limit.py`
+- `examples/6_multi_protocol.py`
+- `examples/7_latency_jitter.py`
+- `examples/8_bandwidth_throttle.py`
+- `examples/9_network_timeout.py`
 - `examples/10_target_priority.py`
 - `examples/11_fault_metrics.py`
 - `examples/12_perf_baseline.py`
@@ -135,5 +137,5 @@ Example output text may refer to "rate setting" or throughput effects.
 ## Lint Modes
 
 `lint.sh` has two modes:
-- `sh lint.sh` (or `sh lint.sh check`): verification only, no file mutations.
-- `sh lint.sh fix`: applies `ruff --fix` + formatter updates.
+- `sh lint.sh` (or `sh lint.sh check`): verification only, runs `cargo clippy` and `ruff check` + `ruff format --check`.
+- `sh lint.sh fix`: applies `ruff check --fix` + `ruff format` and runs `cargo clippy`.

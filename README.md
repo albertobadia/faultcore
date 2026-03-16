@@ -20,9 +20,10 @@ Requirements:
 - Rust toolchain
 - Linux for network interception
 
-Build:
+Install dependencies and build:
 
 ```bash
+uv sync
 ./build.sh
 ```
 
@@ -46,7 +47,7 @@ import faultcore
 def slow_operation():
     return "ok"
 
-@faultcore.rate_limit(rate="10mbps")
+@faultcore.rate_limit(rate=10)
 def network_operation():
     return "ok"
 ```
@@ -55,22 +56,13 @@ def network_operation():
 
 | Document | Scope |
 |---|---|
-| [`docs/api_reference.md`](docs/api_reference.md) | Public Python API and a decorator-family map (Mermaid) for quick navigation |
-| [`docs/architecture.md`](docs/architecture.md) | System architecture with module layout, runtime sequence, and FaultOSI decision diagrams |
-| [`docs/policies_and_context.md`](docs/policies_and_context.md) | Policy lifecycle and timeout precedence flowcharts |
-| [`docs/interceptor_and_shm.md`](docs/interceptor_and_shm.md) | CLI-first Linux runtime sequence (`faultcore run`) and SHM/interceptor details |
-| [`docs/testing_and_examples.md`](docs/testing_and_examples.md) | Validation path diagram (`lint -> build -> tests.sh -> tests_long.sh`) and execution guidance |
-| [`docs/shm_protocol.md`](docs/shm_protocol.md) | SHM region layout, consistency sequence, and compatibility update flow |
-| [`docs/operations_tuning.md`](docs/operations_tuning.md) | Baseline/tuning/stress operational flowchart for long-running scenarios |
-| [`docs/binary_compatibility.md`](docs/binary_compatibility.md) | Native artifact policy (platform tags + glibc/manylinux objective) |
-| [`docs/release_local_checklist.md`](docs/release_local_checklist.md) | Reproducible local binary release checklist |
-
-## Mermaid Conventions
-
-- Use fenced code blocks with language tag `mermaid` for all diagrams.
-- Keep titles short and keep each diagram focused on one question.
-- Use `flowchart` for process/ownership, `sequenceDiagram` for runtime interaction, and `stateDiagram-v2` for decision states.
-- Prefer complementary diagrams over duplicated prose.
+| [`docs/api_reference.md`](docs/api_reference.md) | Public Python API and decorator families |
+| [`docs/architecture.md`](docs/architecture.md) | System architecture with module layout and FaultOSI |
+| [`docs/policies_and_context.md`](docs/policies_and_context.md) | Policy lifecycle and application patterns |
+| [`docs/interceptor_and_shm.md`](docs/interceptor_and_shm.md) | CLI runtime and SHM/interceptor details |
+| [`docs/testing_and_examples.md`](docs/testing_and_examples.md) | Build, test commands and examples |
+| [`docs/shm_protocol.md`](docs/shm_protocol.md) | SHM binary layout and consistency protocol |
+| [`docs/operations_tuning.md`](docs/operations_tuning.md) | Baseline/tuning/stress operational guidance |
 
 ## Project Status
 

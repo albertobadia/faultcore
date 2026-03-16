@@ -99,12 +99,14 @@ Diagram focus: top-level SHM memory regions consumed by writer/runtime.
 | `session_action` | 512 | 8 | `u64` (`1=drop`, `2=timeout`, `3=connection_error`) |
 | `session_budget_timeout_ms` | 520 | 8 | `u64` (`action=timeout`) |
 | `session_error_kind` | 528 | 8 | `u64` (`1=reset`, `2=refused`, `3=unreachable`) |
+| `policy_seed` | 536 | 8 | `u64` (random seed for deterministic behavior) |
 
 Constants:
 - `FAULTCORE_MAGIC = 0xFACC0DE`
-- `CONFIG_SIZE = 536`
+- `CONFIG_SIZE = 544`
 - `MAX_FDS = 131072`
 - `MAX_TIDS = 65536`
+- `MAX_POLICIES = 1024`
 - `MAX_TARGET_RULES_PER_TID = 8`
 
 ## Target Rules Region

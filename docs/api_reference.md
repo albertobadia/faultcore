@@ -45,11 +45,11 @@ Set jitter in milliseconds.
 
 ### `packet_loss(loss: str | int | float)`
 
-Set packet loss as parts-per-million (PPM) internally.
+Set packet loss as parts-per-million (PPM). String values support suffixes: `%` (percentage) or `ppm` (e.g., `"1%"`, `"0.1%"`, `"1000ppm"`). Numeric values are interpreted as PPM.
 
 ### `burst_loss(length: int)`
 
-Set burst packet loss length.
+Set burst packet loss length (consecutive packets to drop).
 
 ### `uplink(...)` and `downlink(...)`
 
@@ -96,7 +96,7 @@ Inject NXDOMAIN-style DNS failures (`EAI_NONAME`) with probability.
 
 ### `rate_limit(rate: str | int)`
 
-Set bandwidth in bits per second (bps) internally.
+Set bandwidth. Integer values are interpreted as megabits per second (Mbps). String values support suffixes: `bps`, `kbps`, `mbps`, `gbps` (e.g., `"10mbps"`, `"1gbps"`).
 
 ### `for_target(...)`
 
@@ -124,6 +124,7 @@ Register or replace a named policy.
 register_policy(
     name: str,
     *,
+    seed: int | None = None,
     latency_ms: int | None = None,
     jitter_ms: int | None = None,
     packet_loss: str | int | float | None = None,
@@ -151,6 +152,8 @@ register_policy(
 Notes:
 - `timeout_ms` is not supported.
 - Use `connect_timeout_ms` and `recv_timeout_ms` explicitly.
+- `seed` provides deterministic random behavior when set.
+- `session_budget` supports `max_bytes_tx`, `max_bytes_rx`, `max_ops`, `max_duration_ms` with `action` (drop/timeout/connection_error) and optional `budget_timeout_ms` or `error`.
 
 ### Other registry functions
 
@@ -161,7 +164,30 @@ Notes:
 
 ## Context API
 
-- `fault_context(policy_name: str | None = None)`
-- `set_thread_policy(policy_name: str | None)`
+### `fault_context(policy_name: str | None = None)`
 
-`fault_context` temporarily overrides thread policy name and restores the previous value on exit.
+Context manager for thread-local policy application. See [`docs/policies_and_context.md`](policies_and_context.md) for detailed usage.
+
+### `policy_context(policy_name: str | None = None, **policy_kwargs)`
+
+Extended context manager that supports both named policies and inline policy definition.
+
+```python
+# Using named policy
+with faultcore.policy_context("my_policy"):
+    # policy applied here
+    pass
+
+# Using inline kwargs
+with faultcore.policy_context(latency_ms=50, packet_loss="1%"):
+    # inline policy applied here
+    pass
+```
+
+### `set_thread_policy(policy_name: str | None)`
+
+Set thread-local policy name directly.
+
+### `get_thread_policy() -> str | None`
+
+Get current thread-local policy name.

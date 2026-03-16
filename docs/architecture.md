@@ -96,6 +96,8 @@ Diagram focus: runtime interaction order from Python write to syscall result.
 - `socket_runtime.rs`: socket metadata extraction (`protocol`, peer/addr endpoint, monotonic clock).
 - `interceptor_bridge.rs`: single façade used by interceptor to fetch effective runtime config and bind/clear fd policy.
 - `setpriority_compat.rs`: optional compatibility shim for legacy `setpriority` control path.
+- `observability.rs`: metrics collection and reporting for fault decisions.
+- `record_replay.rs`: deterministic decision capture and replay functionality.
 
 ### `faultcore_interceptor/src`
 

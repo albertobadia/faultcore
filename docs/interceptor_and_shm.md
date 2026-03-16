@@ -41,6 +41,7 @@ Diagram focus: end-to-end lifecycle from decorator write to hook behavior.
 Build:
 
 ```bash
+uv sync
 ./build.sh
 ```
 
@@ -63,9 +64,11 @@ faultcore report --input artifacts/run.json --output artifacts/report.html
 For low-level debugging, manual preload is still supported:
 
 ```bash
-LD_PRELOAD=./faultcore_interceptor/target/release/libfaultcore_interceptor.so \
+LD_PRELOAD=./src/faultcore/_native/<platform-tag>/libfaultcore_interceptor.so \
 python your_script.py
 ```
+
+Replace `<platform-tag>` with `linux-x86_64` or `linux-aarch64` as appropriate.
 
 ## Record/Replay Mode
 

@@ -75,7 +75,7 @@ Recommended scripts:
 
 ## Operational Checklist
 
-1. `sh lint.sh` (check mode)
+1. `sh lint.sh` (check mode) - requires `uv`
 2. `sh build.sh`
 3. `sh tests.sh`
 4. Optional: run `sh tests_long.sh` and store results with timestamp.

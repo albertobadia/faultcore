@@ -109,4 +109,5 @@ __all__ = [
     "policy_context",
     "fault_context",
     "set_thread_policy",
+    "get_thread_policy",
 ]
