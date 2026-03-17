@@ -78,7 +78,7 @@ def test_policy_context_cleans_up_temp_policy_when_set_thread_policy_raises():
         if call_count[0] == 1:
             raise RuntimeError("Simulated failure in set_thread_policy")
 
-    with patch("faultcore._set_thread_policy", mock_set_thread_policy):
+    with patch("faultcore.set_thread_policy", mock_set_thread_policy):
         initial_policies = set(list_policies())
 
         try:
