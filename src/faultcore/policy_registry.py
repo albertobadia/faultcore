@@ -313,7 +313,7 @@ def register_policy(
     latency: str | None = None,
     jitter: str | None = None,
     packet_loss: str | None = None,
-    burst_loss: str | int | None = None,
+    burst_loss: str | None = None,
     rate: str | None = None,
     timeout: dict[str, Any] | None = None,
     uplink: dict[str, Any] | None = None,

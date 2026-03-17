@@ -394,7 +394,7 @@ class TestDirectionalDecorators:
         with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
             with patch("faultcore.decorator.threading.get_native_id", return_value=11111):
 
-                @faultcore.uplink(latency="100ms", jitter="10ms", packet_loss="1%", burst_loss=3, rate="10mbps")
+                @faultcore.uplink(latency="100ms", jitter="10ms", packet_loss="1%", burst_loss="3", rate="10mbps")
                 def my_func():
                     return "ok"
 
@@ -411,7 +411,7 @@ class TestDirectionalDecorators:
         with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
             with patch("faultcore.decorator.threading.get_native_id", return_value=22222):
 
-                @faultcore.downlink(latency="200ms", jitter="20ms", packet_loss="2%", burst_loss=5, rate="20mbps")
+                @faultcore.downlink(latency="200ms", jitter="20ms", packet_loss="2%", burst_loss="5", rate="20mbps")
                 def my_func():
                     return "ok"
 

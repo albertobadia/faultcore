@@ -10,13 +10,13 @@ except ImportError:
 from faultcore import rate, timeout
 
 
-@rate(rate="10")
+@rate(rate="10mbps")
 def fetch_github_api():
     response = requests.get("https://api.github.com/repos/python/cpython", timeout=10)
     return response.json()
 
 
-@rate(rate="5")
+@rate(rate="5mbps")
 def fetch_health():
     response = requests.get("https://httpbin.org/get", timeout=10)
     return response.status_code

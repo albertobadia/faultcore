@@ -219,9 +219,14 @@ def parse_rate(rate: str) -> int:
         raise TypeError("rate must be a string with suffix (e.g., '100mbps', '1gbps', '500kbps', '1000bps')")
 
     normalized_rate = _non_empty_normalized(rate, "rate must be non-empty")
+    has_suffix = False
     for suffix, multiplier in _RATE_SUFFIX_MULTIPLIERS.items():
         if normalized_rate.endswith(suffix):
+            has_suffix = True
             return _rate_to_bps(normalized_rate[: -len(suffix)], multiplier)
+
+    if not has_suffix:
+        raise ValueError("rate must include a unit suffix (e.g., '100mbps', '1gbps', '500kbps', '1000bps')")
 
     return _rate_to_bps(normalized_rate, 1_000_000)
 
@@ -242,13 +247,7 @@ def parse_packet_loss(loss: str) -> int:
     raise ValueError("packet_loss must be a string with '%' or 'ppm' suffix (e.g., '5%', '500ppm')")
 
 
-def parse_burst_loss(value: str | int) -> int:
-    if isinstance(value, int):
-        if value < 0:
-            raise ValueError("burst_loss must be >= 0")
-        return value
-    if not isinstance(value, str):
-        raise TypeError("burst_loss must be a string or integer")
+def parse_burst_loss(value: str) -> int:
     normalized = _non_empty_normalized(value, "burst_loss must be non-empty")
     try:
         parsed = int(normalized)
@@ -332,7 +331,7 @@ def build_direction_profile(
     latency: str | None = None,
     jitter: str | None = None,
     packet_loss: str | None = None,
-    burst_loss: str | int | None = None,
+    burst_loss: str | None = None,
     rate: str | None = None,
 ) -> dict[str, int]:
     profile: dict[str, int] = {}
@@ -351,10 +350,10 @@ def build_direction_profile(
 
 def build_correlated_loss_profile(
     *,
-    p_good_to_bad: str | int | float,
-    p_bad_to_good: str | int | float,
-    loss_good: str | int | float,
-    loss_bad: str | int | float,
+    p_good_to_bad: str,
+    p_bad_to_good: str,
+    loss_good: str,
+    loss_bad: str,
 ) -> dict[str, int]:
     return {
         "enabled": 1,
@@ -373,7 +372,7 @@ def parse_error_kind(kind: str) -> int:
     return parsed
 
 
-def build_connection_error_profile(*, kind: str, prob: str | int | float = "100%") -> dict[str, int]:
+def build_connection_error_profile(*, kind: str, prob: str = "100%") -> dict[str, int]:
     return {"kind": parse_error_kind(kind), "prob_ppm": parse_packet_loss(prob)}
 
 
@@ -384,7 +383,7 @@ def build_half_open_profile(*, after: str, error: str = "reset") -> dict[str, in
     return {"after": threshold, "err_kind": parse_error_kind(error)}
 
 
-def build_packet_duplicate_profile(*, prob: str | int | float = "100%", max_extra: int = 1) -> dict[str, int]:
+def build_packet_duplicate_profile(*, prob: str = "100%", max_extra: int = 1) -> dict[str, int]:
     extra = int(max_extra)
     if extra <= 0:
         raise ValueError("max_extra must be > 0")

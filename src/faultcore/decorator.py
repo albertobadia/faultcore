@@ -69,9 +69,9 @@ def _build_directional_profile_or_raise(
     *,
     latency_ms: int | None = None,
     jitter_ms: int | None = None,
-    packet_loss: str | int | float | None = None,
+    packet_loss: str | None = None,
     burst_loss_len: int | None = None,
-    rate: str | int | float | None = None,
+    rate: str | None = None,
 ) -> dict[str, int]:
     profile = _build_direction_profile(
         latency_ms=latency_ms,
@@ -92,7 +92,7 @@ def _with_directional_profile(
     latency: str | None = None,
     jitter: str | None = None,
     packet_loss: str | None = None,
-    burst_loss: str | int | None = None,
+    burst_loss: str | None = None,
     rate: str | None = None,
 ) -> Callable[[Callable[..., Any]], "FaultWrapper"]:
     from faultcore.profile_parsers import (
@@ -277,7 +277,7 @@ def packet_loss(p: str, /) -> Callable[[Callable[..., Any]], FaultWrapper]:
     return _with_wrapper(packet_loss_ppm=_parse_packet_loss(p))
 
 
-def burst_loss(n: str | int, /) -> Callable[[Callable[..., Any]], FaultWrapper]:
+def burst_loss(n: str, /) -> Callable[[Callable[..., Any]], FaultWrapper]:
     from faultcore.profile_parsers import parse_burst_loss
 
     return _with_wrapper(burst_loss=parse_burst_loss(n))
@@ -332,7 +332,7 @@ def uplink(
     latency: str | None = None,
     jitter: str | None = None,
     packet_loss: str | None = None,
-    burst_loss: str | int | None = None,
+    burst_loss: str | None = None,
     rate: str | None = None,
 ) -> Callable[[Callable[..., Any]], FaultWrapper]:
     return _with_directional_profile(
@@ -351,7 +351,7 @@ def downlink(
     latency: str | None = None,
     jitter: str | None = None,
     packet_loss: str | None = None,
-    burst_loss: str | int | None = None,
+    burst_loss: str | None = None,
     rate: str | None = None,
 ) -> Callable[[Callable[..., Any]], FaultWrapper]:
     return _with_directional_profile(
@@ -367,10 +367,10 @@ def downlink(
 
 def correlated_loss(
     *,
-    p_good_to_bad: str | int | float,
-    p_bad_to_good: str | int | float,
-    loss_good: str | int | float,
-    loss_bad: str | int | float,
+    p_good_to_bad: str,
+    p_bad_to_good: str,
+    loss_good: str,
+    loss_bad: str,
 ) -> Callable[[Callable[..., Any]], FaultWrapper]:
     return _with_wrapper(
         correlated_loss_profile=_build_correlated_loss_profile(
@@ -382,7 +382,7 @@ def correlated_loss(
     )
 
 
-def connection_error(*, kind: str, prob: str | int | float = "100%") -> Callable[[Callable[..., Any]], FaultWrapper]:
+def connection_error(*, kind: str, prob: str = "100%") -> Callable[[Callable[..., Any]], FaultWrapper]:
     return _with_wrapper(connection_error_profile=_build_connection_error_profile(kind=kind, prob=prob))
 
 
@@ -392,7 +392,7 @@ def half_open(*, after: str, error: str = "reset") -> Callable[[Callable[..., An
 
 def packet_duplicate(
     *,
-    prob: str | int | float = "100%",
+    prob: str = "100%",
     max_extra: int = 1,
 ) -> Callable[[Callable[..., Any]], FaultWrapper]:
     return _with_wrapper(packet_duplicate_profile=_build_packet_duplicate_profile(prob=prob, max_extra=max_extra))

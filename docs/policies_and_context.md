@@ -8,10 +8,12 @@ A policy is a named set of optional fields:
 - `latency` (duration string like "50ms")
 - `jitter` (duration string like "10ms")
 - `packet_loss` (percentage or ppm)
-- `burst_loss` (integer)
-- `rate` (bandwidth string like "10mbps" or integer Mbps)
+- `burst_loss` (string like "3")
+- `rate` (bandwidth string like "10mbps")
 - `timeout` (dict with `connect` and/or `recv` keys)
-- `session_budget` (max bytes tx/rx, operations, or duration limits with terminal action; action=timeout requires budget_timeout, action=connection_error accepts optional error)
+- `session_budget` (max tx/rx, operations, or duration limits with terminal action; action=timeout requires budget_timeout, action=connection_error accepts optional error)
+- `targets` (list of target rules for selective fault application)
+- `schedule` (temporal profile: ramp, spike, or flapping)
 - `seed` (optional random seed for deterministic behavior)
 
 Policies are stored in a process-local registry protected by a lock.
@@ -52,7 +54,7 @@ faultcore.register_policy(
     latency="50ms",
     jitter="10ms",
     packet_loss="1%",
-    burst_loss=3,
+    burst_loss="3",
     rate="2mbps",
     timeout={"connect": "20ms", "recv": "20ms"},
 )
@@ -128,9 +130,14 @@ File format:
     "latency": "7ms",
     "jitter": "3ms",
     "packet_loss": "0.2%",
-    "burst_loss": 2,
+    "burst_loss": "2",
     "rate": "1mbps",
-    "timeout": {"connect": "9ms", "recv": "9ms"}
+    "timeout": {"connect": "9ms", "recv": "9ms"},
+    "targets": [
+      {"target": "tcp://10.0.0.0/8:9000", "priority": 10},
+      {"target": "tcp://127.0.0.1:9000", "priority": 100}
+    ],
+    "schedule": {"kind": "spike", "every": "30s", "duration": "5s"}
   }
 }
 ```
