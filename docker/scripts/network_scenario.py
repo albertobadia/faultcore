@@ -9,8 +9,8 @@ from pathlib import Path
 import faultcore
 
 
-@faultcore.latency(25)
-@faultcore.jitter(10)
+@faultcore.latency("25ms")
+@faultcore.jitter("10ms")
 def tcp_roundtrip(host: str, port: int, payload: str) -> int:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(5)
@@ -23,7 +23,7 @@ def tcp_roundtrip(host: str, port: int, payload: str) -> int:
         sock.close()
 
 
-@faultcore.rate_limit("4mbps")
+@faultcore.rate("4mbps")
 def udp_roundtrip(host: str, port: int, payload: str) -> int:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(3)
@@ -35,7 +35,7 @@ def udp_roundtrip(host: str, port: int, payload: str) -> int:
         sock.close()
 
 
-@faultcore.latency(40)
+@faultcore.latency("40ms")
 def http_roundtrip(base_url: str, path: str) -> int:
     with urllib.request.urlopen(f"{base_url}{path}", timeout=5) as response:
         body = response.read()

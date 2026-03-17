@@ -2,6 +2,7 @@ from typing import Any
 
 from . import core as _core
 from .core import (
+    _git_value,
     apply_event_view,
     build_record_replay_series,
     build_record_replay_site_metrics,
@@ -19,8 +20,6 @@ from .core import (
     write_run_json,
 )
 from .html_renderer import _normalize_chart_series, render_report_html
-
-_git_value = _core._git_value
 
 
 def build_run_record(
@@ -45,7 +44,6 @@ def build_run_record(
     record_replay_path: str = "",
     policy_sources: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
-    _core._git_value = _git_value
     return _core.build_run_record(
         command=command,
         returncode=returncode,
