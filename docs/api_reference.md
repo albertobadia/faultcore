@@ -83,7 +83,7 @@ Force stream failure after a byte threshold.
 
 Inject duplicated sends.
 
-- `prob`: probability of duplication (e.g., `"100%"`, `"10%"`, `0.1` = 10%)
+- `prob`: probability of duplication (e.g., `"100%"`, `"10%"`)
 - `max_extra`: maximum number of extra copies to send (default 1)
 
 ### `packet_reorder(*, prob: str = "100%", max_delay: str = "0ms", window: int = 1)`
@@ -132,7 +132,7 @@ Register or replace a named policy.
 register_policy(
     name: str,
     *,
-    seed: int | None = None,
+    seed: str | int | None = None,
     latency: str | None = None,
     jitter: str | None = None,
     packet_loss: str | None = None,

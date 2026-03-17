@@ -10,6 +10,56 @@ from faultcore.profile_parsers import (
 )
 
 
+class TestConstantsConsistency:
+    """Tests to verify constants are properly defined without duplicates."""
+
+    def test_size_suffix_multipliers_no_duplicates(self):
+        """Verify _SIZE_SUFFIX_MULTIPLIERS doesn't have duplicate keys (confusing)."""
+        from faultcore.profile_parsers import _SIZE_SUFFIX_MULTIPLIERS
+
+        keys = list(_SIZE_SUFFIX_MULTIPLIERS.keys())
+        duplicates = [k for k in keys if keys.count(k) > 1]
+
+        assert len(duplicates) == 0, f"Found duplicate keys in _SIZE_SUFFIX_MULTIPLIERS: {duplicates}"
+
+    def test_rate_suffix_multipliers_no_duplicates(self):
+        """Verify _RATE_SUFFIX_MULTIPLIERS doesn't have duplicate keys."""
+        from faultcore.profile_parsers import _RATE_SUFFIX_MULTIPLIERS
+
+        keys = list(_RATE_SUFFIX_MULTIPLIERS.keys())
+        duplicates = [k for k in keys if keys.count(k) > 1]
+
+        assert len(duplicates) == 0, f"Found duplicate keys in _RATE_SUFFIX_MULTIPLIERS: {duplicates}"
+
+    def test_size_and_rate_suffixes_are_separate(self):
+        """Verify that size and rate suffixes are properly separated."""
+        from faultcore.profile_parsers import _RATE_SUFFIX_MULTIPLIERS, _SIZE_SUFFIX_MULTIPLIERS
+
+        size_only_suffixes = {"kb", "mb", "gb", "bps"}
+        rate_only_suffixes = {"kbps", "mbps", "gbps"}
+
+        for suffix in size_only_suffixes:
+            assert suffix in _SIZE_SUFFIX_MULTIPLIERS, f"Size suffix {suffix} missing"
+
+        for suffix in rate_only_suffixes:
+            assert suffix in _RATE_SUFFIX_MULTIPLIERS, f"Rate suffix {suffix} missing"
+
+
+class TestParseSizeEdgeCases:
+    """Additional edge case tests for parse_size function."""
+
+    def test_parse_size_case_insensitive(self):
+        """Verify parse_size handles case-insensitive input."""
+        assert parse_size("1KB") == 1_000
+        assert parse_size("1MB") == 1_000_000
+        assert parse_size("1GB") == 1_000_000_000
+
+    def test_parse_size_with_decimals(self):
+        """Verify parse_size handles decimal values."""
+        assert parse_size("1.5kb") == 1500
+        assert parse_size("2.5mb") == 2_500_000
+
+
 def test_build_target_profile_includes_unified_fields_for_ipv4_host():
     profile = build_target_profile(host="10.1.2.3", port=443, protocol="tcp")
     assert profile["address_family"] == 1

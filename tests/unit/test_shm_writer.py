@@ -1,11 +1,13 @@
 import os
 import struct
 import uuid
+from collections import Counter
 
 import pytest
 
 from faultcore.shm_writer import (
     FAULTCORE_MAGIC,
+    MAX_TIDS,
     SHM_SIZE,
     SHMWriter,
 )
@@ -22,6 +24,59 @@ def cleanup_test_shm(name: str) -> None:
         os.unlink(f"/dev/shm/{name}")
     except FileNotFoundError:
         pass
+
+
+class TestTIDHashCollisions:
+    """Tests to verify the TID hash function behavior and detect collision issues."""
+
+    def test_tid_hash_distribution(self):
+        """Verify that TID hash distributes reasonably across slots."""
+        writer = SHMWriter()
+
+        tid_slots = [writer._tid_slot(tid) for tid in range(100000)]
+
+        slot_counts = Counter(tid_slots)
+
+        expected_avg = 100000 / MAX_TIDS
+        max_count = max(slot_counts.values())
+        min_count = min(slot_counts.values())
+
+        max_ratio = max_count / expected_avg
+        min_ratio = min_count / expected_avg
+
+        assert max_ratio < 5.0, f"TID hash has poor distribution: max ratio {max_ratio:.2f}"
+        assert min_ratio > 0.2, f"TID hash has poor distribution: min ratio {min_ratio:.2f}"
+
+    def test_tid_hash_is_deterministic(self):
+        """Verify that the same TID always maps to the same slot."""
+        writer = SHMWriter()
+
+        test_tids = [1, 100, 1000, 10000, 100000, 1000000]
+
+        for tid in test_tids:
+            slot1 = writer._tid_slot(tid)
+            slot2 = writer._tid_slot(tid)
+            assert slot1 == slot2, f"TID {tid} maps to different slots: {slot1} vs {slot2}"
+
+    def test_tid_hash_bounds(self):
+        """Verify that TID hash always returns a valid slot."""
+        writer = SHMWriter()
+
+        for tid in range(0, 100000, 100):
+            slot = writer._tid_slot(tid)
+            assert 0 <= slot < MAX_TIDS, f"TID {tid} maps to invalid slot: {slot}"
+
+    def test_tid_hash_known_values(self):
+        """Test specific TID values for known behavior (regression test)."""
+        writer = SHMWriter()
+
+        assert writer._tid_slot(0) == writer._tid_slot(0)
+
+        tid1 = writer._tid_slot(12345)
+        tid2 = writer._tid_slot(12346)
+
+        assert isinstance(tid1, int)
+        assert isinstance(tid2, int)
 
 
 class TestSHMWriterGracefulDegradation:

@@ -48,16 +48,24 @@ class policy_context:
 
     def __enter__(self):
         self._previous = get_thread_policy()
-        _set_thread_policy(self._resolve_policy_name())
+        try:
+            _set_thread_policy(self._resolve_policy_name())
+        except Exception:
+            self.__exit__(None, None, None)
+            raise
         return self
 
     def __exit__(self, *_args):
+        temp_policy = self._temporary_policy
+        self._temporary_policy = None
         try:
             _set_thread_policy(self._previous)
         finally:
-            if self._temporary_policy is not None:
-                unregister_policy(self._temporary_policy)
-                self._temporary_policy = None
+            if temp_policy is not None:
+                try:
+                    unregister_policy(temp_policy)
+                except Exception:
+                    pass
 
     async def __aenter__(self):
         return self.__enter__()

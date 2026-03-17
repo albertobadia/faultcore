@@ -375,7 +375,7 @@ class TestBurstLossDecorator:
         with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
             with patch("faultcore.decorator.threading.get_native_id", return_value=12345):
 
-                @faultcore.burst_loss(5)
+                @faultcore.burst_loss("5")
                 def my_func():
                     return "ok"
 

@@ -15,6 +15,18 @@ def _cleanup_policies_and_context():
     faultcore.set_thread_policy(None)
 
 
+def test_get_thread_policy_exported_from_main_module():
+    """Bug verification: get_thread_policy should be accessible from faultcore module."""
+    assert hasattr(faultcore, "get_thread_policy"), "get_thread_policy not exported from faultcore module"
+    assert callable(faultcore.get_thread_policy), "faultcore.get_thread_policy is not callable"
+
+
+def test_set_thread_policy_exported_from_main_module():
+    """Verify set_thread_policy is accessible from faultcore module."""
+    assert hasattr(faultcore, "set_thread_policy"), "set_thread_policy not exported from faultcore module"
+    assert callable(faultcore.set_thread_policy), "faultcore.set_thread_policy is not callable"
+
+
 def test_policy_context_sets_and_restores_thread_policy():
     faultcore.set_thread_policy("outer")
     with faultcore.policy_context("inner"):
@@ -55,3 +67,57 @@ def test_temporary_policy_context_applies_with_fault_auto():
 
     mock_shm.write_latency.assert_called_once_with(5154, 25)
     mock_shm.clear.assert_called_once_with(5154)
+
+
+def test_policy_context_cleans_up_temp_policy_when_set_thread_policy_raises():
+    """Bug verification: policy_context should clean up temp policy even if _set_thread_policy fails."""
+    call_count = [0]
+
+    def mock_set_thread_policy(policy_name):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise RuntimeError("Simulated failure in set_thread_policy")
+
+    with patch("faultcore._set_thread_policy", mock_set_thread_policy):
+        initial_policies = set(list_policies())
+
+        try:
+            with faultcore.policy_context(latency="50ms"):
+                pass
+        except RuntimeError:
+            pass
+
+        final_policies = set(list_policies())
+
+        leaked_policies = final_policies - initial_policies
+        temp_policy_leaked = any(p.startswith("__faultcore_temp_") for p in leaked_policies)
+
+        assert not temp_policy_leaked, f"Temporary policy was leaked: {leaked_policies}"
+
+
+def test_policy_context_restores_previous_on_exception_in_body():
+    """Verify that previous policy is restored even if the body raises."""
+    faultcore.set_thread_policy("initial")
+
+    try:
+        with faultcore.policy_context("new_policy"):
+            raise ValueError("Simulated error in context body")
+    except ValueError:
+        pass
+
+    assert get_thread_policy() == "initial", "Previous policy should be restored after exception"
+
+
+def test_policy_context_can_be_nested():
+    """Verify that nested policy_context works correctly."""
+    faultcore.set_thread_policy("outer")
+
+    with faultcore.policy_context("middle"):
+        assert get_thread_policy() == "middle"
+
+        with faultcore.policy_context("inner"):
+            assert get_thread_policy() == "inner"
+
+        assert get_thread_policy() == "middle"
+
+    assert get_thread_policy() == "outer"

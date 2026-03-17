@@ -47,7 +47,7 @@ import faultcore
 def slow_operation():
     return "ok"
 
-@faultcore.rate(rate="10mbps")
+@faultcore.rate("10mbps")
 def network_operation():
     return "ok"
 ```

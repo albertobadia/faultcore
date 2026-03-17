@@ -6,6 +6,7 @@ import struct
 import sys
 import threading
 import time
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -78,7 +79,64 @@ def ensure_shm_ready() -> str:
         os.ftruncate(fd, SHM_SIZE)
     finally:
         os.close(fd)
-    return name
+
+
+class TestTIDHashIntegration:
+    """Integration tests for TID hash collisions under concurrent load."""
+
+    def test_concurrent_thread_policy_isolation(self):
+        """
+        Verify that concurrent threads with different policies don't interfere.
+        Bug verification: TID hash collisions could cause policy interference.
+        """
+        ensure_shm_ready()
+        from faultcore import get_thread_policy, set_thread_policy
+
+        errors = []
+        barrier = threading.Barrier(10)
+
+        def writer_thread(thread_id: int):
+            policy_name = f"policy_{thread_id}"
+            set_thread_policy(policy_name)
+
+            barrier.wait()
+
+            for _ in range(100):
+                current = get_thread_policy()
+                if current != policy_name:
+                    errors.append(f"Thread {thread_id} expected {policy_name}, got {current}")
+
+        threads = [threading.Thread(target=writer_thread, args=(i,)) for i in range(10)]
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(errors) == 0, f"Policy interference detected: {errors[:5]}"
+
+    def test_high_thread_count_hash_distribution(self):
+        """
+        Verify hash distribution with many concurrent threads.
+        Bug verification: Poor hash distribution could cause collisions.
+        """
+        ensure_shm_ready()
+
+        slot_counts = Counter()
+
+        writer = get_shm_writer()
+
+        test_tids = list(range(0, 100000, 100))
+
+        for tid in test_tids:
+            slot = writer._tid_slot(tid)
+            slot_counts[slot] += 1
+
+        num_unique_slots = len(slot_counts)
+        unique_ratio = num_unique_slots / len(test_tids)
+
+        msg = f"Hash collisions: {num_unique_slots} slots for {len(test_tids)} TIDs"
+        assert unique_ratio > 0.1, msg
 
 
 def tcp_echo_once(host: str, port: int, payload: str) -> float:
@@ -288,6 +346,62 @@ def main() -> int:
 
     print("shm concurrency integration: PASS")
     return 0
+
+
+class TestSHMErrorHandling:
+    """Integration tests for SHM error handling."""
+
+    def test_shm_graceful_degradation_on_invalid_shm(self):
+        """
+        Verify graceful degradation when SHM is invalid.
+        Bug verification: SHM initialization errors should be handled gracefully.
+        """
+        import os
+        from unittest.mock import patch
+
+        invalid_name = f"/dev/shm/test_invalid_shm_{os.getpid()}"
+
+        try:
+            os.unlink(invalid_name)
+        except FileNotFoundError:
+            pass
+
+        with patch.dict(os.environ, {"FAULTCORE_CONFIG_SHM": invalid_name}):
+            from faultcore.shm_writer import SHMWriter
+
+            writer = SHMWriter()
+
+            assert writer._mmap is None or writer._fd is None
+
+    def test_shm_graceful_degradation_on_permission_denied(self):
+        """
+        Verify graceful degradation when SHM has wrong permissions.
+        Bug verification: Permission errors should be handled gracefully.
+        """
+        import os
+        from unittest.mock import patch
+
+        import pytest
+
+        protected_name = f"/dev/shm/test_protected_shm_{os.getpid()}"
+
+        try:
+            fd = os.open(protected_name, os.O_CREAT | os.O_RDWR, 0o000)
+            os.close(fd)
+
+            with patch.dict(os.environ, {"FAULTCORE_CONFIG_SHM": protected_name}):
+                from faultcore.shm_writer import SHMWriter
+
+                writer = SHMWriter()
+
+                assert writer._mmap is None or writer._fd is None
+        except PermissionError:
+            pytest.skip("Cannot test permission denied in this environment")
+        finally:
+            try:
+                os.unlink(protected_name)
+            except FileNotFoundError:
+                pass
 
 
 if __name__ == "__main__":
