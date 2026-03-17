@@ -2,7 +2,7 @@
 import socket
 import time
 
-from faultcore import timeout, rate
+from faultcore import rate, timeout
 
 
 def send_udp_message(host: str, port: int, message: str) -> str:

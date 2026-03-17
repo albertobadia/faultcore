@@ -149,8 +149,6 @@ def _build_target_rule_from_mapping(target: dict[str, Any]) -> dict[str, Any]:
         hostname=target.get("hostname"),
         sni=target.get("sni"),
         port=target.get("port"),
-        port_start=target.get("port_start"),
-        port_end=target.get("port_end"),
         protocol=target.get("protocol"),
         priority=target.get("priority"),
     )
@@ -311,11 +309,11 @@ def get_policy_for_apply(name: str) -> dict[str, Any] | None:
 def register_policy(
     name: str,
     *,
-    seed: int | None = None,
+    seed: str | int | None = None,
     latency: str | None = None,
     jitter: str | None = None,
     packet_loss: str | None = None,
-    burst_loss: int | None = None,
+    burst_loss: str | int | None = None,
     rate: str | None = None,
     timeout: dict[str, Any] | None = None,
     uplink: dict[str, Any] | None = None,
@@ -334,12 +332,10 @@ def register_policy(
         raise ValueError("policy name must be non-empty")
 
     policy: dict[str, Any] = {}
-    _set_non_negative_optional(
-        policy,
-        source_value=seed,
-        policy_key="seed",
-        error_message="seed must be >= 0",
-    )
+    if seed is not None:
+        from faultcore.profile_parsers import parse_seed
+
+        policy["seed"] = parse_seed(seed)
     if latency is not None:
         from faultcore.profile_parsers import parse_duration
 
@@ -350,12 +346,10 @@ def register_policy(
         policy["jitter"] = parse_duration(jitter)
     if packet_loss is not None:
         policy["packet_loss_ppm"] = parse_packet_loss(packet_loss)
-    _set_non_negative_optional(
-        policy,
-        source_value=burst_loss,
-        policy_key="burst_loss",
-        error_message="burst_loss must be >= 0",
-    )
+    if burst_loss is not None:
+        from faultcore.profile_parsers import parse_burst_loss
+
+        policy["burst_loss"] = parse_burst_loss(burst_loss)
     if rate is not None:
         policy["rate"] = parse_rate(rate)
     if timeout is not None:
@@ -412,8 +406,8 @@ def register_policy(
     session_budget_config = _as_mapping(session_budget, "session_budget")
     if session_budget_config is not None:
         policy["session_budget_profile"] = build_session_budget_profile(
-            max_bytes_tx=session_budget_config.get("max_bytes_tx"),
-            max_bytes_rx=session_budget_config.get("max_bytes_rx"),
+            max_tx=session_budget_config.get("max_tx") or session_budget_config.get("max_bytes_tx"),
+            max_rx=session_budget_config.get("max_rx") or session_budget_config.get("max_bytes_rx"),
             max_ops=session_budget_config.get("max_ops"),
             max_duration=session_budget_config.get("max_duration"),
             action=session_budget_config.get("action", "drop"),

@@ -92,10 +92,11 @@ def _with_directional_profile(
     latency: str | None = None,
     jitter: str | None = None,
     packet_loss: str | None = None,
-    burst_loss: int | None = None,
+    burst_loss: str | int | None = None,
     rate: str | None = None,
 ) -> Callable[[Callable[..., Any]], "FaultWrapper"]:
     from faultcore.profile_parsers import (
+        parse_burst_loss,
         parse_duration,
         parse_packet_loss,
         parse_rate,
@@ -110,7 +111,7 @@ def _with_directional_profile(
     if packet_loss is not None:
         direction_profile["packet_loss_ppm"] = parse_packet_loss(packet_loss)
     if burst_loss is not None:
-        direction_profile["burst_loss"] = burst_loss
+        direction_profile["burst_loss"] = parse_burst_loss(burst_loss)
     if rate is not None:
         direction_profile["rate"] = parse_rate(rate)
 
@@ -276,8 +277,10 @@ def packet_loss(p: str, /) -> Callable[[Callable[..., Any]], FaultWrapper]:
     return _with_wrapper(packet_loss_ppm=_parse_packet_loss(p))
 
 
-def burst_loss(n: int, /) -> Callable[[Callable[..., Any]], FaultWrapper]:
-    return _with_wrapper(burst_loss=n)
+def burst_loss(n: str | int, /) -> Callable[[Callable[..., Any]], FaultWrapper]:
+    from faultcore.profile_parsers import parse_burst_loss
+
+    return _with_wrapper(burst_loss=parse_burst_loss(n))
 
 
 def rate(r: str, /) -> Callable[[Callable[..., Any]], FaultWrapper]:
@@ -303,8 +306,8 @@ def dns(
 
 def session_budget(
     *,
-    max_bytes_tx: int | None = None,
-    max_bytes_rx: int | None = None,
+    max_tx: str | None = None,
+    max_rx: str | None = None,
     max_ops: int | None = None,
     max_duration: str | None = None,
     action: str = "drop",
@@ -313,8 +316,8 @@ def session_budget(
 ) -> Callable[[Callable[..., Any]], FaultWrapper]:
     return _with_wrapper(
         session_budget_profile=_build_session_budget_profile(
-            max_bytes_tx=max_bytes_tx,
-            max_bytes_rx=max_bytes_rx,
+            max_tx=max_tx,
+            max_rx=max_rx,
             max_ops=max_ops,
             max_duration=max_duration,
             action=action,
@@ -329,7 +332,7 @@ def uplink(
     latency: str | None = None,
     jitter: str | None = None,
     packet_loss: str | None = None,
-    burst_loss: int | None = None,
+    burst_loss: str | int | None = None,
     rate: str | None = None,
 ) -> Callable[[Callable[..., Any]], FaultWrapper]:
     return _with_directional_profile(
@@ -348,7 +351,7 @@ def downlink(
     latency: str | None = None,
     jitter: str | None = None,
     packet_loss: str | None = None,
-    burst_loss: int | None = None,
+    burst_loss: str | int | None = None,
     rate: str | None = None,
 ) -> Callable[[Callable[..., Any]], FaultWrapper]:
     return _with_directional_profile(

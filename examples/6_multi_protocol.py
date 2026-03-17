@@ -7,7 +7,7 @@ try:
 except ImportError:
     requests = None
 
-from faultcore import timeout, rate
+from faultcore import rate, timeout
 
 
 def tcp_echo(host: str, port: int, message: str) -> str:

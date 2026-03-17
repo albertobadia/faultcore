@@ -69,25 +69,15 @@ def test_build_target_profile_accepts_any_protocol_in_target_string():
 
 
 def test_build_target_profile_accepts_port_range():
-    profile = build_target_profile(host="10.1.2.3", port_start=8000, port_end=9000)
+    profile = build_target_profile(host="10.1.2.3", port="8000-9000")
     assert profile["port"] == 0
     assert profile["port_start"] == 8000
     assert profile["port_end"] == 9000
 
 
-def test_build_target_profile_rejects_port_and_port_range_together():
-    with pytest.raises(ValueError, match=r"(?i)both port"):
-        build_target_profile(host="10.1.2.3", port=443, port_start=400, port_end=500)
-
-
-def test_build_target_profile_rejects_incomplete_port_range():
-    with pytest.raises(ValueError, match=r"(?i)both port_start and port_end"):
-        build_target_profile(host="10.1.2.3", port_start=400)
-
-
 def test_build_target_profile_rejects_invalid_port_range_order():
-    with pytest.raises(ValueError, match=r"(?i)port_start.*<="):
-        build_target_profile(host="10.1.2.3", port_start=9000, port_end=8000)
+    with pytest.raises(ValueError, match=r"(?i)port.*<="):
+        build_target_profile(host="10.1.2.3", port="9000-8000")
 
 
 def test_build_target_profile_rejects_unbracketed_ipv6_target_string():
@@ -127,13 +117,13 @@ def test_build_target_profile_rejects_mixed_ip_and_semantic_targeting():
 
 def test_build_session_budget_profile_accepts_timeout_action():
     profile = build_session_budget_profile(
-        max_bytes_tx=100,
+        max_tx="1kb",
         max_ops=2,
         action="timeout",
         budget_timeout="25ms",
     )
     assert profile == {
-        "max_bytes_tx": 100,
+        "max_bytes_tx": 1000,
         "max_ops": 2,
         "action": 2,
         "budget_timeout": 25,

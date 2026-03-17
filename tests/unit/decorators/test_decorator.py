@@ -642,7 +642,7 @@ class TestDecoratorMetadata:
 
 class TestSessionBudgetDecorator:
     def test_session_budget_decorator_basic(self):
-        @faultcore.session_budget(max_bytes_tx=1024, max_bytes_rx=2048)
+        @faultcore.session_budget(max_tx="1kb", max_rx="2kb")
         def my_func():
             return "ok"
 

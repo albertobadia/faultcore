@@ -146,8 +146,8 @@ class TestPolicyRegistry:
         register_policy(
             "budget_policy",
             session_budget={
-                "max_bytes_tx": 1024,
-                "max_bytes_rx": 2048,
+                "max_tx": "1kb",
+                "max_rx": "2kb",
                 "max_ops": 100,
                 "action": "drop",
             },

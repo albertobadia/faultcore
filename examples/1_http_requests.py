@@ -7,7 +7,7 @@ except ImportError:
     print("requests not installed. Install with: pip install requests")
     raise
 
-from faultcore import timeout, rate
+from faultcore import rate, timeout
 
 
 @rate(rate="10")

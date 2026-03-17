@@ -8,7 +8,7 @@ except ImportError:
     print("aiohttp not installed. Install with: pip install aiohttp")
     raise
 
-from faultcore import timeout, rate
+from faultcore import rate, timeout
 
 
 @rate(rate=10)

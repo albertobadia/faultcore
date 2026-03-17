@@ -192,8 +192,13 @@ def _network_target_profile(
     )
 
 
-def _parse_priority(priority: int | None) -> int:
-    parsed_priority = int(priority) if priority is not None else 100
+def _parse_priority(priority: str | int | None) -> int:
+    if priority is None:
+        return 100
+    if isinstance(priority, int):
+        parsed_priority = priority
+    else:
+        parsed_priority = int(priority)
     _ensure_range(parsed_priority, 0, 65535, "target priority must be between 0 and 65535")
     return parsed_priority
 
@@ -237,12 +242,97 @@ def parse_packet_loss(loss: str) -> int:
     raise ValueError("packet_loss must be a string with '%' or 'ppm' suffix (e.g., '5%', '500ppm')")
 
 
+def parse_burst_loss(value: str | int) -> int:
+    if isinstance(value, int):
+        if value < 0:
+            raise ValueError("burst_loss must be >= 0")
+        return value
+    if not isinstance(value, str):
+        raise TypeError("burst_loss must be a string or integer")
+    normalized = _non_empty_normalized(value, "burst_loss must be non-empty")
+    try:
+        parsed = int(normalized)
+    except ValueError:
+        raise ValueError("burst_loss must be a valid integer (e.g., '5', '10')") from None
+    if parsed < 0:
+        raise ValueError("burst_loss must be >= 0")
+    return parsed
+
+
+def parse_seed(value: str | int) -> int:
+    if isinstance(value, int):
+        if value < 0:
+            raise ValueError("seed must be >= 0")
+        return value
+    if not isinstance(value, str):
+        raise TypeError("seed must be a string or integer")
+    normalized = value.strip()
+    if normalized.startswith("0x") or normalized.startswith("0X"):
+        try:
+            return int(normalized, 16)
+        except ValueError:
+            raise ValueError(f"invalid hex seed '{value}'") from None
+    if normalized.startswith("0b") or normalized.startswith("0B"):
+        try:
+            return int(normalized, 2)
+        except ValueError:
+            raise ValueError(f"invalid binary seed '{value}'") from None
+    try:
+        parsed = int(normalized)
+    except ValueError:
+        raise ValueError(f"invalid seed '{value}'") from None
+    if parsed < 0:
+        raise ValueError("seed must be >= 0")
+    return parsed
+
+
+def parse_port(value: str | int) -> tuple[int, int | None, int | None]:
+    if isinstance(value, int):
+        if not 0 <= value <= 65535:
+            raise ValueError("port must be between 0 and 65535")
+        return (value, None, None)
+    if not isinstance(value, str):
+        raise TypeError("port must be a string or integer")
+    normalized = _non_empty_normalized(value, "port must be non-empty")
+    if "-" in normalized:
+        parts = normalized.split("-", 1)
+        if len(parts) != 2:
+            raise ValueError("port range must be in format 'start-end' (e.g., '80-90')")
+        try:
+            start = int(parts[0])
+            end = int(parts[1])
+        except ValueError:
+            raise ValueError("port range must contain valid integers") from None
+        if not (0 <= start <= 65535 and 0 <= end <= 65535):
+            raise ValueError("port must be between 0 and 65535")
+        if start > end:
+            raise ValueError("port range start must be <= end")
+        return (0, start, end)
+    if "," in normalized:
+        ports = normalized.split(",")
+        if len(ports) != 1:
+            try:
+                single_port = int(ports[0])
+            except ValueError:
+                raise ValueError("port list must contain valid integers") from None
+            if not 0 <= single_port <= 65535:
+                raise ValueError("port must be between 0 and 65535")
+            return (single_port, None, None)
+    try:
+        parsed = int(normalized)
+    except ValueError:
+        raise ValueError("port must be a valid integer, range (e.g., '80-90'), or list (e.g., '80,443')") from None
+    if not 0 <= parsed <= 65535:
+        raise ValueError("port must be between 0 and 65535")
+    return (parsed, None, None)
+
+
 def build_direction_profile(
     *,
     latency: str | None = None,
     jitter: str | None = None,
     packet_loss: str | None = None,
-    burst_loss: int | None = None,
+    burst_loss: str | int | None = None,
     rate: str | None = None,
 ) -> dict[str, int]:
     profile: dict[str, int] = {}
@@ -253,7 +343,7 @@ def build_direction_profile(
     if packet_loss is not None:
         profile["packet_loss_ppm"] = parse_packet_loss(packet_loss)
     if burst_loss is not None:
-        profile["burst_loss"] = _as_non_negative_int(burst_loss, "burst_loss must be >= 0")
+        profile["burst_loss"] = parse_burst_loss(burst_loss)
     if rate is not None:
         profile["rate"] = parse_rate(rate)
     return profile
@@ -432,17 +522,18 @@ def build_target_profile(
     cidr: str | None = None,
     hostname: str | None = None,
     sni: str | None = None,
-    port: int | None = None,
-    port_start: int | None = None,
-    port_end: int | None = None,
+    port: str | int | None = None,
     protocol: str | None = None,
-    priority: int | None = None,
+    priority: str | int | None = None,
 ) -> dict[str, object]:
     parsed_protocol = parse_target_protocol(protocol)
     parsed_host = host
-    parsed_port = int(port) if port is not None else 0
-    parsed_port_start = int(port_start) if port_start is not None else None
-    parsed_port_end = int(port_end) if port_end is not None else None
+    if port is not None:
+        parsed_port, parsed_port_start, parsed_port_end = parse_port(port)
+    else:
+        parsed_port = 0
+        parsed_port_start = None
+        parsed_port_end = None
     parsed_cidr = cidr
     parsed_hostname = normalize_target_name(hostname, "target hostname") if hostname is not None else None
     parsed_sni = normalize_target_name(sni, "target sni") if sni is not None else None
@@ -461,10 +552,6 @@ def build_target_profile(
             parsed_cidr = target_cidr
 
     _validate_port_bounds(parsed_port, "port")
-    if parsed_port != 0 and (parsed_port_start is not None or parsed_port_end is not None):
-        raise ValueError("target cannot define both port and port_start/port_end")
-    if (parsed_port_start is None) != (parsed_port_end is None):
-        raise ValueError("target requires both port_start and port_end when using port ranges")
     if parsed_port_start is not None and parsed_port_end is not None:
         _validate_port_bounds(parsed_port_start, "port_start")
         _validate_port_bounds(parsed_port_end, "port_end")
@@ -575,8 +662,8 @@ def build_schedule_profile(
 
 def build_session_budget_profile(
     *,
-    max_bytes_tx: int | None = None,
-    max_bytes_rx: int | None = None,
+    max_tx: str | None = None,
+    max_rx: str | None = None,
     max_ops: int | None = None,
     max_duration: str | None = None,
     action: str = "drop",
@@ -585,9 +672,14 @@ def build_session_budget_profile(
 ) -> dict[str, int]:
     profile: dict[str, int] = {}
 
-    _add_positive_limit(profile, "max_bytes_tx", max_bytes_tx, "session_budget max_bytes_tx must be > 0")
-    _add_positive_limit(profile, "max_bytes_rx", max_bytes_rx, "session_budget max_bytes_rx must be > 0")
-    _add_positive_limit(profile, "max_ops", max_ops, "session_budget max_ops must be > 0")
+    if max_tx is not None:
+        profile["max_bytes_tx"] = parse_size(max_tx)
+    if max_rx is not None:
+        profile["max_bytes_rx"] = parse_size(max_rx)
+    if max_ops is not None:
+        if max_ops <= 0:
+            raise ValueError("session_budget max_ops must be > 0")
+        profile["max_ops"] = max_ops
     if max_duration is not None:
         profile["max_duration"] = parse_duration(max_duration)
 
