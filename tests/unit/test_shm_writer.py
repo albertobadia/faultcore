@@ -62,9 +62,9 @@ class TestSHMWriterGracefulDegradation:
 
 class TestDecoratorIntegration:
     def test_timeout_decorator_no_shm_no_error(self):
-        from faultcore import connect_timeout
+        from faultcore import timeout
 
-        @connect_timeout(100)
+        @timeout(connect="100ms")
         def test_func():
             return "result"
 
@@ -72,9 +72,9 @@ class TestDecoratorIntegration:
         assert result == "result"
 
     def test_rate_limit_decorator_no_shm_no_error(self):
-        from faultcore import rate_limit
+        from faultcore import rate
 
-        @rate_limit("1mbps")
+        @rate("1mbps")
         def test_func():
             return "result"
 
@@ -369,29 +369,20 @@ class TestTargetRulesValidation:
 
 
 class TestExports:
-    def test_timeout_is_not_exported(self):
-        with pytest.raises(ImportError):
-            from faultcore import timeout  # noqa: F401
+    def test_timeout_is_exported(self):
+        from faultcore import timeout
 
-    def test_connect_timeout_is_exported(self):
-        from faultcore import connect_timeout
-
-        assert callable(connect_timeout)
-
-    def test_recv_timeout_is_exported(self):
-        from faultcore import recv_timeout
-
-        assert callable(recv_timeout)
+        assert callable(timeout)
 
     def test_jitter_is_exported(self):
         from faultcore import jitter
 
         assert callable(jitter)
 
-    def test_rate_limit_is_exported(self):
-        from faultcore import rate_limit
+    def test_rate_is_exported(self):
+        from faultcore import rate
 
-        assert callable(rate_limit)
+        assert callable(rate)
 
     def test_packet_loss_is_exported(self):
         from faultcore import packet_loss
@@ -438,35 +429,15 @@ class TestExports:
 
         assert callable(packet_reorder)
 
-    def test_dns_delay_is_exported(self):
-        from faultcore import dns_delay
+    def test_dns_is_exported(self):
+        from faultcore import dns
 
-        assert callable(dns_delay)
+        assert callable(dns)
 
-    def test_dns_timeout_is_exported(self):
-        from faultcore import dns_timeout
+    def test_session_budget_is_exported(self):
+        from faultcore import session_budget
 
-        assert callable(dns_timeout)
-
-    def test_dns_nxdomain_is_exported(self):
-        from faultcore import dns_nxdomain
-
-        assert callable(dns_nxdomain)
-
-    def test_for_target_is_exported(self):
-        from faultcore import for_target
-
-        assert callable(for_target)
-
-    def test_profile_is_exported(self):
-        from faultcore import profile
-
-        assert callable(profile)
-
-    def test_apply_policy_is_exported(self):
-        from faultcore import apply_policy
-
-        assert callable(apply_policy)
+        assert callable(session_budget)
 
     def test_register_policy_is_exported(self):
         from faultcore import register_policy
@@ -497,11 +468,6 @@ class TestExports:
         from faultcore import fault
 
         assert callable(fault)
-
-    def test_fault_context_is_exported(self):
-        from faultcore import fault_context
-
-        assert fault_context is not None
 
     def test_policy_context_is_exported(self):
         from faultcore import policy_context

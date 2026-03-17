@@ -15,6 +15,7 @@ import faultcore
 from faultcore.shm_writer import SHM_SIZE
 
 TEST_LATENCY_MS = 25
+TEST_LATENCY = f"{TEST_LATENCY_MS}ms"
 MEASURE_COUNT = 2
 NO_MATCH_MAX_MS = 250.0
 MATCH_MIN_DELTA_MS = 200.0
@@ -232,11 +233,13 @@ def assert_observed_sni(server: TlsEchoServer, start_idx: int, expected: str) ->
 def run_sni_exact_case(server: TlsEchoServer, host: str, port: int, baseline_ms: float) -> None:
     faultcore.register_policy(
         "targets_tls_sni_exact",
-        latency_ms=TEST_LATENCY_MS,
+        latency=TEST_LATENCY,
         targets=[{"sni": "api.foo.com", "protocol": "tcp", "port": port, "priority": 200}],
     )
 
-    @faultcore.apply_policy("targets_tls_sni_exact")
+    faultcore.set_thread_policy("targets_tls_sni_exact")
+
+    @faultcore.fault()
     def call(message: str) -> str:
         return tls_echo(host, port, message, server_hostname="api.foo.com")
 
@@ -249,11 +252,13 @@ def run_sni_exact_case(server: TlsEchoServer, host: str, port: int, baseline_ms:
 def run_sni_wildcard_case(server: TlsEchoServer, host: str, port: int, baseline_ms: float) -> None:
     faultcore.register_policy(
         "targets_tls_sni_wildcard",
-        latency_ms=TEST_LATENCY_MS,
+        latency=TEST_LATENCY,
         targets=[{"sni": "*.foo.com", "protocol": "tcp", "port": port, "priority": 200}],
     )
 
-    @faultcore.apply_policy("targets_tls_sni_wildcard")
+    faultcore.set_thread_policy("targets_tls_sni_wildcard")
+
+    @faultcore.fault()
     def call(message: str) -> str:
         return tls_echo(host, port, message, server_hostname="edge.foo.com")
 
@@ -266,11 +271,13 @@ def run_sni_wildcard_case(server: TlsEchoServer, host: str, port: int, baseline_
 def run_sni_no_match_case(server: TlsEchoServer, host: str, port: int) -> float:
     faultcore.register_policy(
         "targets_tls_sni_no_match",
-        latency_ms=TEST_LATENCY_MS,
+        latency=TEST_LATENCY,
         targets=[{"sni": "api.foo.com", "protocol": "tcp", "port": port, "priority": 200}],
     )
 
-    @faultcore.apply_policy("targets_tls_sni_no_match")
+    faultcore.set_thread_policy("targets_tls_sni_no_match")
+
+    @faultcore.fault()
     def call(message: str) -> str:
         return tls_echo(host, port, message, server_hostname="other.foo.com")
 
@@ -284,14 +291,16 @@ def run_sni_no_match_case(server: TlsEchoServer, host: str, port: int) -> float:
 def run_ip_vs_sni_priority_cases(server: TlsEchoServer, host: str, port: int, baseline_ms: float) -> None:
     faultcore.register_policy(
         "targets_tls_ip_priority_over_sni",
-        latency_ms=TEST_LATENCY_MS,
+        latency=TEST_LATENCY,
         targets=[
             {"target": f"tcp://{host}:{port}", "priority": 300},
             {"sni": "api.foo.com", "protocol": "tcp", "port": port, "priority": 100},
         ],
     )
 
-    @faultcore.apply_policy("targets_tls_ip_priority_over_sni")
+    faultcore.set_thread_policy("targets_tls_ip_priority_over_sni")
+
+    @faultcore.fault()
     def call_ip_priority(message: str) -> str:
         return tls_echo(host, port, message, server_hostname="api.foo.com")
 
@@ -302,14 +311,16 @@ def run_ip_vs_sni_priority_cases(server: TlsEchoServer, host: str, port: int, ba
 
     faultcore.register_policy(
         "targets_tls_sni_priority_over_ip",
-        latency_ms=TEST_LATENCY_MS,
+        latency=TEST_LATENCY,
         targets=[
             {"target": f"tcp://{host}:{port}", "priority": 100},
             {"sni": "api.foo.com", "protocol": "tcp", "port": port, "priority": 300},
         ],
     )
 
-    @faultcore.apply_policy("targets_tls_sni_priority_over_ip")
+    faultcore.set_thread_policy("targets_tls_sni_priority_over_ip")
+
+    @faultcore.fault()
     def call_sni_priority(message: str) -> str:
         return tls_echo(host, port, message, server_hostname="api.foo.com")
 
@@ -322,14 +333,16 @@ def run_ip_vs_sni_priority_cases(server: TlsEchoServer, host: str, port: int, ba
 def run_ip_vs_sni_tie_case(server: TlsEchoServer, host: str, port: int, baseline_ms: float) -> None:
     faultcore.register_policy(
         "targets_tls_sni_tie_break_over_ip",
-        latency_ms=TEST_LATENCY_MS,
+        latency=TEST_LATENCY,
         targets=[
             {"target": f"tcp://{host}:{port}", "priority": 200},
             {"sni": "api.foo.com", "protocol": "tcp", "port": port, "priority": 200},
         ],
     )
 
-    @faultcore.apply_policy("targets_tls_sni_tie_break_over_ip")
+    faultcore.set_thread_policy("targets_tls_sni_tie_break_over_ip")
+
+    @faultcore.fault()
     def call(message: str) -> str:
         return tls_echo(host, port, message, server_hostname="api.foo.com")
 

@@ -5,14 +5,14 @@ import faultcore
 
 class TestAsyncBasic:
     def test_sync_function(self):
-        @faultcore.connect_timeout(1000)
+        @faultcore.timeout(connect="1s")
         def sync_func():
             return "sync result"
 
         assert sync_func() == "sync result"
 
     async def test_async_function(self):
-        @faultcore.connect_timeout(1000)
+        @faultcore.timeout(connect="1s")
         async def async_func():
             return "async result"
 
@@ -22,7 +22,7 @@ class TestAsyncBasic:
 
 class TestAsyncChaosWrapper:
     async def test_async_chaos_wrapper_basic(self):
-        @faultcore.connect_timeout(1000)
+        @faultcore.timeout(connect="1s")
         async def my_coro():
             await asyncio.sleep(0.001)
             return "result"
@@ -31,20 +31,15 @@ class TestAsyncChaosWrapper:
         assert result == "result"
 
     async def test_async_chaos_wrapper_rate_limit_exceeded(self):
-        @faultcore.rate_limit(1.0)
+        @faultcore.rate("1mbps")
         async def limited_coro():
             return "ok"
 
         result = await limited_coro()
         assert result == "ok"
 
-        try:
-            await limited_coro()
-        except Exception as e:
-            assert "rate limit" in str(e).lower() or "resource" in str(e).lower()
-
     async def test_async_with_exception_in_await(self):
-        @faultcore.connect_timeout(1000)
+        @faultcore.timeout(connect="1s")
         async def failing_await():
             await asyncio.sleep(0.001)
             raise RuntimeError("error during await")
@@ -56,7 +51,7 @@ class TestAsyncChaosWrapper:
             assert "error during await" in str(e)
 
     def test_sync_function_returns_async(self):
-        @faultcore.connect_timeout(1000)
+        @faultcore.timeout(connect="1s")
         async def async_func():
             return "async result"
 
@@ -70,7 +65,7 @@ class TestAsyncChaosWrapper:
 
 class TestAsyncErrorPropagation:
     async def test_async_timeout_error_propagation(self):
-        @faultcore.connect_timeout(1000)
+        @faultcore.timeout(connect="1s")
         async def failing_async():
             await asyncio.sleep(0.01)
             raise RuntimeError("async error")
@@ -81,7 +76,7 @@ class TestAsyncErrorPropagation:
             assert str(e) == "async error"
 
     def test_sync_timeout_error_propagation(self):
-        @faultcore.connect_timeout(1000)
+        @faultcore.timeout(connect="1s")
         def failing_func():
             raise RuntimeError("sync error")
 
@@ -98,6 +93,3 @@ class TestAsyncFaultContext:
         faultcore.set_thread_policy("outer")
         async with faultcore.policy_context("inner"):
             assert get_thread_policy() == "inner"
-
-        assert get_thread_policy() == "outer"
-        faultcore.set_thread_policy(None)

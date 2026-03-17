@@ -12,6 +12,7 @@ import faultcore
 from faultcore.shm_writer import SHM_SIZE
 
 MATCH_LATENCY_MS = 180
+MATCH_LATENCY = f"{MATCH_LATENCY_MS}ms"
 
 
 def ensure_shm_ready() -> str:
@@ -82,11 +83,13 @@ def run_baseline_case(hostname: str, port: int) -> float:
 def run_hostname_exact_case(hostname: str, port: int, baseline_ms: float) -> None:
     faultcore.register_policy(
         "targets_http_hostname_exact",
-        latency_ms=MATCH_LATENCY_MS,
+        latency=MATCH_LATENCY,
         targets=[{"hostname": hostname, "port": port, "protocol": "tcp", "priority": 200}],
     )
 
-    @faultcore.apply_policy("targets_http_hostname_exact")
+    faultcore.set_thread_policy("targets_http_hostname_exact")
+
+    @faultcore.fault()
     def call(message: str) -> str:
         return http_echo(hostname, port, message)
 
@@ -98,14 +101,16 @@ def run_hostname_exact_case(hostname: str, port: int, baseline_ms: float) -> Non
 def run_ip_vs_hostname_precedence_cases(hostname: str, ip_host: str, port: int, baseline_ms: float) -> None:
     faultcore.register_policy(
         "targets_http_ip_priority_over_hostname",
-        latency_ms=MATCH_LATENCY_MS,
+        latency=MATCH_LATENCY,
         targets=[
             {"target": f"tcp://{ip_host}:{port}", "priority": 300},
             {"hostname": hostname, "port": port, "protocol": "tcp", "priority": 100},
         ],
     )
 
-    @faultcore.apply_policy("targets_http_ip_priority_over_hostname")
+    faultcore.set_thread_policy("targets_http_ip_priority_over_hostname")
+
+    @faultcore.fault()
     def call_ip_priority(message: str) -> str:
         return http_echo(hostname, port, message)
 
@@ -115,14 +120,16 @@ def run_ip_vs_hostname_precedence_cases(hostname: str, ip_host: str, port: int, 
 
     faultcore.register_policy(
         "targets_http_hostname_priority_over_ip",
-        latency_ms=MATCH_LATENCY_MS,
+        latency=MATCH_LATENCY,
         targets=[
             {"target": f"tcp://{ip_host}:{port}", "priority": 100},
             {"hostname": hostname, "port": port, "protocol": "tcp", "priority": 300},
         ],
     )
 
-    @faultcore.apply_policy("targets_http_hostname_priority_over_ip")
+    faultcore.set_thread_policy("targets_http_hostname_priority_over_ip")
+
+    @faultcore.fault()
     def call_hostname_priority(message: str) -> str:
         return http_echo(hostname, port, message)
 
@@ -132,14 +139,16 @@ def run_ip_vs_hostname_precedence_cases(hostname: str, ip_host: str, port: int, 
 
     faultcore.register_policy(
         "targets_http_hostname_tie_with_ip",
-        latency_ms=MATCH_LATENCY_MS,
+        latency=MATCH_LATENCY,
         targets=[
             {"target": f"tcp://{ip_host}:{port}", "priority": 200},
             {"hostname": hostname, "port": port, "protocol": "tcp", "priority": 200},
         ],
     )
 
-    @faultcore.apply_policy("targets_http_hostname_tie_with_ip")
+    faultcore.set_thread_policy("targets_http_hostname_tie_with_ip")
+
+    @faultcore.fault()
     def call_tie(message: str) -> str:
         return http_echo(hostname, port, message)
 
@@ -153,14 +162,16 @@ def run_fallback_when_higher_priority_rule_does_not_match(
 ) -> None:
     faultcore.register_policy(
         "targets_http_fallback_hostname_lower_priority",
-        latency_ms=MATCH_LATENCY_MS,
+        latency=MATCH_LATENCY,
         targets=[
             {"target": "tcp://10.255.255.1:1", "priority": 300},
             {"hostname": hostname, "port": port, "protocol": "tcp", "priority": 100},
         ],
     )
 
-    @faultcore.apply_policy("targets_http_fallback_hostname_lower_priority")
+    faultcore.set_thread_policy("targets_http_fallback_hostname_lower_priority")
+
+    @faultcore.fault()
     def call_hostname_fallback(message: str) -> str:
         return http_echo(hostname, port, message)
 
@@ -170,14 +181,16 @@ def run_fallback_when_higher_priority_rule_does_not_match(
 
     faultcore.register_policy(
         "targets_http_fallback_ip_lower_priority",
-        latency_ms=MATCH_LATENCY_MS,
+        latency=MATCH_LATENCY,
         targets=[
             {"hostname": "other.localhost", "port": port, "protocol": "tcp", "priority": 300},
             {"target": f"tcp://{ip_host}:{port}", "priority": 100},
         ],
     )
 
-    @faultcore.apply_policy("targets_http_fallback_ip_lower_priority")
+    faultcore.set_thread_policy("targets_http_fallback_ip_lower_priority")
+
+    @faultcore.fault()
     def call_ip_fallback(message: str) -> str:
         return http_echo(hostname, port, message)
 
@@ -189,14 +202,16 @@ def run_fallback_when_higher_priority_rule_does_not_match(
 def run_no_match_case(hostname: str, port: int, baseline_ms: float) -> None:
     faultcore.register_policy(
         "targets_http_no_match",
-        latency_ms=MATCH_LATENCY_MS,
+        latency=MATCH_LATENCY,
         targets=[
             {"target": "tcp://10.255.255.1:1", "priority": 300},
             {"hostname": "other.localhost", "port": port, "protocol": "tcp", "priority": 200},
         ],
     )
 
-    @faultcore.apply_policy("targets_http_no_match")
+    faultcore.set_thread_policy("targets_http_no_match")
+
+    @faultcore.fault()
     def call(message: str) -> str:
         return http_echo(hostname, port, message)
 

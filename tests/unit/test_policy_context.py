@@ -24,7 +24,7 @@ def test_policy_context_sets_and_restores_thread_policy():
 
 def test_policy_context_can_create_temporary_policy_from_kwargs():
     before = set(list_policies())
-    with faultcore.policy_context(latency_ms=20):
+    with faultcore.policy_context(latency="20ms"):
         active = get_thread_policy()
         assert active is not None
         assert active.startswith("__faultcore_temp_")
@@ -35,7 +35,7 @@ def test_policy_context_can_create_temporary_policy_from_kwargs():
 
 def test_policy_context_rejects_name_and_kwargs_together():
     with pytest.raises(ValueError, match="either policy_name or policy kwargs"):
-        faultcore.policy_context("slow_link", latency_ms=20)
+        faultcore.policy_context("slow_link", latency="20ms")
 
 
 def test_temporary_policy_context_applies_with_fault_auto():
@@ -50,7 +50,7 @@ def test_temporary_policy_context_applies_with_fault_auto():
             def op():
                 return "ok"
 
-            with faultcore.policy_context(latency_ms=25):
+            with faultcore.policy_context(latency="25ms"):
                 assert op() == "ok"
 
     mock_shm.write_latency.assert_called_once_with(5154, 25)

@@ -1,6 +1,13 @@
 import pytest
 
-from faultcore.profile_parsers import build_session_budget_profile, build_target_profile, parse_rate
+from faultcore.profile_parsers import (
+    build_session_budget_profile,
+    build_target_profile,
+    build_timeout_profile,
+    parse_duration,
+    parse_rate,
+    parse_size,
+)
 
 
 def test_build_target_profile_includes_unified_fields_for_ipv4_host():
@@ -123,24 +130,24 @@ def test_build_session_budget_profile_accepts_timeout_action():
         max_bytes_tx=100,
         max_ops=2,
         action="timeout",
-        budget_timeout_ms=25,
+        budget_timeout="25ms",
     )
     assert profile == {
         "max_bytes_tx": 100,
         "max_ops": 2,
         "action": 2,
-        "budget_timeout_ms": 25,
+        "budget_timeout": 25,
     }
 
 
 def test_build_session_budget_profile_accepts_connection_error_action():
     profile = build_session_budget_profile(
-        max_duration_ms=1000,
+        max_duration="1s",
         action="connection_error",
         error="unreachable",
     )
     assert profile == {
-        "max_duration_ms": 1000,
+        "max_duration": 1000,
         "action": 3,
         "error_kind": 3,
     }
@@ -152,8 +159,70 @@ def test_build_session_budget_profile_rejects_invalid_combinations():
     with pytest.raises(ValueError, match=r"(?i)required.*action=timeout"):
         build_session_budget_profile(max_ops=1, action="timeout")
     with pytest.raises(ValueError, match=r"(?i)only applies to action=timeout"):
-        build_session_budget_profile(max_ops=1, action="drop", budget_timeout_ms=5)
+        build_session_budget_profile(max_ops=1, action="drop", budget_timeout="5ms")
 
 
-def test_parse_rate_numeric_and_string_plain_values_are_consistent():
-    assert parse_rate(10) == parse_rate("10")
+def test_parse_rate_rejects_numeric_types():
+    with pytest.raises(TypeError, match=r"must be a string"):
+        parse_rate(10)
+    with pytest.raises(TypeError, match=r"must be a string"):
+        parse_rate(10.5)
+
+
+def test_parse_rate_accepts_string_with_suffix():
+    assert parse_rate("10mbps") == 10_000_000
+    assert parse_rate("1gbps") == 1_000_000_000
+    assert parse_rate("500kbps") == 500_000
+
+
+def test_parse_duration_parses_ms():
+    assert parse_duration("200ms") == 200
+    assert parse_duration("0ms") == 0
+
+
+def test_parse_duration_parses_seconds():
+    assert parse_duration("1s") == 1000
+    assert parse_duration("0.5s") == 500
+    assert parse_duration("5s") == 5000
+
+
+def test_parse_duration_rejects_invalid_format():
+    with pytest.raises(ValueError, match=r"duration must be"):
+        parse_duration("200")
+    with pytest.raises(ValueError, match=r"duration must be"):
+        parse_duration("invalid")
+
+
+def test_parse_size_parses_kb_mb_gb():
+    assert parse_size("1kb") == 1_000
+    assert parse_size("5mb") == 5_000_000
+    assert parse_size("1gb") == 1_000_000_000
+
+
+def test_parse_size_parses_rate_suffixes():
+    assert parse_size("100mbps") == 100_000_000
+    assert parse_size("1gbps") == 1_000_000_000
+
+
+def test_parse_size_rejects_invalid_format():
+    with pytest.raises(ValueError, match=r"size must be"):
+        parse_size("100")
+    with pytest.raises(ValueError, match=r"size value"):
+        parse_size("invalidkb")
+
+
+def test_build_timeout_profile_parses_connect_and_recv():
+    profile = build_timeout_profile(connect="500ms", recv="1s")
+    assert profile == {"connect_ms": 500, "recv_ms": 1000}
+
+
+def test_build_timeout_profile_accepts_partial():
+    profile = build_timeout_profile(connect="200ms")
+    assert profile == {"connect_ms": 200}
+    profile = build_timeout_profile(recv="300ms")
+    assert profile == {"recv_ms": 300}
+
+
+def test_build_timeout_profile_accepts_empty():
+    profile = build_timeout_profile()
+    assert profile == {}

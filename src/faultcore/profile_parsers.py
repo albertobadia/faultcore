@@ -15,12 +15,58 @@ _TARGET_PROTOCOL_MAP = {
 }
 
 _NS_PER_SECOND = 1_000_000_000
+_MS_PER_SECOND = 1000
 _RATE_SUFFIX_MULTIPLIERS = {
     "gbps": 1_000_000_000,
     "mbps": 1_000_000,
     "kbps": 1_000,
     "bps": 1,
 }
+_SIZE_SUFFIX_MULTIPLIERS = {
+    "gb": 1_000_000_000,
+    "mb": 1_000_000,
+    "kb": 1_000,
+    "gbps": 1_000_000_000,
+    "mbps": 1_000_000,
+    "kbps": 1_000,
+    "bps": 1,
+}
+
+
+def parse_duration(t: str) -> int:
+    normalized = _non_empty_normalized(t, "duration must be non-empty")
+    if normalized.endswith("ms"):
+        value = float(normalized[:-2])
+        _ensure_range(value, 0, float("inf"), "duration ms must be >= 0")
+        return int(value)
+    if normalized.endswith("s"):
+        value = float(normalized[:-1])
+        _ensure_range(value, 0, float("inf"), "duration s must be >= 0")
+        return int(value * _MS_PER_SECOND)
+    raise ValueError("duration must be in format 'Ns' or 'Nms' (e.g., '200ms', '5s', '0.5s')")
+
+
+def parse_size(t: str) -> int:
+    normalized = _non_empty_normalized(t, "size must be non-empty")
+    for suffix, multiplier in _SIZE_SUFFIX_MULTIPLIERS.items():
+        if normalized.endswith(suffix):
+            value_str = normalized[: -len(suffix)]
+            try:
+                value = float(value_str)
+            except ValueError as e:
+                raise ValueError(f"size value '{value_str}' is not a valid number") from e
+            _ensure_range(value, 0, float("inf"), "size must be >= 0")
+            return int(value * multiplier)
+    raise ValueError("size must be in format 'N<suffix>' (e.g., '1kb', '5mb', '1gb', '100mbps', '1gbps')")
+
+
+def build_timeout_profile(*, connect: str | None = None, recv: str | None = None) -> dict[str, int]:
+    profile: dict[str, int] = {}
+    if connect is not None:
+        profile["connect_ms"] = parse_duration(connect)
+    if recv is not None:
+        profile["recv_ms"] = parse_duration(recv)
+    return profile
 
 
 def _ensure_range(value: float | int, minimum: float | int, maximum: float | int, error_message: str) -> None:
@@ -163,9 +209,9 @@ def _add_positive_limit(
         profile[key] = parsed
 
 
-def parse_rate(rate: str | int | float) -> int:
-    if isinstance(rate, (int, float)):
-        return _rate_to_bps(rate, 1_000_000)
+def parse_rate(rate: str) -> int:
+    if not isinstance(rate, str):
+        raise TypeError("rate must be a string with suffix (e.g., '100mbps', '1gbps', '500kbps', '1000bps')")
 
     normalized_rate = _non_empty_normalized(rate, "rate must be non-empty")
     for suffix, multiplier in _RATE_SUFFIX_MULTIPLIERS.items():
@@ -175,40 +221,41 @@ def parse_rate(rate: str | int | float) -> int:
     return _rate_to_bps(normalized_rate, 1_000_000)
 
 
-def parse_packet_loss(loss: str | int | float) -> int:
-    if isinstance(loss, str):
-        raw = _non_empty_normalized(loss, "packet_loss must be non-empty")
-        if raw.endswith("%"):
-            value = float(raw[:-1])
-            _ensure_range(value, 0, 100, "packet_loss percentage must be between 0 and 100")
-            return int(value * 10_000)
-        if raw.endswith("ppm"):
-            value = float(raw[:-3])
-            _ensure_range(value, 0, 1_000_000, "packet_loss ppm must be between 0 and 1000000")
-            return int(value)
-        return _ppm_from_loss_value(float(raw))
-    return _ppm_from_loss_value(float(loss))
+def parse_packet_loss(loss: str) -> int:
+    if not isinstance(loss, str):
+        raise TypeError("packet_loss must be a string with '%' or 'ppm' suffix (e.g., '5%', '500ppm')")
+
+    raw = _non_empty_normalized(loss, "packet_loss must be non-empty")
+    if raw.endswith("%"):
+        value = float(raw[:-1])
+        _ensure_range(value, 0, 100, "packet_loss percentage must be between 0 and 100")
+        return int(value * 10_000)
+    if raw.endswith("ppm"):
+        value = float(raw[:-3])
+        _ensure_range(value, 0, 1_000_000, "packet_loss ppm must be between 0 and 1000000")
+        return int(value)
+    raise ValueError("packet_loss must be a string with '%' or 'ppm' suffix (e.g., '5%', '500ppm')")
 
 
 def build_direction_profile(
     *,
-    latency_ms: int | None = None,
-    jitter_ms: int | None = None,
-    packet_loss: str | int | float | None = None,
-    burst_loss_len: int | None = None,
-    rate: str | int | float | None = None,
+    latency: str | None = None,
+    jitter: str | None = None,
+    packet_loss: str | None = None,
+    burst_loss: int | None = None,
+    rate: str | None = None,
 ) -> dict[str, int]:
     profile: dict[str, int] = {}
-    if latency_ms is not None:
-        profile["latency_ms"] = _as_non_negative_int(latency_ms, "latency_ms must be >= 0")
-    if jitter_ms is not None:
-        profile["jitter_ms"] = _as_non_negative_int(jitter_ms, "jitter_ms must be >= 0")
+    if latency is not None:
+        profile["latency"] = parse_duration(latency)
+    if jitter is not None:
+        profile["jitter"] = parse_duration(jitter)
     if packet_loss is not None:
         profile["packet_loss_ppm"] = parse_packet_loss(packet_loss)
-    if burst_loss_len is not None:
-        profile["burst_loss_len"] = _as_non_negative_int(burst_loss_len, "burst_loss_len must be >= 0")
+    if burst_loss is not None:
+        profile["burst_loss"] = _as_non_negative_int(burst_loss, "burst_loss must be >= 0")
     if rate is not None:
-        profile["bandwidth_bps"] = parse_rate(rate)
+        profile["rate"] = parse_rate(rate)
     return profile
 
 
@@ -240,11 +287,11 @@ def build_connection_error_profile(*, kind: str, prob: str | int | float = "100%
     return {"kind": parse_error_kind(kind), "prob_ppm": parse_packet_loss(prob)}
 
 
-def build_half_open_profile(*, after_bytes: int, error: str = "reset") -> dict[str, int]:
-    threshold = int(after_bytes)
+def build_half_open_profile(*, after: str, error: str = "reset") -> dict[str, int]:
+    threshold = parse_size(after)
     if threshold <= 0:
-        raise ValueError("after_bytes must be > 0")
-    return {"after_bytes": threshold, "err_kind": parse_error_kind(error)}
+        raise ValueError("after must be > 0")
+    return {"after": threshold, "err_kind": parse_error_kind(error)}
 
 
 def build_packet_duplicate_profile(*, prob: str | int | float = "100%", max_extra: int = 1) -> dict[str, int]:
@@ -256,13 +303,11 @@ def build_packet_duplicate_profile(*, prob: str | int | float = "100%", max_extr
 
 def build_packet_reorder_profile(
     *,
-    prob: str | int | float = "100%",
-    max_delay_ms: int = 0,
+    prob: str = "100%",
+    max_delay: str = "0ms",
     window: int = 1,
 ) -> dict[str, int]:
-    delay_ms = int(max_delay_ms)
-    if delay_ms < 0:
-        raise ValueError("max_delay_ms must be >= 0")
+    delay_ms = parse_duration(max_delay)
     reorder_window = int(window)
     if reorder_window <= 0:
         raise ValueError("window must be > 0")
@@ -275,15 +320,15 @@ def build_packet_reorder_profile(
 
 def build_dns_profile(
     *,
-    delay_ms: int | None = None,
-    timeout_ms: int | None = None,
-    nxdomain: str | int | float | None = None,
+    delay: str | None = None,
+    timeout: str | None = None,
+    nxdomain: str | None = None,
 ) -> dict[str, int]:
     profile: dict[str, int] = {}
-    if delay_ms is not None:
-        profile["delay_ms"] = _as_non_negative_int(delay_ms, "dns delay must be >= 0")
-    if timeout_ms is not None:
-        profile["timeout_ms"] = _as_non_negative_int(timeout_ms, "dns timeout must be >= 0")
+    if delay is not None:
+        profile["delay_ms"] = parse_duration(delay)
+    if timeout is not None:
+        profile["timeout_ms"] = parse_duration(timeout)
     if nxdomain is not None:
         profile["nxdomain_ppm"] = parse_packet_loss(nxdomain)
     return profile
@@ -493,36 +538,36 @@ def build_target_profile(
 def build_schedule_profile(
     *,
     kind: str,
-    every_s: int | float | None = None,
-    duration_s: int | float | None = None,
-    on_s: int | float | None = None,
-    off_s: int | float | None = None,
-    ramp_s: int | float | None = None,
+    every: str | None = None,
+    duration: str | None = None,
+    on: str | None = None,
+    off: str | None = None,
+    ramp: str | None = None,
 ) -> dict[str, int]:
     normalized = _non_empty_normalized(kind, "schedule kind must be non-empty")
     match normalized:
         case "spike":
-            if every_s is None or duration_s is None:
-                raise ValueError("spike profile requires every_s and duration_s")
-            cycle_ns = _seconds_to_ns(every_s)
-            active_ns = _seconds_to_ns(duration_s)
+            if every is None or duration is None:
+                raise ValueError("spike profile requires every and duration")
+            cycle_ns = _seconds_to_ns(parse_duration(every) / 1000)
+            active_ns = _seconds_to_ns(parse_duration(duration) / 1000)
             if cycle_ns <= 0 or active_ns <= 0 or active_ns > cycle_ns:
-                raise ValueError("spike profile requires 0 < duration_s <= every_s")
+                raise ValueError("spike profile requires 0 < duration <= every")
             return _schedule_profile(2, cycle_ns, active_ns)
         case "flapping":
-            if on_s is None or off_s is None:
-                raise ValueError("flapping profile requires on_s and off_s")
-            on_ns = _seconds_to_ns(on_s)
-            off_ns = _seconds_to_ns(off_s)
+            if on is None or off is None:
+                raise ValueError("flapping profile requires on and off")
+            on_ns = _seconds_to_ns(parse_duration(on) / 1000)
+            off_ns = _seconds_to_ns(parse_duration(off) / 1000)
             if on_ns <= 0 or off_ns <= 0:
-                raise ValueError("flapping profile requires on_s > 0 and off_s > 0")
+                raise ValueError("flapping profile requires on > 0 and off > 0")
             return _schedule_profile(3, on_ns, off_ns)
         case "ramp":
-            if ramp_s is None:
-                raise ValueError("ramp profile requires ramp_s")
-            ramp_ns = _seconds_to_ns(ramp_s)
+            if ramp is None:
+                raise ValueError("ramp profile requires ramp")
+            ramp_ns = _seconds_to_ns(parse_duration(ramp) / 1000)
             if ramp_ns <= 0:
-                raise ValueError("ramp profile requires ramp_s > 0")
+                raise ValueError("ramp profile requires ramp > 0")
             return _schedule_profile(1, ramp_ns, 0)
         case _:
             raise ValueError("schedule kind must be one of: ramp, spike, flapping")
@@ -533,9 +578,9 @@ def build_session_budget_profile(
     max_bytes_tx: int | None = None,
     max_bytes_rx: int | None = None,
     max_ops: int | None = None,
-    max_duration_ms: int | None = None,
+    max_duration: str | None = None,
     action: str = "drop",
-    budget_timeout_ms: int | None = None,
+    budget_timeout: str | None = None,
     error: str | None = None,
 ) -> dict[str, int]:
     profile: dict[str, int] = {}
@@ -543,12 +588,8 @@ def build_session_budget_profile(
     _add_positive_limit(profile, "max_bytes_tx", max_bytes_tx, "session_budget max_bytes_tx must be > 0")
     _add_positive_limit(profile, "max_bytes_rx", max_bytes_rx, "session_budget max_bytes_rx must be > 0")
     _add_positive_limit(profile, "max_ops", max_ops, "session_budget max_ops must be > 0")
-    _add_positive_limit(
-        profile,
-        "max_duration_ms",
-        max_duration_ms,
-        "session_budget max_duration_ms must be > 0",
-    )
+    if max_duration is not None:
+        profile["max_duration"] = parse_duration(max_duration)
 
     if not profile:
         raise ValueError("session_budget requires at least one limit")
@@ -557,25 +598,25 @@ def build_session_budget_profile(
     match normalized_action:
         case "drop":
             profile["action"] = 1
-            if budget_timeout_ms is not None:
-                raise ValueError("session_budget budget_timeout_ms only applies to action=timeout")
+            if budget_timeout is not None:
+                raise ValueError("session_budget budget_timeout only applies to action=timeout")
             if error is not None:
                 raise ValueError("session_budget error only applies to action=connection_error")
         case "timeout":
             profile["action"] = 2
-            if budget_timeout_ms is None:
-                raise ValueError("session_budget budget_timeout_ms is required for action=timeout")
-            timeout_ms = int(budget_timeout_ms)
+            if budget_timeout is None:
+                raise ValueError("session_budget budget_timeout is required for action=timeout")
+            timeout_ms = parse_duration(budget_timeout)
             if timeout_ms <= 0:
-                raise ValueError("session_budget budget_timeout_ms must be > 0")
-            profile["budget_timeout_ms"] = timeout_ms
+                raise ValueError("session_budget budget_timeout must be > 0")
+            profile["budget_timeout"] = timeout_ms
             if error is not None:
                 raise ValueError("session_budget error only applies to action=connection_error")
         case "connection_error":
             profile["action"] = 3
             profile["error_kind"] = parse_error_kind(error or "reset")
-            if budget_timeout_ms is not None:
-                raise ValueError("session_budget budget_timeout_ms only applies to action=timeout")
+            if budget_timeout is not None:
+                raise ValueError("session_budget budget_timeout only applies to action=timeout")
         case _:
             raise ValueError("session_budget action must be one of: drop, timeout, connection_error")
 

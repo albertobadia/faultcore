@@ -169,14 +169,16 @@ def assert_match_latency(avg_ms: float, label: str) -> None:
 def run_tcp_ipv6_host_case(host_v6: str, tcp_port_v6: int) -> None:
     faultcore.register_policy(
         "targets_ipv6_tcp_host",
-        latency_ms=180,
+        latency="180ms",
         targets=[
             {"target": f"tcp://[{host_v6}]:{tcp_port_v6}", "priority": 200},
             {"target": "tcp://127.0.0.0/8", "port": 65530, "priority": 10},
         ],
     )
 
-    @faultcore.apply_policy("targets_ipv6_tcp_host")
+    faultcore.set_thread_policy("targets_ipv6_tcp_host")
+
+    @faultcore.fault()
     def call(message: str) -> str:
         return tcp_echo(host_v6, tcp_port_v6, message)
 
@@ -186,11 +188,13 @@ def run_tcp_ipv6_host_case(host_v6: str, tcp_port_v6: int) -> None:
 def run_tcp_ipv6_cidr_case(host_v6: str, tcp_port_v6: int) -> None:
     faultcore.register_policy(
         "targets_ipv6_tcp_cidr",
-        latency_ms=180,
+        latency="180ms",
         targets=[{"target": "::1/128", "port": tcp_port_v6, "protocol": "tcp", "priority": 200}],
     )
 
-    @faultcore.apply_policy("targets_ipv6_tcp_cidr")
+    faultcore.set_thread_policy("targets_ipv6_tcp_cidr")
+
+    @faultcore.fault()
     def call(message: str) -> str:
         return tcp_echo(host_v6, tcp_port_v6, message)
 
@@ -200,11 +204,13 @@ def run_tcp_ipv6_cidr_case(host_v6: str, tcp_port_v6: int) -> None:
 def run_udp_ipv6_host_case(host_v6: str, udp_port_v6: int) -> None:
     faultcore.register_policy(
         "targets_ipv6_udp_host",
-        latency_ms=180,
+        latency="180ms",
         targets=[{"target": f"udp://[{host_v6}]:{udp_port_v6}", "priority": 200}],
     )
 
-    @faultcore.apply_policy("targets_ipv6_udp_host")
+    faultcore.set_thread_policy("targets_ipv6_udp_host")
+
+    @faultcore.fault()
     def call(message: str) -> str:
         return udp_echo(host_v6, udp_port_v6, message)
 
@@ -214,11 +220,13 @@ def run_udp_ipv6_host_case(host_v6: str, udp_port_v6: int) -> None:
 def run_udp_ipv6_cidr_case(host_v6: str, udp_port_v6: int) -> None:
     faultcore.register_policy(
         "targets_ipv6_udp_cidr",
-        latency_ms=180,
+        latency="180ms",
         targets=[{"target": "::1/128", "port": udp_port_v6, "protocol": "udp", "priority": 200}],
     )
 
-    @faultcore.apply_policy("targets_ipv6_udp_cidr")
+    faultcore.set_thread_policy("targets_ipv6_udp_cidr")
+
+    @faultcore.fault()
     def call(message: str) -> str:
         return udp_echo(host_v6, udp_port_v6, message)
 
@@ -228,18 +236,20 @@ def run_udp_ipv6_cidr_case(host_v6: str, udp_port_v6: int) -> None:
 def run_mixed_ipv4_ipv6_case(host_v4: str, tcp_port_v4: int, host_v6: str, tcp_port_v6: int) -> None:
     faultcore.register_policy(
         "targets_mixed_tcp_families",
-        latency_ms=180,
+        latency="180ms",
         targets=[
             {"target": "tcp://127.0.0.0/8", "port": tcp_port_v4, "priority": 200},
             {"target": "::1/128", "port": tcp_port_v6, "protocol": "tcp", "priority": 200},
         ],
     )
 
-    @faultcore.apply_policy("targets_mixed_tcp_families")
+    faultcore.set_thread_policy("targets_mixed_tcp_families")
+
+    @faultcore.fault()
     def call_v4(message: str) -> str:
         return tcp_echo(host_v4, tcp_port_v4, message)
 
-    @faultcore.apply_policy("targets_mixed_tcp_families")
+    @faultcore.fault()
     def call_v6(message: str) -> str:
         return tcp_echo(host_v6, tcp_port_v6, message)
 
@@ -250,18 +260,20 @@ def run_mixed_ipv4_ipv6_case(host_v4: str, tcp_port_v4: int, host_v6: str, tcp_p
 def run_mixed_udp_ipv4_ipv6_case(host_v4: str, udp_port_v4: int, host_v6: str, udp_port_v6: int) -> None:
     faultcore.register_policy(
         "targets_mixed_udp_families",
-        latency_ms=180,
+        latency="180ms",
         targets=[
             {"target": "udp://127.0.0.0/8", "port": udp_port_v4, "priority": 200},
             {"target": "::1/128", "port": udp_port_v6, "protocol": "udp", "priority": 200},
         ],
     )
 
-    @faultcore.apply_policy("targets_mixed_udp_families")
+    faultcore.set_thread_policy("targets_mixed_udp_families")
+
+    @faultcore.fault()
     def call_v4(message: str) -> str:
         return udp_echo(host_v4, udp_port_v4, message)
 
-    @faultcore.apply_policy("targets_mixed_udp_families")
+    @faultcore.fault()
     def call_v6(message: str) -> str:
         return udp_echo(host_v6, udp_port_v6, message)
 

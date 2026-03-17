@@ -27,7 +27,7 @@ def ensure_shm_ready() -> str:
 def _budget_payload(action: str) -> dict[str, object]:
     payload: dict[str, object] = {"max_ops": 1, "action": action}
     if action == "timeout":
-        payload["budget_timeout_ms"] = 15
+        payload["budget_timeout"] = "15ms"
     if action == "connection_error":
         payload["error"] = "reset"
     return payload
@@ -37,7 +37,9 @@ def run_tcp_case(host: str, port: int, action: str, expected_errno: int) -> None
     policy = f"session_budget_tcp_{action}"
     faultcore.register_policy(policy, session_budget=_budget_payload(action))
 
-    @faultcore.apply_policy(policy)
+    faultcore.set_thread_policy(policy)
+
+    @faultcore.fault()
     def tcp_probe() -> None:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(3.0)
@@ -68,7 +70,9 @@ def run_udp_case(host: str, action: str, expected_errno: int) -> None:
     policy = f"session_budget_udp_{action}"
     faultcore.register_policy(policy, session_budget=_budget_payload(action))
 
-    @faultcore.apply_policy(policy)
+    faultcore.set_thread_policy(policy)
+
+    @faultcore.fault()
     def udp_probe() -> None:
         client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         client.bind((host, 0))

@@ -49,14 +49,16 @@ def measure_ms(callable_fn, count: int = 3) -> float:
 def run_match_case(host: str, port: int) -> float:
     faultcore.register_policy(
         "targets_match",
-        latency_ms=180,
+        latency="180ms",
         targets=[
             {"target": f"{host}:{port}", "priority": 200},
             {"target": "10.0.0.0/8", "port": 9000, "priority": 10},
         ],
     )
 
-    @faultcore.apply_policy("targets_match")
+    faultcore.set_thread_policy("targets_match")
+
+    @faultcore.fault()
     def call(message: str) -> str:
         return tcp_echo(host, port, message)
 
@@ -70,11 +72,13 @@ def run_match_case(host: str, port: int) -> float:
 def run_no_match_case(host: str, port: int) -> float:
     faultcore.register_policy(
         "targets_no_match",
-        latency_ms=180,
+        latency="180ms",
         targets=[{"target": "10.0.0.0/8", "port": 9000, "priority": 200}],
     )
 
-    @faultcore.apply_policy("targets_no_match")
+    faultcore.set_thread_policy("targets_no_match")
+
+    @faultcore.fault()
     def call(message: str) -> str:
         return tcp_echo(host, port, message)
 
@@ -88,11 +92,13 @@ def run_no_match_case(host: str, port: int) -> float:
 def run_protocol_mismatch_case(host: str, port: int) -> float:
     faultcore.register_policy(
         "targets_protocol_mismatch",
-        latency_ms=180,
+        latency="180ms",
         targets=[{"target": f"{host}:{port}", "protocol": "udp", "priority": 200}],
     )
 
-    @faultcore.apply_policy("targets_protocol_mismatch")
+    faultcore.set_thread_policy("targets_protocol_mismatch")
+
+    @faultcore.fault()
     def call(message: str) -> str:
         return tcp_echo(host, port, message)
 
@@ -106,11 +112,13 @@ def run_protocol_mismatch_case(host: str, port: int) -> float:
 def run_port_mismatch_case(host: str, port: int) -> float:
     faultcore.register_policy(
         "targets_port_mismatch",
-        latency_ms=180,
+        latency="180ms",
         targets=[{"target": host, "port": port + 1, "priority": 200}],
     )
 
-    @faultcore.apply_policy("targets_port_mismatch")
+    faultcore.set_thread_policy("targets_port_mismatch")
+
+    @faultcore.fault()
     def call(message: str) -> str:
         return tcp_echo(host, port, message)
 

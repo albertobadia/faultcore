@@ -2,17 +2,12 @@ import uuid
 from typing import Any
 
 from faultcore.decorator import (
-    apply_policy,
     burst_loss,
-    connect_timeout,
     connection_error,
     correlated_loss,
-    dns_delay,
-    dns_nxdomain,
-    dns_timeout,
+    dns,
     downlink,
     fault,
-    for_target,
     get_policy,
     get_thread_policy,
     half_open,
@@ -23,11 +18,11 @@ from faultcore.decorator import (
     packet_duplicate,
     packet_loss,
     packet_reorder,
-    profile,
-    rate_limit,
-    recv_timeout,
+    rate,
     register_policy,
+    session_budget,
     set_thread_policy as _set_thread_policy,
+    timeout,
     unregister_policy,
     uplink,
 )
@@ -71,43 +66,33 @@ class policy_context:
         self.__exit__(*args)
 
 
-class fault_context(policy_context):
-    pass
-
-
 def set_thread_policy(policy_name: str | None) -> None:
     _set_thread_policy(policy_name)
 
 
 __all__ = [
-    "connect_timeout",
-    "recv_timeout",
     "latency",
     "jitter",
     "packet_loss",
     "burst_loss",
+    "rate",
+    "timeout",
+    "uplink",
+    "downlink",
     "correlated_loss",
     "connection_error",
     "half_open",
-    "dns_delay",
-    "dns_timeout",
-    "dns_nxdomain",
-    "for_target",
     "packet_duplicate",
     "packet_reorder",
-    "profile",
-    "uplink",
-    "downlink",
-    "rate_limit",
+    "dns",
+    "session_budget",
     "register_policy",
     "list_policies",
     "get_policy",
     "unregister_policy",
     "load_policies",
-    "apply_policy",
     "fault",
     "policy_context",
-    "fault_context",
     "set_thread_policy",
     "get_thread_policy",
 ]

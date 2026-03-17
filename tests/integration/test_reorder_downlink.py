@@ -78,19 +78,19 @@ def start_udp_sequence_sender(host: str, client_port: int, count: int) -> thread
     return thread
 
 
-@faultcore.packet_reorder(prob="100%", max_delay_ms=100, window=2)
+@faultcore.packet_reorder(prob="100%", max_delay="100ms", window=2)
 def recv_two_tcp(sock: socket.socket) -> tuple[bytes, bytes]:
     return sock.recv(8), sock.recv(8)
 
 
-@faultcore.packet_reorder(prob="100%", max_delay_ms=100, window=2)
+@faultcore.packet_reorder(prob="100%", max_delay="100ms", window=2)
 def recv_two_udp(sock: socket.socket) -> tuple[bytes, bytes]:
     first, _ = sock.recvfrom(64)
     second, _ = sock.recvfrom(64)
     return first, second
 
 
-@faultcore.packet_reorder(prob="100%", max_delay_ms=100, window=2)
+@faultcore.packet_reorder(prob="100%", max_delay="100ms", window=2)
 def recv_many_udp(sock: socket.socket, count: int) -> list[bytes]:
     out: list[bytes] = []
     for _ in range(count):

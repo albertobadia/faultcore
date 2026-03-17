@@ -10,6 +10,7 @@ import faultcore
 from faultcore.shm_writer import SHM_SIZE
 
 DNS_TIMEOUT_MS = 80
+DNS_TIMEOUT = f"{DNS_TIMEOUT_MS}ms"
 NO_MATCH_MAX_MS = 120.0
 MATCH_MIN_MS = 60.0
 
@@ -52,11 +53,13 @@ def assert_dns_timeout(elapsed_ms: float, label: str) -> None:
 def run_hostname_no_match_case(port: int) -> None:
     faultcore.register_policy(
         "targets_dns_hostname_no_match",
-        dns_timeout_ms=DNS_TIMEOUT_MS,
+        dns={"timeout": DNS_TIMEOUT},
         targets=[{"hostname": "nomatch.localhost", "priority": 200}],
     )
 
-    @faultcore.apply_policy("targets_dns_hostname_no_match")
+    faultcore.set_thread_policy("targets_dns_hostname_no_match")
+
+    @faultcore.fault()
     def resolve() -> tuple[bool, float]:
         return resolve_ms("localhost", port)
 
@@ -69,11 +72,13 @@ def run_hostname_no_match_case(port: int) -> None:
 def run_hostname_exact_case(port: int) -> None:
     faultcore.register_policy(
         "targets_dns_hostname_exact",
-        dns_timeout_ms=DNS_TIMEOUT_MS,
+        dns={"timeout": DNS_TIMEOUT},
         targets=[{"hostname": "localhost", "priority": 200}],
     )
 
-    @faultcore.apply_policy("targets_dns_hostname_exact")
+    faultcore.set_thread_policy("targets_dns_hostname_exact")
+
+    @faultcore.fault()
     def resolve() -> tuple[bool, float]:
         return resolve_ms("localhost", port)
 
@@ -86,14 +91,16 @@ def run_hostname_exact_case(port: int) -> None:
 def run_ip_vs_hostname_priority_cases(port: int) -> None:
     faultcore.register_policy(
         "targets_dns_ip_priority_over_hostname",
-        dns_timeout_ms=DNS_TIMEOUT_MS,
+        dns={"timeout": DNS_TIMEOUT},
         targets=[
             {"target": "127.0.0.1", "priority": 300},
             {"hostname": "localhost", "priority": 100},
         ],
     )
 
-    @faultcore.apply_policy("targets_dns_ip_priority_over_hostname")
+    faultcore.set_thread_policy("targets_dns_ip_priority_over_hostname")
+
+    @faultcore.fault()
     def resolve_ip_priority() -> tuple[bool, float]:
         return resolve_ms("localhost", port)
 
@@ -104,14 +111,16 @@ def run_ip_vs_hostname_priority_cases(port: int) -> None:
 
     faultcore.register_policy(
         "targets_dns_hostname_priority_over_ip",
-        dns_timeout_ms=DNS_TIMEOUT_MS,
+        dns={"timeout": DNS_TIMEOUT},
         targets=[
             {"target": "127.0.0.1", "priority": 100},
             {"hostname": "localhost", "priority": 300},
         ],
     )
 
-    @faultcore.apply_policy("targets_dns_hostname_priority_over_ip")
+    faultcore.set_thread_policy("targets_dns_hostname_priority_over_ip")
+
+    @faultcore.fault()
     def resolve_hostname_priority() -> tuple[bool, float]:
         return resolve_ms("localhost", port)
 
@@ -124,14 +133,16 @@ def run_ip_vs_hostname_priority_cases(port: int) -> None:
 def run_ip_vs_hostname_tie_case(port: int) -> None:
     faultcore.register_policy(
         "targets_dns_hostname_tie_with_ip",
-        dns_timeout_ms=DNS_TIMEOUT_MS,
+        dns={"timeout": DNS_TIMEOUT},
         targets=[
             {"target": "127.0.0.1", "priority": 200},
             {"hostname": "localhost", "priority": 200},
         ],
     )
 
-    @faultcore.apply_policy("targets_dns_hostname_tie_with_ip")
+    faultcore.set_thread_policy("targets_dns_hostname_tie_with_ip")
+
+    @faultcore.fault()
     def resolve_tie() -> tuple[bool, float]:
         return resolve_ms("localhost", port)
 

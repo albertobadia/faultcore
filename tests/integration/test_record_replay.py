@@ -56,7 +56,9 @@ def run_probe(host: str, port: int, with_policy: bool) -> list[str]:
             packet_loss=POLICY_PACKET_LOSS,
         )
 
-        @faultcore.apply_policy("record_replay_probe_policy")
+        faultcore.set_thread_policy("record_replay_probe_policy")
+
+        @faultcore.fault()
         def one(idx: int) -> str:
             return try_roundtrip(host, port, idx)
     else:

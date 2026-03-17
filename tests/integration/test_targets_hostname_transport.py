@@ -69,11 +69,13 @@ def assert_no_match_latency(avg_ms: float, baseline_ms: float, label: str) -> No
 def run_hostname_exact_case(hostname: str, port: int, baseline_ms: float) -> None:
     faultcore.register_policy(
         "targets_hostname_transport_exact",
-        latency_ms=MATCH_LATENCY_MS,
+        latency=f"{MATCH_LATENCY_MS}ms",
         targets=[{"hostname": hostname, "priority": 200}],
     )
 
-    @faultcore.apply_policy("targets_hostname_transport_exact")
+    faultcore.set_thread_policy("targets_hostname_transport_exact")
+
+    @faultcore.fault()
     def call(message: str) -> str:
         return tcp_echo(hostname, port, message)
 
@@ -85,11 +87,13 @@ def run_hostname_exact_case(hostname: str, port: int, baseline_ms: float) -> Non
 def run_hostname_port_protocol_case(hostname: str, port: int, baseline_ms: float) -> None:
     faultcore.register_policy(
         "targets_hostname_transport_port_protocol",
-        latency_ms=MATCH_LATENCY_MS,
+        latency=f"{MATCH_LATENCY_MS}ms",
         targets=[{"hostname": hostname, "port": port, "protocol": "tcp", "priority": 200}],
     )
 
-    @faultcore.apply_policy("targets_hostname_transport_port_protocol")
+    faultcore.set_thread_policy("targets_hostname_transport_port_protocol")
+
+    @faultcore.fault()
     def call(message: str) -> str:
         return tcp_echo(hostname, port, message)
 
@@ -101,11 +105,13 @@ def run_hostname_port_protocol_case(hostname: str, port: int, baseline_ms: float
 def run_hostname_no_match_case(hostname: str, port: int, baseline_ms: float) -> None:
     faultcore.register_policy(
         "targets_hostname_transport_no_match",
-        latency_ms=MATCH_LATENCY_MS,
+        latency=f"{MATCH_LATENCY_MS}ms",
         targets=[{"hostname": "other.foo.com", "priority": 200}],
     )
 
-    @faultcore.apply_policy("targets_hostname_transport_no_match")
+    faultcore.set_thread_policy("targets_hostname_transport_no_match")
+
+    @faultcore.fault()
     def call(message: str) -> str:
         return tcp_echo(hostname, port, message)
 

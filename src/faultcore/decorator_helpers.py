@@ -2,19 +2,19 @@ from typing import Any
 
 _SCALAR_WRITERS = (
     ("_seed", "write_policy_seed"),
-    ("_latency_ms", "write_latency"),
-    ("_jitter_ms", "write_jitter"),
+    ("_latency", "write_latency"),
+    ("_jitter", "write_jitter"),
     ("_packet_loss_ppm", "write_packet_loss"),
-    ("_burst_loss_len", "write_burst_loss"),
-    ("_bandwidth_bps", "write_bandwidth"),
+    ("_burst_loss", "write_burst_loss"),
+    ("_rate", "write_bandwidth"),
 )
 
 _DIRECTIONAL_FIELDS = (
-    "latency_ms",
-    "jitter_ms",
+    "latency",
+    "jitter",
     "packet_loss_ppm",
-    "burst_loss_len",
-    "bandwidth_bps",
+    "burst_loss",
+    "rate",
 )
 
 _DIRECTIONAL_WRITERS = (
@@ -53,7 +53,7 @@ _PROFILE_WRITERS: tuple[tuple[str, str, dict[str, Any]], ...] = (
         "_half_open_profile",
         "write_half_open",
         {
-            "after_bytes": 0,
+            "after": 0,
             "err_kind": 0,
         },
     ),
@@ -143,9 +143,9 @@ def _write_session_budget_profile(shm: Any, tid: int, session_budget_profile: di
         max_bytes_tx=session_budget_profile.get("max_bytes_tx"),
         max_bytes_rx=session_budget_profile.get("max_bytes_rx"),
         max_ops=session_budget_profile.get("max_ops"),
-        max_duration_ms=session_budget_profile.get("max_duration_ms"),
+        max_duration_ms=session_budget_profile.get("max_duration"),
         action=session_budget_profile.get("action", 0),
-        budget_timeout_ms=session_budget_profile.get("budget_timeout_ms"),
+        budget_timeout_ms=session_budget_profile.get("budget_timeout"),
         error_kind=session_budget_profile.get("error_kind"),
     )
 
@@ -161,7 +161,8 @@ def apply_fault_profiles(shm: Any, tid: int, wrapper: Any, *, started_monotonic_
     _write_scalar_profiles(shm, tid, wrapper)
 
     if timeouts := wrapper._timeouts:
-        connect_ms, recv_ms = timeouts
+        connect_ms = timeouts.get("connect_ms", 0)
+        recv_ms = timeouts.get("recv_ms", 0)
         shm.write_timeouts(tid, connect_ms, recv_ms)
 
     for profile_attr, writer_name in _DIRECTIONAL_WRITERS:
@@ -173,8 +174,6 @@ def apply_fault_profiles(shm: Any, tid: int, wrapper: Any, *, started_monotonic_
 
     if wrapper._target_profiles:
         shm.write_targets(tid, wrapper._target_profiles)
-    elif wrapper._target_profile:
-        shm.write_target(tid, **_target_write_kwargs(wrapper._target_profile))
 
     if schedule_profile := wrapper._schedule_profile:
         _write_schedule_profile(shm, tid, schedule_profile, started_monotonic_ns=started_monotonic_ns)

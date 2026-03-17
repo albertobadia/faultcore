@@ -11,7 +11,6 @@ from faultcore.profile_parsers import (
     build_connection_error_profile,
     build_correlated_loss_profile,
     build_direction_profile,
-    build_dns_profile,
     build_half_open_profile,
     build_packet_duplicate_profile,
     build_packet_reorder_profile,
@@ -32,13 +31,12 @@ _POLICY_LOCK = threading.RLock()
 
 _REGISTERABLE_FIELDS = (
     "seed",
-    "latency_ms",
-    "jitter_ms",
+    "latency",
+    "jitter",
     "packet_loss",
-    "burst_loss_len",
+    "burst_loss",
     "rate",
-    "connect_timeout_ms",
-    "recv_timeout_ms",
+    "timeout",
     "uplink",
     "downlink",
     "correlated_loss",
@@ -46,21 +44,18 @@ _REGISTERABLE_FIELDS = (
     "half_open",
     "packet_duplicate",
     "packet_reorder",
-    "dns_delay_ms",
-    "dns_timeout_ms",
-    "dns_nxdomain",
-    "target",
+    "dns",
     "targets",
     "schedule",
     "session_budget",
 )
 
 _TRANSPORT_EFFECT_POLICY_KEYS = (
-    "latency_ms",
-    "jitter_ms",
+    "latency",
+    "jitter",
     "packet_loss_ppm",
-    "burst_loss_len",
-    "bandwidth_bps",
+    "burst_loss",
+    "rate",
     "timeouts",
     "uplink_profile",
     "downlink_profile",
@@ -107,7 +102,7 @@ _OPTIONAL_MAPPING_PROFILE_SPECS: tuple[
         "half_open_profile",
         build_half_open_profile,
         {
-            "after_bytes": 0,
+            "after": "0",
             "error": "reset",
         },
     ),
@@ -126,7 +121,7 @@ _OPTIONAL_MAPPING_PROFILE_SPECS: tuple[
         build_packet_reorder_profile,
         {
             "prob": "100%",
-            "max_delay_ms": 0,
+            "max_delay": "0ms",
             "window": 1,
         },
     ),
@@ -237,10 +232,10 @@ def _validate_target_observability(policy: dict[str, Any]) -> None:
 
 def _build_direction_policy(direction: dict[str, Any]) -> dict[str, Any]:
     return build_direction_profile(
-        latency_ms=direction.get("latency_ms"),
-        jitter_ms=direction.get("jitter_ms"),
+        latency=direction.get("latency"),
+        jitter=direction.get("jitter"),
         packet_loss=direction.get("packet_loss"),
-        burst_loss_len=direction.get("burst_loss_len"),
+        burst_loss=direction.get("burst_loss"),
         rate=direction.get("rate"),
     )
 
@@ -261,14 +256,16 @@ def _set_direction_profile(
         policy[policy_key] = _build_direction_policy(direction_config)
 
 
-def _coerce_timeout_pair(
-    connect_timeout_ms: int | None,
-    recv_timeout_ms: int | None,
-) -> tuple[int, int]:
-    error_message = "connect_timeout_ms and recv_timeout_ms must be >= 0"
-    connect_timeout = 0 if connect_timeout_ms is None else _coerce_non_negative_int(connect_timeout_ms, error_message)
-    recv_timeout = 0 if recv_timeout_ms is None else _coerce_non_negative_int(recv_timeout_ms, error_message)
-    return connect_timeout, recv_timeout
+def _coerce_timeout_pair(timeout: dict[str, Any] | None) -> tuple[int, int]:
+    if timeout is None:
+        return (0, 0)
+    connect = timeout.get("connect")
+    recv = timeout.get("recv")
+    from faultcore.profile_parsers import parse_duration
+
+    connect_ms = parse_duration(connect) if connect is not None else 0
+    recv_ms = parse_duration(recv) if recv is not None else 0
+    return (connect_ms, recv_ms)
 
 
 def _set_non_negative_optional(
@@ -315,13 +312,12 @@ def register_policy(
     name: str,
     *,
     seed: int | None = None,
-    latency_ms: int | None = None,
-    jitter_ms: int | None = None,
-    packet_loss: str | int | float | None = None,
-    burst_loss_len: int | None = None,
-    rate: str | int | float | None = None,
-    connect_timeout_ms: int | None = None,
-    recv_timeout_ms: int | None = None,
+    latency: str | None = None,
+    jitter: str | None = None,
+    packet_loss: str | None = None,
+    burst_loss: int | None = None,
+    rate: str | None = None,
+    timeout: dict[str, Any] | None = None,
     uplink: dict[str, Any] | None = None,
     downlink: dict[str, Any] | None = None,
     correlated_loss: dict[str, Any] | None = None,
@@ -329,10 +325,7 @@ def register_policy(
     half_open: dict[str, Any] | None = None,
     packet_duplicate: dict[str, Any] | None = None,
     packet_reorder: dict[str, Any] | None = None,
-    dns_delay_ms: int | None = None,
-    dns_timeout_ms: int | None = None,
-    dns_nxdomain: str | int | float | None = None,
-    target: str | dict[str, Any] | None = None,
+    dns: dict[str, Any] | None = None,
     targets: list[str | dict[str, Any]] | None = None,
     schedule: dict[str, Any] | None = None,
     session_budget: dict[str, Any] | None = None,
@@ -341,38 +334,32 @@ def register_policy(
         raise ValueError("policy name must be non-empty")
 
     policy: dict[str, Any] = {}
-    if target is not None and targets is not None:
-        raise ValueError("target and targets are mutually exclusive")
     _set_non_negative_optional(
         policy,
         source_value=seed,
         policy_key="seed",
         error_message="seed must be >= 0",
     )
-    _set_non_negative_optional(
-        policy,
-        source_value=latency_ms,
-        policy_key="latency_ms",
-        error_message="latency_ms must be >= 0",
-    )
-    _set_non_negative_optional(
-        policy,
-        source_value=jitter_ms,
-        policy_key="jitter_ms",
-        error_message="jitter_ms must be >= 0",
-    )
+    if latency is not None:
+        from faultcore.profile_parsers import parse_duration
+
+        policy["latency"] = parse_duration(latency)
+    if jitter is not None:
+        from faultcore.profile_parsers import parse_duration
+
+        policy["jitter"] = parse_duration(jitter)
     if packet_loss is not None:
         policy["packet_loss_ppm"] = parse_packet_loss(packet_loss)
     _set_non_negative_optional(
         policy,
-        source_value=burst_loss_len,
-        policy_key="burst_loss_len",
-        error_message="burst_loss_len must be >= 0",
+        source_value=burst_loss,
+        policy_key="burst_loss",
+        error_message="burst_loss must be >= 0",
     )
     if rate is not None:
-        policy["bandwidth_bps"] = parse_rate(rate)
-    if connect_timeout_ms is not None or recv_timeout_ms is not None:
-        policy["timeouts"] = _coerce_timeout_pair(connect_timeout_ms, recv_timeout_ms)
+        policy["rate"] = parse_rate(rate)
+    if timeout is not None:
+        policy["timeouts"] = _coerce_timeout_pair(timeout)
     _set_direction_profile(
         policy,
         raw_value=uplink,
@@ -396,15 +383,16 @@ def register_policy(
         )
     )
 
-    dns_profile = build_dns_profile(
-        delay_ms=dns_delay_ms,
-        timeout_ms=dns_timeout_ms,
-        nxdomain=dns_nxdomain,
-    )
-    if dns_profile:
-        policy["dns_profile"] = dns_profile
-    if target is not None:
-        policy["target_profile"] = _build_target_rule(target, include_priority=False)
+    if dns is not None:
+        from faultcore.profile_parsers import build_dns_profile
+
+        dns_profile = build_dns_profile(
+            delay=dns.get("delay"),
+            timeout=dns.get("timeout"),
+            nxdomain=dns.get("nxdomain"),
+        )
+        if dns_profile:
+            policy["dns_profile"] = dns_profile
     if targets is not None:
         if not isinstance(targets, list):
             raise ValueError("targets must be a non-empty list when provided")
@@ -414,11 +402,11 @@ def register_policy(
     if schedule_config is not None:
         policy["schedule_profile"] = build_schedule_profile(
             kind=schedule_config.get("kind", ""),
-            every_s=schedule_config.get("every_s"),
-            duration_s=schedule_config.get("duration_s"),
-            on_s=schedule_config.get("on_s"),
-            off_s=schedule_config.get("off_s"),
-            ramp_s=schedule_config.get("ramp_s"),
+            every=schedule_config.get("every"),
+            duration=schedule_config.get("duration"),
+            on=schedule_config.get("on"),
+            off=schedule_config.get("off"),
+            ramp=schedule_config.get("ramp"),
         )
 
     session_budget_config = _as_mapping(session_budget, "session_budget")
@@ -427,9 +415,9 @@ def register_policy(
             max_bytes_tx=session_budget_config.get("max_bytes_tx"),
             max_bytes_rx=session_budget_config.get("max_bytes_rx"),
             max_ops=session_budget_config.get("max_ops"),
-            max_duration_ms=session_budget_config.get("max_duration_ms"),
+            max_duration=session_budget_config.get("max_duration"),
             action=session_budget_config.get("action", "drop"),
-            budget_timeout_ms=session_budget_config.get("budget_timeout_ms"),
+            budget_timeout=session_budget_config.get("budget_timeout"),
             error=session_budget_config.get("error"),
         )
     _validate_target_observability(policy)
