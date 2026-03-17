@@ -20,7 +20,7 @@ def tcp_echo(host: str, port: int, message: str) -> str:
 def build_policy() -> None:
     faultcore.register_policy(
         "target_priority_demo",
-        latency_ms=150,
+        latency="150ms",
         targets=[
             {"target": "tcp://10.0.0.0/8:9000", "priority": 10},
             {"target": "tcp://127.0.0.1:9000", "priority": 200},
@@ -40,7 +40,7 @@ def run_demo(host: str, port: int) -> None:
             f"port={rule.get('port')} protocol={rule.get('protocol')}"
         )
 
-    @faultcore.apply_policy("target_priority_demo")
+    @faultcore.fault("target_priority_demo")
     def call_echo() -> str:
         return tcp_echo(host, port, "target-priority")
 
@@ -59,6 +59,6 @@ if __name__ == "__main__":
     print("=" * 60)
     run_demo("127.0.0.1", 9000)
     print("\nStart TCP server first:")
-    print("  python tests/integration/servers/tcp_echo_server.py --port 9000")
-    print("Run with interceptor:")
+    print("  uv run python tests/integration/servers/tcp_echo_server.py --port 9000")
+    print("Run with interceptor (from project root):")
     print("  examples/run_with_preload.sh 10_target_priority.py")

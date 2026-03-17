@@ -38,9 +38,9 @@ Recommended scripts:
 
 ### Packet Reorder
 
-- Begin with low probability (`packet_reorder=0.05`) and bounded window.
-- Keep `reorder_window_packets` small first (`2..8`) to avoid queue pressure.
-- Use `reorder_release_delay_ms` only when simulating delayed release behavior.
+- Begin with low probability (`packet_reorder={"prob": "5%", "window": 4}`) and bounded window.
+- Keep `window` small first (`2..8`) to avoid queue pressure.
+- Use `max_delay` (e.g., `"50ms"`) only when simulating delayed release behavior.
 
 ### Packet Duplicate and Loss
 

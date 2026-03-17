@@ -2,7 +2,7 @@
 import socket
 import time
 
-from faultcore import connect_timeout, rate_limit
+from faultcore import timeout, rate
 
 
 def send_udp_message(host: str, port: int, message: str) -> str:
@@ -19,12 +19,12 @@ def send_udp_message(host: str, port: int, message: str) -> str:
         sock.close()
 
 
-@rate_limit(rate=10)
+@rate(rate=10)
 def rate_limited_udp(host: str, port: int, message: str):
     return send_udp_message(host, port, message)
 
 
-@connect_timeout(timeout_ms=100)
+@timeout(connect="100ms")
 def slow_udp(host: str, port: int, message: str):
     return send_udp_message(host, port, message)
 
@@ -77,5 +77,6 @@ if __name__ == "__main__":
 
     print("UDP is connectionless, so interception is applied at socket level.")
     print("For actual UDP server testing, start a UDP echo server on the specified port.")
-    print("Load the interceptor: LD_PRELOAD=./target/release/libfaultcore_interceptor.so")
+    print("Load the interceptor: LD_PRELOAD=./src/faultcore/_native/<platform>/libfaultcore_interceptor.so")
+    print("Or use: examples/run_with_preload.sh 4_udp_client.py")
     print("\nDone.")

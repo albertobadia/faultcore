@@ -92,10 +92,10 @@ Diagram focus: top-level SHM memory regions consumed by writer/runtime.
 | `target_hostname` | 408 | 32 | `[u8;32]` (final size for the vNext cycle) |
 | `target_sni` | 440 | 32 | `[u8;32]` (final size for the vNext cycle) |
 | `session_budget_enabled` | 472 | 8 | `u64` (`0/1`) |
-| `session_max_bytes_tx` | 480 | 8 | `u64` (`0` deshabilitado) |
-| `session_max_bytes_rx` | 488 | 8 | `u64` (`0` deshabilitado) |
-| `session_max_ops` | 496 | 8 | `u64` (`0` deshabilitado) |
-| `session_max_duration_ms` | 504 | 8 | `u64` (`0` deshabilitado) |
+| `session_max_bytes_tx` | 480 | 8 | `u64` (`0` = disabled) |
+| `session_max_bytes_rx` | 488 | 8 | `u64` (`0` = disabled) |
+| `session_max_ops` | 496 | 8 | `u64` (`0` = disabled) |
+| `session_max_duration_ms` | 504 | 8 | `u64` (`0` = disabled) |
 | `session_action` | 512 | 8 | `u64` (`1=drop`, `2=timeout`, `3=connection_error`) |
 | `session_budget_timeout_ms` | 520 | 8 | `u64` (`action=timeout`) |
 | `session_error_kind` | 528 | 8 | `u64` (`1=reset`, `2=refused`, `3=unreachable`) |

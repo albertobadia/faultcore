@@ -46,9 +46,9 @@ def resolve_once(host: str, port: int) -> int:
 
 
 def run_tcp_scenario(host: str, port: int) -> None:
-    faultcore.register_policy("e2e_tcp", latency_ms=120)
+    faultcore.register_policy("e2e_tcp", latency="120ms")
 
-    @faultcore.apply_policy("e2e_tcp")
+    @faultcore.fault("e2e_tcp")
     def call() -> str:
         return tcp_echo(host, port, "e2e-tcp")
 
@@ -59,9 +59,9 @@ def run_tcp_scenario(host: str, port: int) -> None:
 
 
 def run_udp_scenario(host: str, port: int) -> None:
-    faultcore.register_policy("e2e_udp", downlink={"jitter_ms": 5})
+    faultcore.register_policy("e2e_udp", downlink={"jitter": "5ms"})
 
-    @faultcore.apply_policy("e2e_udp")
+    @faultcore.fault("e2e_udp")
     def call() -> str:
         return udp_echo(host, port, "e2e-udp")
 
@@ -76,9 +76,9 @@ def run_http_scenario(base_url: str) -> None:
         print("http: skipped (requests not installed)")
         return
 
-    faultcore.register_policy("e2e_http", latency_ms=80)
+    faultcore.register_policy("e2e_http", latency="80ms")
 
-    @faultcore.apply_policy("e2e_http")
+    @faultcore.fault("e2e_http")
     def call() -> int:
         return http_echo(base_url, "e2e-http")
 
@@ -89,9 +89,9 @@ def run_http_scenario(base_url: str) -> None:
 
 
 def run_dns_scenario(host: str, port: int) -> None:
-    faultcore.register_policy("e2e_dns", dns_delay=150)
+    faultcore.register_policy("e2e_dns", dns={"delay": "150ms"})
 
-    @faultcore.apply_policy("e2e_dns")
+    @faultcore.fault("e2e_dns")
     def call() -> int:
         return resolve_once(host, port)
 

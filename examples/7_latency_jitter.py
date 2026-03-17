@@ -10,22 +10,22 @@ import time
 import faultcore
 
 
-@faultcore.latency(latency_ms=100)
+@faultcore.latency("100ms")
 def slow_request():
     """Simulate a request with 100ms latency."""
     time.sleep(0.05)
     return "slow response"
 
 
-@faultcore.jitter(jitter_ms=50)
+@faultcore.jitter("50ms")
 def jittery_request():
     """Simulate a request with 50ms jitter."""
     time.sleep(0.01)
     return "jittery response"
 
 
-@faultcore.latency(latency_ms=50)
-@faultcore.jitter(jitter_ms=25)
+@faultcore.latency("50ms")
+@faultcore.jitter("25ms")
 def latency_plus_jitter():
     """Combine latency and jitter for realistic network simulation."""
     time.sleep(0.02)
@@ -58,7 +58,7 @@ def main():
 
     print("=== Context Manager Example ===\n")
 
-    with faultcore.fault_context(latency_ms=75, jitter_ms=15):
+    with faultcore.policy_context(latency="75ms", jitter="15ms"):
         print("Inside fault context (latency=75ms, jitter=15ms):")
         start = time.perf_counter()
         time.sleep(0.02)

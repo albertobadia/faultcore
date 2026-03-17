@@ -12,7 +12,7 @@ This directory starts real services (TCP, UDP, HTTP), runs a network scenario in
 ## Recommended usage (remote daemon)
 
 ```bash
-DOCKER_HOST=tcp://host.orb.internal:2375 bash docker/scripts/run_compose_and_collect.sh
+DOCKER_HOST=tcp://your-remote-host:2375 bash docker/scripts/run_compose_and_collect.sh
 ```
 
 The script:

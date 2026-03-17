@@ -5,13 +5,13 @@ This document focuses on policy registration, selection, and scoped application.
 ## Policy Model
 
 A policy is a named set of optional fields:
-- `latency_ms`
-- `jitter_ms`
-- `packet_loss` (converted to ppm)
-- `burst_loss_len`
-- `rate` (converted to bps)
-- `connect_timeout_ms` / `recv_timeout_ms`
-- `session_budget` (max bytes, operations, or duration limits with terminal actions)
+- `latency` (duration string like "50ms")
+- `jitter` (duration string like "10ms")
+- `packet_loss` (percentage or ppm)
+- `burst_loss` (integer)
+- `rate` (bandwidth string like "10mbps" or integer Mbps)
+- `timeout` (dict with `connect` and/or `recv` keys)
+- `session_budget` (max bytes tx/rx, operations, or duration limits with terminal action; action=timeout requires budget_timeout, action=connection_error accepts optional error)
 - `seed` (optional random seed for deterministic behavior)
 
 Policies are stored in a process-local registry protected by a lock.
@@ -31,7 +31,7 @@ sequenceDiagram
         User->>Wrap: @apply_policy(name)
         Wrap->>Reg: resolve name
     else Auto binding
-        User->>Ctx: with fault_context(name)
+        User->>Ctx: with policy_context(name)
         User->>Wrap: @fault()
         Wrap->>Ctx: read current thread policy
         Wrap->>Reg: resolve policy by context
@@ -49,13 +49,12 @@ import faultcore
 
 faultcore.register_policy(
     "slow_link",
-    latency_ms=50,
-    jitter_ms=10,
+    latency="50ms",
+    jitter="10ms",
     packet_loss="1%",
-    burst_loss_len=3,
-    rate=2,
-    connect_timeout_ms=20,
-    recv_timeout_ms=20,
+    burst_loss=3,
+    rate="2mbps",
+    timeout={"connect": "20ms", "recv": "20ms"},
 )
 
 print(faultcore.list_policies())      # ["slow_link"]
@@ -71,7 +70,7 @@ faultcore.unregister_policy("slow_link")
 ## Apply Policy Explicitly
 
 ```python
-@faultcore.apply_policy("slow_link")
+@faultcore.fault("slow_link")
 def op():
     return "ok"
 ```
@@ -87,7 +86,7 @@ import faultcore
 
 faultcore.register_policy("inner", packet_loss="0.1%")
 
-with faultcore.fault_context("inner"):
+with faultcore.policy_context("inner"):
     @faultcore.fault()
     def op():
         return "ok"
@@ -103,7 +102,7 @@ The previous thread policy is restored on context exit.
 ```python
 import faultcore
 
-with faultcore.policy_context(latency_ms=50, jitter_ms=10, packet_loss="1%"):
+with faultcore.policy_context(latency="50ms", jitter="10ms", packet_loss="1%"):
     @faultcore.fault()
     def op():
         return "ok"
@@ -126,13 +125,12 @@ File format:
 ```json
 {
   "policy_name": {
-    "latency_ms": 7,
-    "jitter_ms": 3,
+    "latency": "7ms",
+    "jitter": "3ms",
     "packet_loss": "0.2%",
-    "burst_loss_len": 2,
-    "rate": 1,
-    "connect_timeout_ms": 9,
-    "recv_timeout_ms": 9
+    "burst_loss": 2,
+    "rate": "1mbps",
+    "timeout": {"connect": "9ms", "recv": "9ms"}
   }
 }
 ```
@@ -143,7 +141,8 @@ Notes:
 
 ## Timeout Notes
 
-- Only split network timeout fields are supported: `connect_timeout_ms` and `recv_timeout_ms`.
+- Use the `timeout` parameter with a dict containing `connect` and/or `recv` keys.
+- Example: `timeout={"connect": "200ms", "recv": "500ms"}`
 - Missing timeout fields are omitted from the policy.
 
 ## Related

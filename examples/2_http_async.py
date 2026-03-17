@@ -8,16 +8,16 @@ except ImportError:
     print("aiohttp not installed. Install with: pip install aiohttp")
     raise
 
-from faultcore import connect_timeout, rate_limit
+from faultcore import timeout, rate
 
 
-@rate_limit(rate=10)
+@rate(rate=10)
 async def fetch_url(session: aiohttp.ClientSession, url: str):
     async with session.get(url) as response:
         return await response.json()
 
 
-@connect_timeout(timeout_ms=300)
+@timeout(connect="300ms")
 async def fetch_with_latency(session: aiohttp.ClientSession, url: str):
     async with session.get(url) as response:
         return await response.text()
@@ -67,6 +67,8 @@ async def main():
 
     print("These examples require the interceptor loaded via LD_PRELOAD.")
     print("Build the interceptor first: ./build.sh")
+    print("Run with: faultcore run -- python examples/2_http_async.py")
+    print("Or use: examples/run_with_preload.sh 2_http_async.py")
     print("\nDone.")
 
 

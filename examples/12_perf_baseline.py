@@ -53,12 +53,12 @@ def print_result(title: str, data: dict[str, float]) -> None:
 
 
 def run_benchmark(host: str, port: int, count: int, latency_ms: int) -> None:
-    faultcore.register_policy("perf_latency", latency_ms=latency_ms)
+    faultcore.register_policy("perf_latency", latency=f"{latency_ms}ms")
 
     def baseline_call(msg: str) -> str:
         return tcp_echo(host, port, msg)
 
-    @faultcore.apply_policy("perf_latency")
+    @faultcore.fault("perf_latency")
     def policy_call(msg: str) -> str:
         return tcp_echo(host, port, msg)
 
@@ -94,6 +94,6 @@ if __name__ == "__main__":
     print("=" * 64)
     run_benchmark(args.host, args.port, args.count, args.latency_ms)
     print("\nStart TCP server first:")
-    print("  python tests/integration/servers/tcp_echo_server.py --port 9000")
-    print("Run with interceptor:")
+    print("  uv run python tests/integration/servers/tcp_echo_server.py --port 9000")
+    print("Run with interceptor (from project root):")
     print("  examples/run_with_preload.sh 12_perf_baseline.py")

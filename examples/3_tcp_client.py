@@ -2,7 +2,7 @@
 import socket
 import time
 
-from faultcore import connect_timeout, rate_limit
+from faultcore import timeout, rate
 
 
 def start_echo_client(host: str, port: int, message: str) -> str:
@@ -17,12 +17,12 @@ def start_echo_client(host: str, port: int, message: str) -> str:
         sock.close()
 
 
-@rate_limit(rate=5)
+@rate(rate=5)
 def rate_limited_echo(host: str, port: int, message: str):
     return start_echo_client(host, port, message)
 
 
-@connect_timeout(timeout_ms=200)
+@timeout(connect="200ms")
 def slow_echo(host: str, port: int, message: str):
     return start_echo_client(host, port, message)
 
@@ -80,6 +80,7 @@ if __name__ == "__main__":
     print()
 
     print("Start the echo server first:")
-    print("  python tests/integration/servers/tcp_echo_server.py --port 9000")
-    print("Load the interceptor: LD_PRELOAD=./target/release/libfaultcore_interceptor.so")
+    print("  uv run python tests/integration/servers/tcp_echo_server.py --port 9000")
+    print("Load the interceptor: LD_PRELOAD=./src/faultcore/_native/<platform>/libfaultcore_interceptor.so")
+    print("Or use: examples/run_with_preload.sh 3_tcp_client.py")
     print("\nDone.")

@@ -1,10 +1,10 @@
 import asyncio
 import time
 
-from faultcore import rate_limit
+from faultcore import rate
 
 
-@rate_limit(rate=5.0)
+@rate(rate="5")
 def limited_api_call():
     return "API Response"
 

@@ -7,22 +7,22 @@ except ImportError:
     print("requests not installed. Install with: pip install requests")
     raise
 
-from faultcore import connect_timeout, rate_limit
+from faultcore import timeout, rate
 
 
-@rate_limit(rate=10)
+@rate(rate="10")
 def fetch_github_api():
     response = requests.get("https://api.github.com/repos/python/cpython", timeout=10)
     return response.json()
 
 
-@rate_limit(rate=5)
+@rate(rate="5")
 def fetch_health():
     response = requests.get("https://httpbin.org/get", timeout=10)
     return response.status_code
 
 
-@connect_timeout(timeout_ms=500)
+@timeout(connect="500ms")
 def fetch_with_latency():
     response = requests.get("https://httpbin.org/delay/1", timeout=10)
     return response.status_code
@@ -78,4 +78,6 @@ if __name__ == "__main__":
 
     print("These examples require the interceptor loaded via LD_PRELOAD.")
     print("Build the interceptor first: ./build.sh")
+    print("Run with: faultcore run -- python examples/1_http_requests.py")
+    print("Or use: examples/run_with_preload.sh 1_http_requests.py")
     print("\nDone.")

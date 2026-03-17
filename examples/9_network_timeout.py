@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 import time
 
-from faultcore import connect_timeout
+from faultcore import timeout
 
 
-@connect_timeout(timeout_ms=2000)
+@timeout(connect="2000ms")
 def test_latency_2000ms():
     print(" Test 1: 2000ms Latency ".center(60, "="))
     start = time.time()
@@ -19,7 +19,7 @@ def simulate_network_call():
     return "data"
 
 
-@connect_timeout(timeout_ms=500)
+@timeout(connect="500ms")
 def test_latency_500ms():
     print("\n Test 2: 500ms Latency ".center(60, "="))
     start = time.time()
@@ -29,7 +29,7 @@ def test_latency_500ms():
     return elapsed
 
 
-@connect_timeout(timeout_ms=100)
+@timeout(connect="100ms")
 def test_latency_100ms():
     print("\n Test 3: 100ms Latency ".center(60, "="))
     start = time.time()
@@ -50,7 +50,7 @@ def test_no_latency():
 
 if __name__ == "__main__":
     print("\nNetwork Timeout Examples using faultcore")
-    print("Uses @faultcore.connect_timeout decorator to configure network timeout policy via SHM")
+    print("Uses @faultcore.timeout decorator to configure network timeout policy via SHM")
     print("Make sure to run with LD_PRELOAD (Linux)")
     print()
 

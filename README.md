@@ -5,8 +5,8 @@ High-performance fault injection and network simulation for Python, backed by Ru
 ## Overview
 
 `faultcore` provides Python decorators and policy management for:
-- network timeouts (`connect_timeout`, `recv_timeout`);
-- bandwidth throttling (`rate_limit`);
+- network timeouts (`timeout`);
+- bandwidth throttling (`rate`);
 - latency, jitter, packet loss, and burst loss;
 - `FaultOSI`: OSI-pragmatic L1..L7 fault pipeline in `faultcore_network`;
 - transparent socket interception on Linux via `faultcore run`.
@@ -43,11 +43,11 @@ Minimal usage:
 ```python
 import faultcore
 
-@faultcore.connect_timeout(timeout_ms=200)
+@faultcore.timeout(connect="200ms")
 def slow_operation():
     return "ok"
 
-@faultcore.rate_limit(rate=10)
+@faultcore.rate(rate="10mbps")
 def network_operation():
     return "ok"
 ```

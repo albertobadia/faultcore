@@ -89,9 +89,9 @@ Current files in `tests/integration/` are CLI-oriented network probes (not pytes
 They are invoked with explicit args from `tests.sh`, for example:
 
 ```bash
-python tests/integration/test_latency.py --host 127.0.0.1 --port 9000 --mode latency --count 3
-python tests/integration/test_timeout.py --host 127.0.0.1 --port 9000 --mode recv --timeout 500
-python tests/integration/test_bandwidth.py --host 127.0.0.1 --port 9000 --mode throughput --messages 20
+uv run python tests/integration/test_latency.py --host 127.0.0.1 --port 9000 --mode latency --count 3
+uv run python tests/integration/test_timeout.py --host 127.0.0.1 --port 9000 --mode recv --timeout 500
+uv run python tests/integration/test_bandwidth.py --host 127.0.0.1 --port 9000 --mode throughput --messages 20
 ```
 
 ## Running Examples
@@ -103,14 +103,14 @@ faultcore run -- python examples/1_http_requests.py
 ```
 
 Some examples expect local servers:
-- TCP echo server: `python tests/integration/servers/tcp_echo_server.py --host 127.0.0.1 --port 9000`
-- UDP echo server: `python tests/integration/servers/udp_echo_server.py --host 127.0.0.1 --port 9001`
-- HTTP test server: `python -m uvicorn tests.integration.servers.http_server:app --host 127.0.0.1 --port 8000`
+- TCP echo server: `uv run python tests/integration/servers/tcp_echo_server.py --host 127.0.0.1 --port 9000`
+- UDP echo server: `uv run python tests/integration/servers/udp_echo_server.py --host 127.0.0.1 --port 9001`
+- HTTP test server: `uv run python -m uvicorn tests.integration.servers.http_server:app --host 127.0.0.1 --port 8000`
 
 Advanced/manual path (debugging only):
 
 ```bash
-examples/run_with_preload.sh 01_http_requests.py
+examples/run_with_preload.sh 1_http_requests.py
 ```
 
 ## Example Set
@@ -131,11 +131,11 @@ examples/run_with_preload.sh 01_http_requests.py
 
 ## Notes on Rate Semantics
 
-`rate_limit(rate=...)` configures bandwidth in bps (string units or numeric conversion), not request-per-second quotas.
+`rate(rate=...)` configures bandwidth in bps (string units or numeric conversion), not request-per-second quotas.
 Example output text may refer to "rate setting" or throughput effects.
 
 ## Lint Modes
 
 `lint.sh` has two modes:
-- `sh lint.sh` (or `sh lint.sh check`): verification only, runs `cargo clippy` and `ruff check` + `ruff format --check`.
-- `sh lint.sh fix`: applies `ruff check --fix` + `ruff format` and runs `cargo clippy`.
+- `sh lint.sh` (or `sh lint.sh check`): verification only, runs `cargo clippy` then `ruff check` + `ruff format --check`.
+- `sh lint.sh fix`: applies fixes with `cargo clippy`, `ruff check --fix` + `ruff format`.

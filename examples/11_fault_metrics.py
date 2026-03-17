@@ -18,13 +18,13 @@ def tcp_echo(host: str, port: int, message: str) -> str:
 
 
 def run_demo(host: str, port: int) -> None:
-    faultcore.register_policy("policy_demo", latency_ms=120)
+    faultcore.register_policy("policy_demo", latency="120ms")
 
-    @faultcore.apply_policy("policy_demo")
+    @faultcore.fault("policy_demo")
     def call_once(tag: str) -> str:
         return tcp_echo(host, port, f"metrics-{tag}")
 
-    with faultcore.fault_context("policy_demo"):
+    with faultcore.policy_context("policy_demo"):
         started = time.time()
         resp = call_once("a")
         elapsed_ms = (time.time() - started) * 1000
@@ -39,6 +39,6 @@ if __name__ == "__main__":
     print("=" * 60)
     run_demo("127.0.0.1", 9000)
     print("\nStart TCP server first:")
-    print("  python tests/integration/servers/tcp_echo_server.py --port 9000")
-    print("Run with interceptor:")
+    print("  uv run python tests/integration/servers/tcp_echo_server.py --port 9000")
+    print("Run with interceptor (from project root):")
     print("  examples/run_with_preload.sh 11_fault_metrics.py")

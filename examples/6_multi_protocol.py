@@ -7,7 +7,7 @@ try:
 except ImportError:
     requests = None
 
-from faultcore import connect_timeout, rate_limit
+from faultcore import timeout, rate
 
 
 def tcp_echo(host: str, port: int, message: str) -> str:
@@ -22,12 +22,12 @@ def tcp_echo(host: str, port: int, message: str) -> str:
         sock.close()
 
 
-@rate_limit(rate=10)
+@rate(rate=10)
 def rate_limited_tcp(host: str, port: int, message: str):
     return tcp_echo(host, port, message)
 
 
-@rate_limit(rate=5)
+@rate(rate=5)
 def rate_limited_http(url: str):
     if requests is None:
         raise ImportError("requests is not installed")
@@ -35,7 +35,7 @@ def rate_limited_http(url: str):
     return response.status_code
 
 
-@connect_timeout(timeout_ms=250)
+@timeout(connect="250ms")
 def latency_injected_call(callable_func, *args, **kwargs):
     return callable_func(*args, **kwargs)
 
@@ -102,8 +102,8 @@ def burst_scenario(host: str, tcp_port: int):
 def mixed_policy_scenario(host: str, tcp_port: int):
     print("\n--- Scenario 4: Mixed policies (rate limit + latency) ---")
 
-    @rate_limit(rate=3)
-    @connect_timeout(timeout_ms=150)
+    @rate(rate=3)
+    @timeout(connect="150ms")
     def throttled_and_slow_call(msg: str):
         return tcp_echo(host, tcp_port, msg)
 
@@ -134,8 +134,9 @@ if __name__ == "__main__":
     mixed_policy_scenario(tcp_host, tcp_port)
 
     print("\nNote: Start the TCP echo server first:")
-    print("  python tests/integration/servers/tcp_echo_server.py --port 9000")
-    print("Load the interceptor: LD_PRELOAD=./target/release/libfaultcore_interceptor.so")
+    print("  uv run python tests/integration/servers/tcp_echo_server.py --port 9000")
+    print("Load the interceptor: LD_PRELOAD=./src/faultcore/_native/<platform>/libfaultcore_interceptor.so")
+    print("Or use: examples/run_with_preload.sh 6_multi_protocol.py")
     print("\n" + "=" * 60)
     print(" All scenarios completed! ".center(60, "="))
     print("=" * 60)
