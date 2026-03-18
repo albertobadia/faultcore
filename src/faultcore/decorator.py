@@ -108,17 +108,16 @@ class FaultWrapper:
         if self._policy_name:
             shm.write_policy_name(self._policy_name)
 
-        result = None
-        is_awaitable = False
+        keeps_shm_until_await = False
         try:
             apply_fault_profiles(shm, tid, self._profiles, started_monotonic_ns=time.monotonic_ns())
             result = self._func(*args, **kwargs)
-            is_awaitable = inspect.isawaitable(result)
-            if is_awaitable:
+            if inspect.isawaitable(result):
+                keeps_shm_until_await = True
                 return self._run_async(result, shm, tid)
             return result
         finally:
-            if not is_awaitable:
+            if not keeps_shm_until_await:
                 shm.clear(tid)
 
     async def _run_async(self, awaitable: Any, shm: Any, tid: int) -> Any:

@@ -231,7 +231,8 @@ def test_render_report_html_embeds_event_metadata():
     assert 'id="run-data"' in html_text
     assert '"stdout_tail": "hello"' in html_text
     assert "Network Metrics" in html_text
-    assert "Per Function/Site" in html_text
+    assert "Per Site" in html_text
+    assert "Per Function" in html_text
     assert "Network Timeline" in html_text
     assert "Applied Configuration" in html_text
     assert "charts-loading" in html_text

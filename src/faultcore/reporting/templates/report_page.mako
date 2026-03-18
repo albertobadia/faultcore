@@ -51,7 +51,8 @@
     <div class="tabs" role="tablist" aria-label="Report tabs">
       <button type="button" class="tab-btn active" data-tab-target="charts">Network Timeline</button>
       <button type="button" class="tab-btn" data-tab-target="network">Network Metrics</button>
-      <button type="button" class="tab-btn" data-tab-target="site-details">Per Function/Site</button>
+      <button type="button" class="tab-btn" data-tab-target="site-details">Per Site</button>
+      <button type="button" class="tab-btn" data-tab-target="function-details">Per Function</button>
       <button type="button" class="tab-btn" data-tab-target="timeline">Decisions Timeline</button>
     </div>
     <div class="tab-content">
@@ -62,7 +63,10 @@
         <div id="network-loading" class="muted">Initializing network metrics...</div>
       </section>
       <section id="site-details" class="tab-panel" data-tab-panel="site-details">
-        <div id="site-details-loading" class="muted">Initializing per-function details...</div>
+        <div id="site-details-loading" class="muted">Initializing per-site details...</div>
+      </section>
+      <section id="function-details" class="tab-panel" data-tab-panel="function-details">
+        <div id="function-details-loading" class="muted">Initializing per-function details...</div>
       </section>
       <section id="timeline" class="tab-panel tab-panel-timeline" data-tab-panel="timeline">
         <div id="timeline-loading" class="muted">Initializing decisions timeline...</div>

@@ -9,8 +9,15 @@
     eventPageSize: 50
   };
 
-  const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
-  const safe = (str) => String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  const htmlEntities = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  };
+  const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+  const safe = (value) => String(value).replace(/[&<>"']/g, (char) => htmlEntities[char]);
   
   const intFmt = new Intl.NumberFormat("en-US");
   const dec2Fmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
@@ -55,31 +62,44 @@
     return intFmt.format(Math.round(v));
   };
 
+  const chartLabel = (label) => String(label)
+    .replace(/_/g, " ")
+    .replace(/\s*\((ns|us|ms|s|bps|kbps|mbps|gbps|bytes?)\)\s*$/i, "")
+    .replace(/\s+(ns|us|ms|s|bps|kbps|mbps|gbps)\s*$/i, "")
+    .trim();
+
   const renderSVG = (series, title, width = 760, height = 120, isMulti = false, events = null) => {
     const xPadding = 10;
     const yPadding = 10;
     const innerWidth = width - xPadding * 2;
     const innerHeight = height - yPadding * 2;
-    
-    let minV = Infinity, maxV = -Infinity, maxLen = 0;
+
+    let minV = Infinity;
+    let maxV = -Infinity;
+    let maxLen = 0;
     const seriesEntries = isMulti ? Object.entries(series) : [[title, series]];
-    
+
     seriesEntries.forEach(([_, values]) => {
       values.forEach(v => { minV = Math.min(minV, v); maxV = Math.max(maxV, v); });
       maxLen = Math.max(maxLen, values.length);
     });
-    
+
     if (maxLen === 0) return "<div class='muted'>No data</div>";
-    const scale = (maxV - minV) || 1;
+    const useLogScale = isMulti;
+    const logOffset = useLogScale ? Math.max(0, -minV) : 0;
+    const transformY = useLogScale ? (v) => Math.log1p(v + logOffset) : (v) => v;
+    const transformedMin = transformY(minV);
+    const transformedMax = transformY(maxV);
+    const scale = (transformedMax - transformedMin) || 1;
     const span = Math.max(1, maxLen - 1);
-    
+
     const colors = ["#68a7db", "#6bc46d", "#d2b35a", "#de6f6f", "#9ac0ff", "#e9a96d"];
     let colorIdx = 0;
-    
+
     const polylines = seriesEntries.map(([name, values]) => {
       const pts = values.map((v, i) => {
         const x = (i / span) * innerWidth + xPadding;
-        const y = (1 - (v - minV) / scale) * innerHeight + yPadding;
+        const y = (1 - (transformY(v) - transformedMin) / scale) * innerHeight + yPadding;
         return `${x},${y}`;
       }).join(" ");
       const color = colors[colorIdx++ % colors.length];
@@ -88,17 +108,19 @@
 
     const legend = isMulti ? `
       <div class='multi-legend'>
-        ${seriesEntries.map((e, i) => `<span class='multi-legend-item'><span class='multi-legend-dot' style='background:${colors[i % colors.length]}'></span>${safe(e[0])}</span>`).join("")}
+        ${seriesEntries.map((e, i) => `<span class='multi-legend-item'><span class='multi-legend-dot' style='background:${colors[i % colors.length]}'></span>${safe(chartLabel(e[0]))}</span>`).join("")}
       </div>` : "";
+    const scaleMode = useLogScale ? "log1p" : "linear";
+    const titleSuffix = useLogScale ? " (log scale)" : "";
 
     return `
       <div class='chart-wrap'>
-        <div class='chart-inline-title'>${safe(title)}</div>
+        <div class='chart-inline-title'>${safe(chartLabel(title) + titleSuffix)}</div>
         ${legend}
         <svg viewBox='0 0 ${width} ${height}' preserveAspectRatio='none' width='100%' height='${height}' 
              data-series='${safe(JSON.stringify(series))}' 
-             data-events='${events ? safe(JSON.stringify(events)) : ""}'
-             data-is-multi='${isMulti}' data-title='${safe(title)}'>
+              data-events='${events ? safe(JSON.stringify(events)) : ""}'
+             data-is-multi='${isMulti}' data-title='${safe(title)}' data-scale-mode='${scaleMode}'>
           <rect x='0' y='0' width='100%' height='100%' fill='#17150f'/>
           ${polylines}
           <line class='chart-hover-line' x1='0' y1='${yPadding}' x2='0' y2='${height - yPadding}' stroke='#b7a982' stroke-width='1' stroke-dasharray='3 3' visibility='hidden'/>
@@ -114,44 +136,145 @@
     const tool = runData.tool || {};
     const env = runData.environment || {};
     const summ = runData.summary || {};
+    const net = runData.network_metrics || {};
     const fc = runData.faultcore || {};
     const ic = runData.interceptor || {};
-    const scenItems = runData.scenarios || [];
+    const eventsTotal = Number(net.recorded_events_total || net.total_events || 0);
+    const durationMs = Number(runData.duration_ms || 0);
+    const durationSeconds = durationMs > 0 ? durationMs / 1000 : 0;
+    const rawFaultEvents = Number(summ.fault_events_total || net.fault_events_total || 0);
+    const decisionCounts = {
+      delay_ns: Number(net.delay_count || 0),
+      drop: Number(net.drop_count || 0),
+      timeout_ms: Number(net.timeout_count || 0),
+      stage_reorder: Number(net.reorder_count || 0),
+      duplicate: Number(net.duplicate_count || 0),
+      nxdomain: Number(net.nxdomain_count || 0),
+      error: Number(net.error_count || 0),
+      connection_error_kind: Number(net.connection_error_count || 0)
+    };
+    const decisionEntries = Object.entries(decisionCounts).filter(([, value]) => value > 0);
+    const decisionsTotal = decisionEntries.reduce((acc, [, value]) => acc + value, 0);
+    const faultEventsTotal = rawFaultEvents > 0 ? rawFaultEvents : decisionsTotal;
+    const faultRatePct = eventsTotal > 0 ? (faultEventsTotal / eventsTotal) * 100 : 0;
+    const faultEventsPerSec = durationSeconds > 0 ? faultEventsTotal / durationSeconds : 0;
+    const topFaults = decisionEntries
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([name, value]) => {
+        const label = name
+          .replace(/_ns|_ms/g, "")
+          .replace("stage_reorder", "reorder")
+          .replace("connection_error_kind", "conn_error")
+          .replace(/_/g, " ");
+        const pct = decisionsTotal > 0 ? (value / decisionsTotal) * 100 : 0;
+        return `${safe(label)} ${dec2Fmt.format(pct)}%`;
+      });
+
+    const siteMetrics = runData.site_metrics || {};
+    const functionMetrics = runData.function_metrics || {};
+    const series = runData.network_series || {};
+    const affectedSitesCount = Object.keys(siteMetrics).length || (runData.observed_sites || []).length;
+    const affectedFunctionsCount = Object.keys(functionMetrics).length;
+    const protocolSet = new Set();
+    ["tcp", "udp", "http"].forEach((proto) => {
+      const hasMetric = Object.keys(net).some((key) => key.startsWith(`${proto}_`));
+      const hasSeries = Object.keys(series).some((key) => key.startsWith(`${proto}_`));
+      if (hasMetric || hasSeries) protocolSet.add(proto);
+    });
+    const affectedProtocolsCount = protocolSet.size;
+
+    const streamIntegrity = runData.events_truncated
+      ? "partial"
+      : ((runData.events || []).length > 0 ? "complete" : "none");
+
+    const scenarioName = (tool.command && tool.command.length) ? tool.command[0].split("/").pop() : "none";
+    const fullCommand = safe((tool.command || []).join(" "));
 
     ov.innerHTML = `
-      <div class="compact-grid">
-        <div class="compact-card">
-          <strong>Run</strong>
-          <div>run_id=${safe(runData.run_id)}</div>
-          <div>status=<span class="status">${safe(runData.status)}</span></div>
-          <div>duration_ms=${runData.duration_ms}</div>
-          <div>started_at=${safe(runData.started_at)}</div>
+      <div class="overview-shell">
+        <div class="overview-kpi-grid">
+          <div class="overview-kpi-card">
+            <div class="overview-kpi-label">Run status</div>
+            <div class="overview-kpi-value"><span class="status">${safe(runData.status || "unknown")}</span></div>
+          </div>
+          <div class="overview-kpi-card">
+            <div class="overview-kpi-label">Duration</div>
+            <div class="overview-kpi-value">${humanizeMs(durationMs)}</div>
+          </div>
+          <div class="overview-kpi-card overview-kpi-card-emphasis">
+            <div class="overview-kpi-label">Fault events</div>
+            <div class="overview-kpi-value">${intFmt.format(Math.round(faultEventsTotal))}</div>
+          </div>
+          <div class="overview-kpi-card overview-kpi-card-emphasis">
+            <div class="overview-kpi-label">Fault rate</div>
+            <div class="overview-kpi-value">${dec2Fmt.format(faultRatePct)}%</div>
+          </div>
         </div>
-        <div class="compact-card compact-card-context">
-          <strong>Execution Context</strong>
-          <div>command=<code>${safe((tool.command || []).join(" "))}</code></div>
-          <div>os/arch=${safe(env.os)}/${safe(env.arch)}</div>
-          <div>python=${safe(env.python_version)}</div>
-          <div>interceptor_path=<code>${safe(ic.path)}</code></div>
+        <div class="overview-strip-grid">
+          <div class="overview-strip-card">
+            <div class="overview-strip-title">Top faults</div>
+            <div class="overview-strip-value">${topFaults.length ? topFaults.join(" | ") : "none"}</div>
+          </div>
+          <div class="overview-strip-card">
+            <div class="overview-strip-title">Affected scope</div>
+            <div class="overview-strip-value">${intFmt.format(affectedProtocolsCount)} protocols | ${intFmt.format(affectedSitesCount)} sites | ${intFmt.format(affectedFunctionsCount)} functions</div>
+          </div>
+          <div class="overview-strip-card">
+            <div class="overview-strip-title">Fault density</div>
+            <div class="overview-strip-value">${dec2Fmt.format(faultEventsPerSec)} events/s</div>
+          </div>
         </div>
-        <div class="compact-card">
-          <strong>Fault Summary</strong>
-          <div>tests_total=${safe(summ.tests_total || 0)}</div>
-          <div>tests_passed=${safe(summ.tests_passed || 0)}</div>
-          <div>tests_failed=${safe(summ.tests_failed || 0)}</div>
-          <div>errors=${safe(summ.errors || 0)}</div>
-          <div>fault_events_total=${safe(summ.fault_events_total || 0)}</div>
+
+        <div class="overview-main-grid">
+          <section class="overview-panel">
+            <h3>Health</h3>
+            <ul class="kv-list">
+              <li><span>tests_failed</span><span>${safe(summ.tests_failed || 0)}</span></li>
+              <li><span>errors</span><span>${safe(summ.errors || 0)}</span></li>
+              <li><span>event_stream</span><span>${safe(streamIntegrity)}</span></li>
+            </ul>
+          </section>
+          <section class="overview-panel">
+            <h3>Execution context</h3>
+            <ul class="kv-list">
+              <li><span>scenario</span><span>${safe(scenarioName)}</span></li>
+              <li><span>os/arch</span><span>${safe(env.os)}/${safe(env.arch)}</span></li>
+              <li><span>python</span><span>${safe(env.python_version)}</span></li>
+              <li><span>seed</span><span>${safe(fc.seed || 0)}</span></li>
+            </ul>
+          </section>
         </div>
-        <div class="compact-card">
-          <strong>Applied Configuration</strong>
-          <ul class="kv-list">
-            <li>seed=${safe(fc.seed || 0)}</li>
-            <li>shm_open_mode=${safe(fc.shm_open_mode)}</li>
-            <li>record_replay_mode=${safe(fc.record_replay_mode || "off")}</li>
-            <li>interceptor_mode=${safe(ic.mode || "none")}</li>
-          </ul>
-          <div>scenarios=${scenItems.map(s => `${safe(s.name)}:${safe(s.status)}`).join(", ") || "none"}</div>
-        </div>
+
+        <details class="overview-tech-details">
+          <summary>Applied Configuration & Technical Details</summary>
+          <div class="overview-tech-grid">
+            <div>
+              <div class="overview-tech-label">command</div>
+              <code>${fullCommand || "none"}</code>
+            </div>
+            <div>
+              <div class="overview-tech-label">interceptor_path</div>
+              <code>${safe(ic.path || "")}</code>
+            </div>
+            <div>
+              <div class="overview-tech-label">interceptor_mode</div>
+              <div>${safe(ic.mode || "none")}</div>
+            </div>
+            <div>
+              <div class="overview-tech-label">interceptor_active</div>
+              <div>${safe(ic.active || false)}</div>
+            </div>
+            <div>
+              <div class="overview-tech-label">shm_open_mode</div>
+              <div>${safe(fc.shm_open_mode || "")}</div>
+            </div>
+            <div>
+              <div class="overview-tech-label">record_replay_mode</div>
+              <div>${safe(fc.record_replay_mode || "off")}</div>
+            </div>
+          </div>
+        </details>
       </div>`;
   };
 
@@ -195,7 +318,7 @@
       groups[g].push([k, v]);
     });
 
-    const groupsHTML = Object.entries(groups).map(([name, items]) => {
+    const buildGroup = (name, items) => {
       if (!items.length) return "";
       const sorted = items.sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, 10);
       const maxVal = Math.max(...sorted.map(it => Math.abs(it[1]))) || 1;
@@ -205,15 +328,28 @@
           <div class="metric-row">
             <div class="metric-name">${safe(k.replace(/_/g, " "))}</div>
             <div class="metric-track"><div class="metric-fill" style="width:${pct}%"></div></div>
-            <div class="metric-value">${humanize(k, v)}</div>
-          </div>`;
+             <div class="metric-value">${humanize(k, v)}</div>
+           </div>`;
       }).join("");
       return `<div class="metric-group"><div class="metric-group-title">${safe(name)}</div>${rows}</div>`;
-    }).join("");
+    };
+
+    const leftBlocks = [
+      buildGroup("Events/Counters", groups["Events/Counters"]),
+      buildGroup("Other", groups.Other)
+    ].join("");
+
+    const rightBlocks = [
+      buildGroup("Traffic", groups.Traffic),
+      buildGroup("Latency/Jitter", groups["Latency/Jitter"])
+    ].join("");
 
     return `
       <div class='network-kpi-grid'>${kpiHTML}</div>
-      <div class='metric-groups-balanced'>${groupsHTML}</div>`;
+      <div class='metric-groups-balanced'>
+        <div class='metric-left-stack'>${leftBlocks}</div>
+        <div class='metric-right-stack'>${rightBlocks}</div>
+      </div>`;
   };
 
   const renderTab = (id) => {
@@ -251,23 +387,22 @@
         if (Object.keys(map).length >= 2) {
           const chartSeries = {};
           order.forEach(p => { if (map[p]) { chartSeries[p] = map[p]; consumed.add(`${p}_${base}`); consumed.add(`${p}_${base}_series`); } });
-          panel.innerHTML += renderSVG(chartSeries, base.replace(/_/g, " "), 760, 120, true, faultEventsSeries);
+          panel.innerHTML += renderSVG(chartSeries, base, 760, 120, true, faultEventsSeries);
         }
       });
 
       if (Object.keys(thrGroup).length > 0) {
-        panel.innerHTML += renderSVG(thrGroup, "Throughput Timeline (bps)", 760, 120, true, faultEventsSeries);
+        panel.innerHTML += renderSVG(thrGroup, "Throughput Timeline", 760, 120, true, faultEventsSeries);
         Object.keys(thrGroup).forEach(fn => consumed.add(`${fn}_throughput_bps`));
       }
 
       filtered.sort().forEach(([name, values]) => {
         if (!consumed.has(name) && !name.includes("per_bucket") && !name.includes("cumulative")) {
-          panel.innerHTML += renderSVG(values, name.replace(/_/g, " "), 760, 120, false, faultEventsSeries);
+          panel.innerHTML += renderSVG(values, name, 760, 120, false, faultEventsSeries);
         }
       });
 
-    }
- else if (id === "network") {
+    } else if (id === "network") {
       panel.innerHTML = renderMetricGrid(runData.network_metrics || {});
       panel.innerHTML += `
         <div class='logs-grid'>
@@ -275,7 +410,9 @@
           <div class='log-panel'><div class='log-title'>stderr</div><pre><code>${safe(runData.logs?.stderr_tail || "No stderr")}</code></pre></div>
         </div>`;
     } else if (id === "site-details") {
-      renderSiteAndFunctionDetails(panel);
+      renderSiteAndFunctionDetails(panel, "site");
+    } else if (id === "function-details") {
+      renderSiteAndFunctionDetails(panel, "function");
     } else if (id === "timeline") {
       renderTimeline(panel);
     }
@@ -284,19 +421,14 @@
     attachChartInteractions(panel);
   };
 
-  const renderSiteAndFunctionDetails = (container) => {
+  const renderSiteAndFunctionDetails = (container, detailType) => {
     const sites = runData.site_metrics || {};
     const funcs = runData.function_metrics || {};
     const duration = runData.duration_ms || 1;
-    
-    container.innerHTML = `
-      <div class="details-toolbar">
-        <input id="site-search" type="search" placeholder="Search function/site..." />
-        <button id="site-expand-all" type="button">Expand all</button>
-        <button id="site-collapse-all" type="button">Collapse all</button>
-      </div>
-      <div class="details-stack">
-        ${Object.entries(sites).sort((a,b) => (b[1].fault_events||0) - (a[1].fault_events||0)).map(([name, data]) => {
+    const isSiteView = detailType === "site";
+    const searchPlaceholder = isSiteView ? "Search site..." : "Search function...";
+    const detailsHTML = isSiteView
+      ? Object.entries(sites).sort((a, b) => (b[1].fault_events || 0) - (a[1].fault_events || 0)).map(([name, data]) => {
           const m = { ...data, ...data.decision_counts };
           m.event_rate_eps = (data.total_events || 0) * 1000 / duration;
           return `
@@ -304,13 +436,13 @@
             <summary>Site: ${safe(name)} - Faults: ${data.fault_events} (${data.fault_rate_pct}%)</summary>
             <div class="site-content">
               ${renderMetricGrid(m)}
-              ${data.delay_series_ns ? renderSVG(data.delay_series_ns, "Delay Timeline (ns)", 760, 120, false, data.fault_events_per_bucket) : ""}
+              ${data.delay_series_ns ? renderSVG(data.delay_series_ns, "Delay Timeline", 760, 120, false, data.fault_events_per_bucket) : ""}
               ${data.fault_flag_series ? renderSVG({fault: data.fault_flag_series, continue: data.continue_flag_series}, "Decisions (0/1)", 760, 80, true, data.fault_events_per_bucket) : ""}
               ${data.events_per_bucket ? renderSVG({events: data.events_per_bucket, fault_events: data.fault_events_per_bucket}, "Bucket Counters", 760, 100, true, data.fault_events_per_bucket) : ""}
             </div>
           </details>`;
-        }).join("")}
-        ${Object.entries(funcs).sort().map(([name, data]) => {
+        }).join("")
+      : Object.entries(funcs).sort().map(([name, data]) => {
           const m = { ...data };
           m.total_events = (data.series_latency_ms || []).length;
           return `
@@ -318,10 +450,19 @@
             <summary>Func: ${safe(name)} - Throughput: ${humanize("throughput_bps", data.throughput_bps || 0)}</summary>
             <div class="site-content">
               ${renderMetricGrid(m)}
-              ${Object.entries(data).filter(([k]) => k.startsWith("series_")).map(([k, v]) => renderSVG(v, k.slice(7).replace(/_/g, " "), 760, 120, false, data.fault_events_per_bucket)).join("")}
+              ${Object.entries(data).filter(([k]) => k.startsWith("series_")).map(([k, v]) => renderSVG(v, k.slice(7), 760, 120, false, data.fault_events_per_bucket)).join("")}
             </div>
           </details>`;
-        }).join("")}
+        }).join("");
+    
+    container.innerHTML = `
+      <div class="details-toolbar">
+        <input id="site-search" type="search" placeholder="${searchPlaceholder}" />
+        <button id="site-expand-all" type="button">Expand all</button>
+        <button id="site-collapse-all" type="button">Collapse all</button>
+      </div>
+      <div class="details-stack">
+        ${detailsHTML}
       </div>`;
       
     const search = container.querySelector("#site-search");
@@ -330,7 +471,9 @@
       const q = search.value.toLowerCase();
       items.forEach(it => it.style.display = it.dataset.name.toLowerCase().includes(q) ? "" : "none");
     });
-    container.querySelector("#site-expand-all").onclick = () => items.forEach(it => { if(it.style.display !== "none") it.open = true; });
+    container.querySelector("#site-expand-all").onclick = () => items.forEach((it) => {
+      if (it.style.display !== "none") it.open = true;
+    });
     container.querySelector("#site-collapse-all").onclick = () => items.forEach(it => it.open = false);
   };
 
@@ -353,13 +496,15 @@
     const search = container.querySelector("#events-search");
     const info = container.querySelector("#events-info");
     const sizeSelect = container.querySelector("#events-page-size");
+    const prevButton = container.querySelector("#events-prev");
+    const nextButton = container.querySelector("#events-next");
 
     const update = () => {
       const q = search.value.toLowerCase();
       state.filteredEvents = state.events.filter(e => 
         e.name.toLowerCase().includes(q) || e.type.toLowerCase().includes(q) || JSON.stringify(e.details).toLowerCase().includes(q)
       );
-      state.eventPageSize = parseInt(sizeSelect.value);
+      state.eventPageSize = parseInt(sizeSelect.value, 10);
       const start = (state.eventPage - 1) * state.eventPageSize;
       const page = state.filteredEvents.slice(start, start + state.eventPageSize);
       
@@ -372,16 +517,16 @@
           <td><code>${safe(JSON.stringify(e.details))}</code></td>
         </tr>`).join("");
       
-      const totalPages = Math.ceil(state.filteredEvents.length / state.eventPageSize);
+      const totalPages = Math.max(1, Math.ceil(state.filteredEvents.length / state.eventPageSize));
       info.textContent = `Page ${state.eventPage} / ${totalPages} (${state.filteredEvents.length} matches)`;
-      container.querySelector("#events-prev").disabled = state.eventPage <= 1;
-      container.querySelector("#events-next").disabled = state.eventPage >= totalPages;
+      prevButton.disabled = state.eventPage <= 1;
+      nextButton.disabled = state.eventPage >= totalPages;
     };
 
     search.oninput = () => { state.eventPage = 1; update(); };
     sizeSelect.onchange = () => { state.eventPage = 1; update(); };
-    container.querySelector("#events-prev").onclick = () => { state.eventPage--; update(); };
-    container.querySelector("#events-next").onclick = () => { state.eventPage++; update(); };
+    prevButton.onclick = () => { state.eventPage -= 1; update(); };
+    nextButton.onclick = () => { state.eventPage += 1; update(); };
     
     update();
   };
@@ -398,6 +543,7 @@
       const eventSeries = eventAttr ? JSON.parse(eventAttr) : [];
       const isMulti = svg.getAttribute("data-is-multi") === "true";
       const title = svg.getAttribute("data-title");
+      const scaleMode = svg.getAttribute("data-scale-mode") || "linear";
       
       const data = isMulti ? Object.values(series)[0] : series;
       const len = data.length;
@@ -414,7 +560,7 @@
         let txt = isMulti ? Object.entries(series).map(([n,v]) => `${n}: ${humanize(n, v[idx])}`).join(" | ") : humanize(title, series[idx]);
         if (eventSeries[idx]) txt += ` | Events: ${eventSeries[idx]}`;
         
-        const content = `#${idx + 1} | ${txt}`;
+        const content = `#${idx + 1} | ${txt} | Y-scale: ${scaleMode}`;
         tooltip.textContent = content;
         tooltip.style.display = "block";
         

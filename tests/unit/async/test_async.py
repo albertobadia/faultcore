@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 import faultcore
 
 
@@ -44,11 +46,8 @@ class TestAsyncChaosWrapper:
             await asyncio.sleep(0.001)
             raise RuntimeError("error during await")
 
-        try:
+        with pytest.raises(RuntimeError, match="error during await"):
             await failing_await()
-            raise AssertionError("Should have raised")
-        except RuntimeError as e:
-            assert "error during await" in str(e)
 
     def test_sync_function_returns_async(self):
         @faultcore.timeout(connect="1s")
@@ -70,20 +69,16 @@ class TestAsyncErrorPropagation:
             await asyncio.sleep(0.01)
             raise RuntimeError("async error")
 
-        try:
+        with pytest.raises(RuntimeError, match="^async error$"):
             await failing_async()
-        except RuntimeError as e:
-            assert str(e) == "async error"
 
     def test_sync_timeout_error_propagation(self):
         @faultcore.timeout(connect="1s")
         def failing_func():
             raise RuntimeError("sync error")
 
-        try:
+        with pytest.raises(RuntimeError, match="^sync error$"):
             failing_func()
-        except RuntimeError as e:
-            assert str(e) == "sync error"
 
 
 class TestAsyncFaultContext:
