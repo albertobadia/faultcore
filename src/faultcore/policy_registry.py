@@ -11,14 +11,18 @@ from faultcore.profile_parsers import (
     build_connection_error_profile,
     build_correlated_loss_profile,
     build_direction_profile,
+    build_dns_profile,
     build_half_open_profile,
     build_packet_duplicate_profile,
     build_packet_reorder_profile,
     build_schedule_profile,
     build_session_budget_profile,
     build_target_profile,
+    parse_burst_loss,
+    parse_duration,
     parse_packet_loss,
     parse_rate,
+    parse_seed,
 )
 
 _POLICY_REGISTRY: dict[str, dict[str, Any]] = {}
@@ -259,8 +263,6 @@ def _coerce_timeout_pair(timeout: dict[str, Any] | None) -> tuple[int, int]:
         return (0, 0)
     connect = timeout.get("connect")
     recv = timeout.get("recv")
-    from faultcore.profile_parsers import parse_duration
-
     connect_ms = parse_duration(connect) if connect is not None else 0
     recv_ms = parse_duration(recv) if recv is not None else 0
     return (connect_ms, recv_ms)
@@ -333,22 +335,14 @@ def register_policy(
 
     policy: dict[str, Any] = {}
     if seed is not None:
-        from faultcore.profile_parsers import parse_seed
-
         policy["seed"] = parse_seed(seed)
     if latency is not None:
-        from faultcore.profile_parsers import parse_duration
-
         policy["latency"] = parse_duration(latency)
     if jitter is not None:
-        from faultcore.profile_parsers import parse_duration
-
         policy["jitter"] = parse_duration(jitter)
     if packet_loss is not None:
         policy["packet_loss_ppm"] = parse_packet_loss(packet_loss)
     if burst_loss is not None:
-        from faultcore.profile_parsers import parse_burst_loss
-
         policy["burst_loss"] = parse_burst_loss(burst_loss)
     if rate is not None:
         policy["rate"] = parse_rate(rate)
@@ -378,8 +372,6 @@ def register_policy(
     )
 
     if dns is not None:
-        from faultcore.profile_parsers import build_dns_profile
-
         dns_profile = build_dns_profile(
             delay=dns.get("delay"),
             timeout=dns.get("timeout"),

@@ -97,14 +97,9 @@ def _target_write_kwargs(target_profile: dict[str, Any]) -> dict[str, Any]:
         "addr": target_profile.get("addr"),
     }
     for field in _TARGET_OPTIONAL_FIELDS:
-        value = target_profile.get(field)
-        if value is not None:
+        if (value := target_profile.get(field)) is not None:
             kwargs[field] = value
     return kwargs
-
-
-def _write_direction_profile(tid: int, write_method: Any, profile: dict[str, Any]) -> None:
-    write_method(tid, **{field: profile.get(field) for field in _DIRECTIONAL_FIELDS})
 
 
 def _write_profile(
@@ -116,66 +111,51 @@ def _write_profile(
 ) -> None:
     if not profile:
         return
-    getattr(shm, writer_name)(tid, **{field: profile.get(field, default) for field, default in defaults.items()})
-
-
-def _write_schedule_profile(
-    shm: Any,
-    tid: int,
-    schedule_profile: dict[str, Any],
-    *,
-    started_monotonic_ns: int,
-) -> None:
-    shm.write_schedule(
-        tid,
-        schedule_type=schedule_profile.get("schedule_type", 0),
-        param_a_ns=schedule_profile.get("param_a_ns", 0),
-        param_b_ns=schedule_profile.get("param_b_ns", 0),
-        param_c_ns=schedule_profile.get("param_c_ns", 0),
-        started_monotonic_ns=started_monotonic_ns,
-    )
-
-
-def _write_session_budget_profile(shm: Any, tid: int, session_budget_profile: dict[str, Any]) -> None:
-    shm.write_session_budget(
-        tid,
-        max_bytes_tx=session_budget_profile.get("max_bytes_tx"),
-        max_bytes_rx=session_budget_profile.get("max_bytes_rx"),
-        max_ops=session_budget_profile.get("max_ops"),
-        max_duration_ms=session_budget_profile.get("max_duration"),
-        action=session_budget_profile.get("action", 0),
-        budget_timeout_ms=session_budget_profile.get("budget_timeout"),
-        error_kind=session_budget_profile.get("error_kind"),
-    )
-
-
-def _write_scalar_fields(shm: Any, tid: int, profiles: dict[str, Any]) -> None:
-    if seed := profiles.get("seed"):
-        shm.write_policy_seed(tid, seed)
-    for field_name, writer_name in _SCALAR_WRITERS:
-        if (value := profiles.get(field_name.lstrip("_"))) is not None:
-            getattr(shm, writer_name)(tid, value)
+    params = {field: profile.get(field, default) for field, default in defaults.items()}
+    getattr(shm, writer_name)(tid, **params)
 
 
 def apply_fault_profiles(shm: Any, tid: int, profiles: dict[str, Any], *, started_monotonic_ns: int) -> None:
-    _write_scalar_fields(shm, tid, profiles)
+    if seed := profiles.get("seed"):
+        shm.write_policy_seed(tid, seed)
+
+    for field, writer in _SCALAR_WRITERS:
+        if (value := profiles.get(field.lstrip("_"))) is not None:
+            getattr(shm, writer)(tid, value)
 
     if timeouts := profiles.get("timeouts"):
         shm.write_timeouts(tid, timeouts.get("connect_ms", 0), timeouts.get("recv_ms", 0))
 
-    for profile_attr, writer_name in _DIRECTIONAL_WRITERS:
-        if profile := profiles.get(profile_attr.lstrip("_")):
-            _write_direction_profile(tid, getattr(shm, writer_name), profile)
+    for attr, writer in _DIRECTIONAL_WRITERS:
+        if profile := profiles.get(attr.lstrip("_")):
+            params = {f: profile.get(f) for f in _DIRECTIONAL_FIELDS}
+            getattr(shm, writer)(tid, **params)
 
-    for profile_attr, writer_name, defaults in _PROFILE_WRITERS:
-        if profile := profiles.get(profile_attr.lstrip("_")):
-            _write_profile(shm, tid, profile, writer_name, defaults)
+    for attr, writer, defaults in _PROFILE_WRITERS:
+        if profile := profiles.get(attr.lstrip("_")):
+            _write_profile(shm, tid, profile, writer, defaults)
 
     if target_profiles := profiles.get("target_profiles"):
         shm.write_targets(tid, target_profiles)
 
-    if schedule_profile := profiles.get("schedule_profile"):
-        _write_schedule_profile(shm, tid, schedule_profile, started_monotonic_ns=started_monotonic_ns)
+    if schedule := profiles.get("schedule_profile"):
+        shm.write_schedule(
+            tid,
+            schedule_type=schedule.get("schedule_type", 0),
+            param_a_ns=schedule.get("param_a_ns", 0),
+            param_b_ns=schedule.get("param_b_ns", 0),
+            param_c_ns=schedule.get("param_c_ns", 0),
+            started_monotonic_ns=started_monotonic_ns,
+        )
 
-    if session_budget_profile := profiles.get("session_budget_profile"):
-        _write_session_budget_profile(shm, tid, session_budget_profile)
+    if budget := profiles.get("session_budget_profile"):
+        shm.write_session_budget(
+            tid,
+            max_bytes_tx=budget.get("max_bytes_tx"),
+            max_bytes_rx=budget.get("max_bytes_rx"),
+            max_ops=budget.get("max_ops"),
+            max_duration_ms=budget.get("max_duration"),
+            action=budget.get("action", 0),
+            budget_timeout_ms=budget.get("budget_timeout"),
+            error_kind=budget.get("error_kind"),
+        )

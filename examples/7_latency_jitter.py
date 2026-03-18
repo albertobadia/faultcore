@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """Example 07: Latency and jitter injection.
 
 This example demonstrates how to inject latency and jitter into network operations

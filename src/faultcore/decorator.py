@@ -12,13 +12,14 @@ from faultcore.policy_registry import get_policy_for_apply
 from faultcore.profile_parsers import (
     build_connection_error_profile as _build_connection_error_profile,
     build_correlated_loss_profile as _build_correlated_loss_profile,
-    build_direction_profile as _build_direction_profile,
     build_dns_profile as _build_dns_profile,
     build_half_open_profile as _build_half_open_profile,
     build_packet_duplicate_profile as _build_packet_duplicate_profile,
     build_packet_reorder_profile as _build_packet_reorder_profile,
     build_session_budget_profile as _build_session_budget_profile,
     build_timeout_profile as _build_timeout_profile,
+    parse_burst_loss as _parse_burst_loss,
+    parse_duration as _parse_duration,
     parse_packet_loss as _parse_packet_loss,
     parse_rate as _parse_rate,
 )
@@ -64,27 +65,6 @@ def _with_wrapper(**wrapper_kwargs: Any) -> Callable[[Callable[..., Any]], "Faul
     return decorator
 
 
-def _build_directional_profile_or_raise(
-    direction_name: str,
-    *,
-    latency_ms: int | None = None,
-    jitter_ms: int | None = None,
-    packet_loss: str | None = None,
-    burst_loss_len: int | None = None,
-    rate: str | None = None,
-) -> dict[str, int]:
-    profile = _build_direction_profile(
-        latency_ms=latency_ms,
-        jitter_ms=jitter_ms,
-        packet_loss=packet_loss,
-        burst_loss_len=burst_loss_len,
-        rate=rate,
-    )
-    if not profile:
-        raise ValueError(f"{direction_name} requires at least one directional field")
-    return profile
-
-
 def _with_directional_profile(
     *,
     field_name: str,
@@ -95,25 +75,18 @@ def _with_directional_profile(
     burst_loss: str | None = None,
     rate: str | None = None,
 ) -> Callable[[Callable[..., Any]], "FaultWrapper"]:
-    from faultcore.profile_parsers import (
-        parse_burst_loss,
-        parse_duration,
-        parse_packet_loss,
-        parse_rate,
-    )
-
     direction_profile: dict[str, Any] = {}
 
     if latency is not None:
-        direction_profile["latency"] = parse_duration(latency)
+        direction_profile["latency"] = _parse_duration(latency)
     if jitter is not None:
-        direction_profile["jitter"] = parse_duration(jitter)
+        direction_profile["jitter"] = _parse_duration(jitter)
     if packet_loss is not None:
-        direction_profile["packet_loss_ppm"] = parse_packet_loss(packet_loss)
+        direction_profile["packet_loss_ppm"] = _parse_packet_loss(packet_loss)
     if burst_loss is not None:
-        direction_profile["burst_loss"] = parse_burst_loss(burst_loss)
+        direction_profile["burst_loss"] = _parse_burst_loss(burst_loss)
     if rate is not None:
-        direction_profile["rate"] = parse_rate(rate)
+        direction_profile["rate"] = _parse_rate(rate)
     return _with_wrapper(**{field_name: direction_profile})
 
 
@@ -140,7 +113,7 @@ _POLICY_FIELDS = (
 
 
 def _policy_to_wrapper_kwargs(policy: dict[str, Any]) -> dict[str, Any]:
-    return {field: policy.get(field) for field in _POLICY_FIELDS}
+    return {f: policy.get(f) for f in _POLICY_FIELDS if f in policy}
 
 
 def _resolve_runtime_policy_name(policy_name: str) -> str:
@@ -154,6 +127,8 @@ def _require_non_negative(value: int, *, field_name: str) -> int:
 
 
 class FaultWrapper:
+    """Wrapper that applies fault profiles from shared memory before calling the function."""
+
     def __init__(self, func: Callable[..., Any], policy_name: str | None = None, **profiles: Any):
         functools.update_wrapper(self, func)
         self._func = func
@@ -164,6 +139,7 @@ class FaultWrapper:
         return getattr(self._func, name)
 
     def __get__(self, obj: Any, objtype: type | None = None) -> Any:
+        # Support instance methods
         return self if obj is None else functools.partial(self.__call__, obj)
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
@@ -174,7 +150,6 @@ class FaultWrapper:
             if self._policy_name:
                 shm.write_policy_name(self._policy_name)
 
-            # Pass the profile dictionary directly to the helpers
             apply_fault_profiles(shm, tid, self._profiles, started_monotonic_ns=time.monotonic_ns())
 
             result = self._func(*args, **kwargs)
@@ -188,12 +163,7 @@ class FaultWrapper:
             if not async_handoff:
                 shm.clear(tid)
 
-    async def _run_async(
-        self,
-        awaitable_result: Any,
-        shm: Any,
-        tid: int,
-    ) -> Any:
+    async def _run_async(self, awaitable_result: Any, shm: Any, tid: int) -> Any:
         try:
             return await awaitable_result
         finally:
@@ -205,15 +175,11 @@ class FaultWrapper:
 
 
 def latency(t: str, /) -> Callable[[Callable[..., Any]], FaultWrapper]:
-    from faultcore.profile_parsers import parse_duration
-
-    return _with_wrapper(latency=parse_duration(t))
+    return _with_wrapper(latency=_parse_duration(t))
 
 
 def jitter(t: str, /) -> Callable[[Callable[..., Any]], FaultWrapper]:
-    from faultcore.profile_parsers import parse_duration
-
-    return _with_wrapper(jitter=parse_duration(t))
+    return _with_wrapper(jitter=_parse_duration(t))
 
 
 def packet_loss(p: str, /) -> Callable[[Callable[..., Any]], FaultWrapper]:
@@ -221,28 +187,19 @@ def packet_loss(p: str, /) -> Callable[[Callable[..., Any]], FaultWrapper]:
 
 
 def burst_loss(n: str, /) -> Callable[[Callable[..., Any]], FaultWrapper]:
-    from faultcore.profile_parsers import parse_burst_loss
-
-    return _with_wrapper(burst_loss=parse_burst_loss(n))
+    return _with_wrapper(burst_loss=_parse_burst_loss(n))
 
 
 def rate(r: str, /) -> Callable[[Callable[..., Any]], FaultWrapper]:
     return _with_wrapper(rate=_parse_rate(r))
 
 
-def timeout(
-    *,
-    connect: str | None = None,
-    recv: str | None = None,
-) -> Callable[[Callable[..., Any]], FaultWrapper]:
+def timeout(*, connect: str | None = None, recv: str | None = None) -> Callable[[Callable[..., Any]], FaultWrapper]:
     return _with_wrapper(timeouts=_build_timeout_profile(connect=connect, recv=recv))
 
 
 def dns(
-    *,
-    delay: str | None = None,
-    timeout: str | None = None,
-    nxdomain: str | None = None,
+    *, delay: str | None = None, timeout: str | None = None, nxdomain: str | None = None
 ) -> Callable[[Callable[..., Any]], FaultWrapper]:
     return _with_wrapper(dns_profile=_build_dns_profile(delay=delay, timeout=timeout, nxdomain=nxdomain))
 
@@ -309,18 +266,11 @@ def downlink(
 
 
 def correlated_loss(
-    *,
-    p_good_to_bad: str,
-    p_bad_to_good: str,
-    loss_good: str,
-    loss_bad: str,
+    *, p_good_to_bad: str, p_bad_to_good: str, loss_good: str, loss_bad: str
 ) -> Callable[[Callable[..., Any]], FaultWrapper]:
     return _with_wrapper(
         correlated_loss_profile=_build_correlated_loss_profile(
-            p_good_to_bad=p_good_to_bad,
-            p_bad_to_good=p_bad_to_good,
-            loss_good=loss_good,
-            loss_bad=loss_bad,
+            p_good_to_bad=p_good_to_bad, p_bad_to_good=p_bad_to_good, loss_good=loss_good, loss_bad=loss_bad
         )
     )
 
@@ -333,30 +283,21 @@ def half_open(*, after: str, error: str = "reset") -> Callable[[Callable[..., An
     return _with_wrapper(half_open_profile=_build_half_open_profile(after=after, error=error))
 
 
-def packet_duplicate(
-    *,
-    prob: str = "100%",
-    max_extra: int = 1,
-) -> Callable[[Callable[..., Any]], FaultWrapper]:
+def packet_duplicate(*, prob: str = "100%", max_extra: int = 1) -> Callable[[Callable[..., Any]], FaultWrapper]:
     return _with_wrapper(packet_duplicate_profile=_build_packet_duplicate_profile(prob=prob, max_extra=max_extra))
 
 
 def packet_reorder(
-    *,
-    prob: str = "100%",
-    max_delay: str = "0ms",
-    window: int = 1,
+    *, prob: str = "100%", max_delay: str = "0ms", window: int = 1
 ) -> Callable[[Callable[..., Any]], FaultWrapper]:
     return _with_wrapper(
-        packet_reorder_profile=_build_packet_reorder_profile(
-            prob=prob,
-            max_delay=max_delay,
-            window=window,
-        )
+        packet_reorder_profile=_build_packet_reorder_profile(prob=prob, max_delay=max_delay, window=window)
     )
 
 
 def fault(policy_name: str = "auto") -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Universal decorator to apply a policy by name (or from thread context)."""
+
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(func)
         def runtime_dispatch(*args: Any, **kwargs: Any) -> Any:
