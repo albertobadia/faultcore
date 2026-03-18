@@ -370,66 +370,80 @@ impl Config {
     }
 
     fn scale_faults(&mut self, factor: f64) {
-        self.latency_ns = scale_u64(self.latency_ns, factor);
-        self.jitter_ns = scale_u64(self.jitter_ns, factor);
-        self.packet_loss_ppm = scale_u64(self.packet_loss_ppm, factor);
-        self.burst_loss_len = scale_u64(self.burst_loss_len, factor);
-        self.bandwidth_bps = scale_u64(self.bandwidth_bps, factor);
-        self.connect_timeout_ms = scale_u64(self.connect_timeout_ms, factor);
-        self.recv_timeout_ms = scale_u64(self.recv_timeout_ms, factor);
-        self.uplink_latency_ns = scale_u64(self.uplink_latency_ns, factor);
-        self.uplink_jitter_ns = scale_u64(self.uplink_jitter_ns, factor);
-        self.uplink_packet_loss_ppm = scale_u64(self.uplink_packet_loss_ppm, factor);
-        self.uplink_burst_loss_len = scale_u64(self.uplink_burst_loss_len, factor);
-        self.uplink_bandwidth_bps = scale_u64(self.uplink_bandwidth_bps, factor);
-        self.downlink_latency_ns = scale_u64(self.downlink_latency_ns, factor);
-        self.downlink_jitter_ns = scale_u64(self.downlink_jitter_ns, factor);
-        self.downlink_packet_loss_ppm = scale_u64(self.downlink_packet_loss_ppm, factor);
-        self.downlink_burst_loss_len = scale_u64(self.downlink_burst_loss_len, factor);
-        self.downlink_bandwidth_bps = scale_u64(self.downlink_bandwidth_bps, factor);
-        self.conn_err_prob_ppm = scale_u64(self.conn_err_prob_ppm, factor);
-        self.dup_prob_ppm = scale_u64(self.dup_prob_ppm, factor);
-        self.reorder_prob_ppm = scale_u64(self.reorder_prob_ppm, factor);
-        self.dns_delay_ns = scale_u64(self.dns_delay_ns, factor);
-        self.dns_timeout_ms = scale_u64(self.dns_timeout_ms, factor);
-        self.dns_nxdomain_ppm = scale_u64(self.dns_nxdomain_ppm, factor);
+        macro_rules! scale {
+            ($($field:ident),*) => {
+                $(self.$field = scale_u64(self.$field, factor);)*
+            };
+        }
+        scale!(
+            latency_ns,
+            jitter_ns,
+            packet_loss_ppm,
+            burst_loss_len,
+            bandwidth_bps,
+            connect_timeout_ms,
+            recv_timeout_ms,
+            uplink_latency_ns,
+            uplink_jitter_ns,
+            uplink_packet_loss_ppm,
+            uplink_burst_loss_len,
+            uplink_bandwidth_bps,
+            downlink_latency_ns,
+            downlink_jitter_ns,
+            downlink_packet_loss_ppm,
+            downlink_burst_loss_len,
+            downlink_bandwidth_bps,
+            conn_err_prob_ppm,
+            dup_prob_ppm,
+            reorder_prob_ppm,
+            dns_delay_ns,
+            dns_timeout_ms,
+            dns_nxdomain_ppm
+        );
     }
 
     fn zero_faults(&mut self) {
-        self.latency_ns = 0;
-        self.jitter_ns = 0;
-        self.packet_loss_ppm = 0;
-        self.burst_loss_len = 0;
-        self.bandwidth_bps = 0;
-        self.connect_timeout_ms = 0;
-        self.recv_timeout_ms = 0;
-        self.uplink_latency_ns = 0;
-        self.uplink_jitter_ns = 0;
-        self.uplink_packet_loss_ppm = 0;
-        self.uplink_burst_loss_len = 0;
-        self.uplink_bandwidth_bps = 0;
-        self.downlink_latency_ns = 0;
-        self.downlink_jitter_ns = 0;
-        self.downlink_packet_loss_ppm = 0;
-        self.downlink_burst_loss_len = 0;
-        self.downlink_bandwidth_bps = 0;
-        self.ge_enabled = 0;
-        self.ge_p_good_to_bad_ppm = 0;
-        self.ge_p_bad_to_good_ppm = 0;
-        self.ge_loss_good_ppm = 0;
-        self.ge_loss_bad_ppm = 0;
-        self.conn_err_kind = 0;
-        self.conn_err_prob_ppm = 0;
-        self.half_open_after_bytes = 0;
-        self.half_open_err_kind = 0;
-        self.dup_prob_ppm = 0;
-        self.dup_max_extra = 0;
-        self.reorder_prob_ppm = 0;
-        self.reorder_max_delay_ns = 0;
-        self.reorder_window = 0;
-        self.dns_delay_ns = 0;
-        self.dns_timeout_ms = 0;
-        self.dns_nxdomain_ppm = 0;
+        macro_rules! zero {
+            ($($field:ident),*) => {
+                $(self.$field = 0;)*
+            };
+        }
+        zero!(
+            latency_ns,
+            jitter_ns,
+            packet_loss_ppm,
+            burst_loss_len,
+            bandwidth_bps,
+            connect_timeout_ms,
+            recv_timeout_ms,
+            uplink_latency_ns,
+            uplink_jitter_ns,
+            uplink_packet_loss_ppm,
+            uplink_burst_loss_len,
+            uplink_bandwidth_bps,
+            downlink_latency_ns,
+            downlink_jitter_ns,
+            downlink_packet_loss_ppm,
+            downlink_burst_loss_len,
+            downlink_bandwidth_bps,
+            ge_enabled,
+            ge_p_good_to_bad_ppm,
+            ge_p_bad_to_good_ppm,
+            ge_loss_good_ppm,
+            ge_loss_bad_ppm,
+            conn_err_kind,
+            conn_err_prob_ppm,
+            half_open_after_bytes,
+            half_open_err_kind,
+            dup_prob_ppm,
+            dup_max_extra,
+            reorder_prob_ppm,
+            reorder_max_delay_ns,
+            reorder_window,
+            dns_delay_ns,
+            dns_timeout_ms,
+            dns_nxdomain_ppm
+        );
     }
 }
 
@@ -445,21 +459,18 @@ fn apply_direction_overrides(
     burst_loss_len: u64,
     bandwidth_bps: u64,
 ) {
-    if latency_ns > 0 {
-        out.latency_ns = latency_ns;
+    macro_rules! override_if_pos {
+        ($($val:ident -> $field:ident),*) => {
+            $(if $val > 0 { out.$field = $val; })*
+        };
     }
-    if jitter_ns > 0 {
-        out.jitter_ns = jitter_ns;
-    }
-    if packet_loss_ppm > 0 {
-        out.packet_loss_ppm = packet_loss_ppm;
-    }
-    if burst_loss_len > 0 {
-        out.burst_loss_len = burst_loss_len;
-    }
-    if bandwidth_bps > 0 {
-        out.bandwidth_bps = bandwidth_bps;
-    }
+    override_if_pos!(
+        latency_ns -> latency_ns,
+        jitter_ns -> jitter_ns,
+        packet_loss_ppm -> packet_loss_ppm,
+        burst_loss_len -> burst_loss_len,
+        bandwidth_bps -> bandwidth_bps
+    );
 }
 
 fn prefix_match(candidate: &[u8; 16], network: &[u8; 16], prefix_len: usize) -> bool {

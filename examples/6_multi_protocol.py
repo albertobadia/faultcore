@@ -22,12 +22,12 @@ def tcp_echo(host: str, port: int, message: str) -> str:
         sock.close()
 
 
-@rate(rate="10mbps")
+@rate("10mbps")
 def rate_limited_tcp(host: str, port: int, message: str):
     return tcp_echo(host, port, message)
 
 
-@rate(rate="5mbps")
+@rate("5mbps")
 def rate_limited_http(url: str):
     if requests is None:
         raise ImportError("requests is not installed")
@@ -102,7 +102,7 @@ def burst_scenario(host: str, tcp_port: int):
 def mixed_policy_scenario(host: str, tcp_port: int):
     print("\n--- Scenario 4: Mixed policies (rate limit + latency) ---")
 
-    @rate(rate="3mbps")
+    @rate("3mbps")
     @timeout(connect="150ms")
     def throttled_and_slow_call(msg: str):
         return tcp_echo(host, tcp_port, msg)

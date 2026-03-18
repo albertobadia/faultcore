@@ -1,7 +1,6 @@
 from typing import Any
 
 _SCALAR_WRITERS = (
-    ("_seed", "write_policy_seed"),
     ("_latency", "write_latency"),
     ("_jitter", "write_jitter"),
     ("_packet_loss_ppm", "write_packet_loss"),
@@ -150,33 +149,33 @@ def _write_session_budget_profile(shm: Any, tid: int, session_budget_profile: di
     )
 
 
-def _write_scalar_profiles(shm: Any, tid: int, wrapper: Any) -> None:
+def _write_scalar_fields(shm: Any, tid: int, profiles: dict[str, Any]) -> None:
+    if seed := profiles.get("seed"):
+        shm.write_policy_seed(tid, seed)
     for field_name, writer_name in _SCALAR_WRITERS:
-        value = getattr(wrapper, field_name)
-        if value is not None:
+        if (value := profiles.get(field_name.lstrip("_"))) is not None:
             getattr(shm, writer_name)(tid, value)
 
 
-def apply_fault_profiles(shm: Any, tid: int, wrapper: Any, *, started_monotonic_ns: int) -> None:
-    _write_scalar_profiles(shm, tid, wrapper)
+def apply_fault_profiles(shm: Any, tid: int, profiles: dict[str, Any], *, started_monotonic_ns: int) -> None:
+    _write_scalar_fields(shm, tid, profiles)
 
-    if timeouts := wrapper._timeouts:
-        connect_ms = timeouts.get("connect_ms", 0)
-        recv_ms = timeouts.get("recv_ms", 0)
-        shm.write_timeouts(tid, connect_ms, recv_ms)
+    if timeouts := profiles.get("timeouts"):
+        shm.write_timeouts(tid, timeouts.get("connect_ms", 0), timeouts.get("recv_ms", 0))
 
     for profile_attr, writer_name in _DIRECTIONAL_WRITERS:
-        if profile := getattr(wrapper, profile_attr):
+        if profile := profiles.get(profile_attr.lstrip("_")):
             _write_direction_profile(tid, getattr(shm, writer_name), profile)
 
     for profile_attr, writer_name, defaults in _PROFILE_WRITERS:
-        _write_profile(shm, tid, getattr(wrapper, profile_attr), writer_name, defaults)
+        if profile := profiles.get(profile_attr.lstrip("_")):
+            _write_profile(shm, tid, profile, writer_name, defaults)
 
-    if wrapper._target_profiles:
-        shm.write_targets(tid, wrapper._target_profiles)
+    if target_profiles := profiles.get("target_profiles"):
+        shm.write_targets(tid, target_profiles)
 
-    if schedule_profile := wrapper._schedule_profile:
+    if schedule_profile := profiles.get("schedule_profile"):
         _write_schedule_profile(shm, tid, schedule_profile, started_monotonic_ns=started_monotonic_ns)
 
-    if session_budget_profile := wrapper._session_budget_profile:
+    if session_budget_profile := profiles.get("session_budget_profile"):
         _write_session_budget_profile(shm, tid, session_budget_profile)

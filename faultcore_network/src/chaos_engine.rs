@@ -21,80 +21,70 @@ pub struct DecisionCounters {
     pub skipped_count: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CounterType {
+    Continue = 0,
+    Delay = 1,
+    Drop = 2,
+    Timeout = 3,
+    Error = 4,
+    ConnectionError = 5,
+    Reorder = 6,
+    Duplicate = 7,
+    NxDomain = 8,
+    Skipped = 9,
+}
+
 struct LayerMetrics {
-    continue_count: AtomicU64,
-    delay_count: AtomicU64,
-    drop_count: AtomicU64,
-    timeout_count: AtomicU64,
-    error_count: AtomicU64,
-    connection_error_count: AtomicU64,
-    reorder_count: AtomicU64,
-    duplicate_count: AtomicU64,
-    nxdomain_count: AtomicU64,
-    skipped_count: AtomicU64,
+    counters: [AtomicU64; 10],
 }
 
 impl LayerMetrics {
     fn new() -> Self {
         Self {
-            continue_count: AtomicU64::new(0),
-            delay_count: AtomicU64::new(0),
-            drop_count: AtomicU64::new(0),
-            timeout_count: AtomicU64::new(0),
-            error_count: AtomicU64::new(0),
-            connection_error_count: AtomicU64::new(0),
-            reorder_count: AtomicU64::new(0),
-            duplicate_count: AtomicU64::new(0),
-            nxdomain_count: AtomicU64::new(0),
-            skipped_count: AtomicU64::new(0),
+            counters: std::array::from_fn(|_| AtomicU64::new(0)),
         }
     }
 
     fn record_decision(&self, decision: &LayerDecision) {
-        let counter = match decision {
-            LayerDecision::Continue => &self.continue_count,
-            LayerDecision::DelayNs(_) => &self.delay_count,
-            LayerDecision::Drop => &self.drop_count,
-            LayerDecision::TimeoutMs(_) => &self.timeout_count,
-            LayerDecision::Error(_) => &self.error_count,
-            LayerDecision::ConnectionErrorKind(_) => &self.connection_error_count,
-            LayerDecision::StageReorder => &self.reorder_count,
-            LayerDecision::Duplicate(_) => &self.duplicate_count,
-            LayerDecision::NxDomain => &self.nxdomain_count,
+        let ty = match decision {
+            LayerDecision::Continue => CounterType::Continue,
+            LayerDecision::DelayNs(_) => CounterType::Delay,
+            LayerDecision::Drop => CounterType::Drop,
+            LayerDecision::TimeoutMs(_) => CounterType::Timeout,
+            LayerDecision::Error(_) => CounterType::Error,
+            LayerDecision::ConnectionErrorKind(_) => CounterType::ConnectionError,
+            LayerDecision::StageReorder => CounterType::Reorder,
+            LayerDecision::Duplicate(_) => CounterType::Duplicate,
+            LayerDecision::NxDomain => CounterType::NxDomain,
         };
-        counter.fetch_add(1, Ordering::Relaxed);
+        self.counters[ty as usize].fetch_add(1, Ordering::Relaxed);
     }
 
     fn record_skipped(&self) {
-        self.skipped_count.fetch_add(1, Ordering::Relaxed);
+        self.counters[CounterType::Skipped as usize].fetch_add(1, Ordering::Relaxed);
     }
 
     fn snapshot(&self) -> DecisionCounters {
+        let load = |ty: CounterType| self.counters[ty as usize].load(Ordering::Relaxed);
         DecisionCounters {
-            continue_count: self.continue_count.load(Ordering::Relaxed),
-            delay_count: self.delay_count.load(Ordering::Relaxed),
-            drop_count: self.drop_count.load(Ordering::Relaxed),
-            timeout_count: self.timeout_count.load(Ordering::Relaxed),
-            error_count: self.error_count.load(Ordering::Relaxed),
-            connection_error_count: self.connection_error_count.load(Ordering::Relaxed),
-            reorder_count: self.reorder_count.load(Ordering::Relaxed),
-            duplicate_count: self.duplicate_count.load(Ordering::Relaxed),
-            nxdomain_count: self.nxdomain_count.load(Ordering::Relaxed),
-            skipped_count: self.skipped_count.load(Ordering::Relaxed),
+            continue_count: load(CounterType::Continue),
+            delay_count: load(CounterType::Delay),
+            drop_count: load(CounterType::Drop),
+            timeout_count: load(CounterType::Timeout),
+            error_count: load(CounterType::Error),
+            connection_error_count: load(CounterType::ConnectionError),
+            reorder_count: load(CounterType::Reorder),
+            duplicate_count: load(CounterType::Duplicate),
+            nxdomain_count: load(CounterType::NxDomain),
+            skipped_count: load(CounterType::Skipped),
         }
     }
 
     fn reset(&self) {
-        self.continue_count.store(0, Ordering::Relaxed);
-        self.delay_count.store(0, Ordering::Relaxed);
-        self.drop_count.store(0, Ordering::Relaxed);
-        self.timeout_count.store(0, Ordering::Relaxed);
-        self.error_count.store(0, Ordering::Relaxed);
-        self.connection_error_count.store(0, Ordering::Relaxed);
-        self.reorder_count.store(0, Ordering::Relaxed);
-        self.duplicate_count.store(0, Ordering::Relaxed);
-        self.nxdomain_count.store(0, Ordering::Relaxed);
-        self.skipped_count.store(0, Ordering::Relaxed);
+        for counter in &self.counters {
+            counter.store(0, Ordering::Relaxed);
+        }
     }
 }
 

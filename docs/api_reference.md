@@ -104,7 +104,7 @@ Inject DNS lookup faults. Parameters accept duration strings (e.g., `"50ms"`, `"
 
 ### `rate(r: str)`
 
-Set bandwidth. String parameter supports suffixes: `bps`, `kbps`, `mbps`, `gbps` (e.g., `"10mbps"`, `"1gbps"`). Plain numbers without suffix are interpreted as Mbps (e.g., `"10"` is equivalent to `"10mbps"`).
+Set bandwidth. String parameter requires a suffix: `bps`, `kbps`, `mbps`, or `gbps` (e.g., `"10mbps"`, `"1gbps"`, `"500kbps"`, `"1000bps"`).
 
 ### `session_budget(*, max_tx: str | None = None, max_rx: str | None = None, max_ops: int | None = None, max_duration: str | None = None, action: str = "drop", budget_timeout: str | None = None, error: str | None = None)`
 

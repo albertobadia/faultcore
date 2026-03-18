@@ -114,11 +114,10 @@ def _with_directional_profile(
         direction_profile["burst_loss"] = parse_burst_loss(burst_loss)
     if rate is not None:
         direction_profile["rate"] = parse_rate(rate)
-
     return _with_wrapper(**{field_name: direction_profile})
 
 
-_POLICY_WRAPPER_FIELDS = (
+_POLICY_FIELDS = (
     "seed",
     "latency",
     "jitter",
@@ -141,7 +140,7 @@ _POLICY_WRAPPER_FIELDS = (
 
 
 def _policy_to_wrapper_kwargs(policy: dict[str, Any]) -> dict[str, Any]:
-    return {field: policy.get(field) for field in _POLICY_WRAPPER_FIELDS}
+    return {field: policy.get(field) for field in _POLICY_FIELDS}
 
 
 def _resolve_runtime_policy_name(policy_name: str) -> str:
@@ -155,50 +154,11 @@ def _require_non_negative(value: int, *, field_name: str) -> int:
 
 
 class FaultWrapper:
-    def __init__(
-        self,
-        func: Callable[..., Any],
-        policy_name: str | None = None,
-        seed: int | None = None,
-        latency: int | None = None,
-        jitter: int | None = None,
-        packet_loss_ppm: int | None = None,
-        burst_loss: int | None = None,
-        rate: int | None = None,
-        timeouts: tuple[int, int] | None = None,
-        uplink_profile: dict[str, int] | None = None,
-        downlink_profile: dict[str, int] | None = None,
-        correlated_loss_profile: dict[str, int] | None = None,
-        connection_error_profile: dict[str, int] | None = None,
-        half_open_profile: dict[str, int] | None = None,
-        packet_duplicate_profile: dict[str, int] | None = None,
-        packet_reorder_profile: dict[str, int] | None = None,
-        dns_profile: dict[str, int] | None = None,
-        target_profiles: list[dict[str, Any]] | None = None,
-        schedule_profile: dict[str, int] | None = None,
-        session_budget_profile: dict[str, int] | None = None,
-    ):
+    def __init__(self, func: Callable[..., Any], policy_name: str | None = None, **profiles: Any):
         functools.update_wrapper(self, func)
         self._func = func
         self._policy_name = policy_name
-        self._seed = seed
-        self._latency = latency
-        self._jitter = jitter
-        self._packet_loss_ppm = packet_loss_ppm
-        self._burst_loss = burst_loss
-        self._rate = rate
-        self._timeouts = timeouts
-        self._uplink_profile = uplink_profile or {}
-        self._downlink_profile = downlink_profile or {}
-        self._correlated_loss_profile = correlated_loss_profile or {}
-        self._connection_error_profile = connection_error_profile or {}
-        self._half_open_profile = half_open_profile or {}
-        self._packet_duplicate_profile = packet_duplicate_profile or {}
-        self._packet_reorder_profile = packet_reorder_profile or {}
-        self._dns_profile = dns_profile or {}
-        self._target_profiles = target_profiles or []
-        self._schedule_profile = schedule_profile or {}
-        self._session_budget_profile = session_budget_profile or {}
+        self._profiles = profiles
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._func, name)
@@ -213,7 +173,9 @@ class FaultWrapper:
         try:
             if self._policy_name:
                 shm.write_policy_name(self._policy_name)
-            apply_fault_profiles(shm, tid, self, started_monotonic_ns=time.monotonic_ns())
+
+            # Pass the profile dictionary directly to the helpers
+            apply_fault_profiles(shm, tid, self._profiles, started_monotonic_ns=time.monotonic_ns())
 
             result = self._func(*args, **kwargs)
 
@@ -238,27 +200,8 @@ class FaultWrapper:
             shm.clear(tid)
 
     def __repr__(self) -> str:
-        return (
-            "<FaultWrapper("
-            f"seed={self._seed}, "
-            f"latency={self._latency}, "
-            f"jitter={self._jitter}, "
-            f"packet_loss_ppm={self._packet_loss_ppm}, "
-            f"burst_loss={self._burst_loss}, "
-            f"rate={self._rate}, "
-            f"timeouts={self._timeouts}, "
-            f"uplink={self._uplink_profile}, "
-            f"downlink={self._downlink_profile}, "
-            f"correlated_loss={self._correlated_loss_profile}, "
-            f"connection_error={self._connection_error_profile}, "
-            f"half_open={self._half_open_profile}, "
-            f"packet_duplicate={self._packet_duplicate_profile}, "
-            f"packet_reorder={self._packet_reorder_profile}, "
-            f"dns={self._dns_profile}, "
-            f"targets={self._target_profiles}, "
-            f"schedule={self._schedule_profile}, "
-            f"session_budget={self._session_budget_profile}) for {self._func!r}>"
-        )
+        profiles_str = ", ".join(f"{k}={v}" for k, v in self._profiles.items() if v)
+        return f"<FaultWrapper({profiles_str}) for {self._func!r}>"
 
 
 def latency(t: str, /) -> Callable[[Callable[..., Any]], FaultWrapper]:

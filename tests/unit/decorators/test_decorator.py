@@ -90,28 +90,28 @@ class TestTimeoutDecorator:
 class TestApplyFaultProfiles:
     def test_apply_fault_profiles_writes_explicit_zero_values(self):
         mock_shm = MagicMock()
-        wrapper = MagicMock()
-        wrapper._seed = None
-        wrapper._latency = 0
-        wrapper._jitter = 0
-        wrapper._packet_loss_ppm = None
-        wrapper._burst_loss = None
-        wrapper._rate = 0
-        wrapper._timeouts = None
-        wrapper._uplink_profile = {}
-        wrapper._downlink_profile = {}
-        wrapper._correlated_loss_profile = {}
-        wrapper._connection_error_profile = {}
-        wrapper._half_open_profile = {}
-        wrapper._packet_duplicate_profile = {}
-        wrapper._packet_reorder_profile = {}
-        wrapper._dns_profile = {}
-        wrapper._target_profiles = []
-        wrapper._target_profile = {}
-        wrapper._schedule_profile = {}
-        wrapper._session_budget_profile = {}
+        profiles = {
+            "seed": None,
+            "latency": 0,
+            "jitter": 0,
+            "packet_loss_ppm": None,
+            "burst_loss": None,
+            "rate": 0,
+            "timeouts": None,
+            "uplink_profile": {},
+            "downlink_profile": {},
+            "correlated_loss_profile": {},
+            "connection_error_profile": {},
+            "half_open_profile": {},
+            "packet_duplicate_profile": {},
+            "packet_reorder_profile": {},
+            "dns_profile": {},
+            "target_profiles": [],
+            "schedule_profile": {},
+            "session_budget_profile": {},
+        }
 
-        apply_fault_profiles(mock_shm, 321, wrapper, started_monotonic_ns=1)
+        apply_fault_profiles(mock_shm, 321, profiles, started_monotonic_ns=1)
 
         mock_shm.write_latency.assert_called_once_with(321, 0)
         mock_shm.write_jitter.assert_called_once_with(321, 0)

@@ -148,12 +148,16 @@ fn duplicate_count_from_decision(decision: LayerDecision) -> u64 {
     }
 }
 
-fn maybe_duplicate_send(fd: c_int, b: *const c_void, sent: ssize_t, f: c_int) {
+fn maybe_duplicate_common<F, G>(site: &str, sent: ssize_t, mut count_lookup: F, mut send_fn: G)
+where
+    F: FnMut() -> u64,
+    G: FnMut(),
+{
     if sent <= 0 {
         return;
     }
-    let count = duplicate_count_from_decision(record_replay_evaluate_or_replay("stream_uplink_post_send", || {
-        let count = uplink_duplicate_count_for_fd(global_fault_osi_engine(), fd);
+    let count = duplicate_count_from_decision(record_replay_evaluate_or_replay(site, || {
+        let count = count_lookup();
         if count > 0 {
             LayerDecision::Duplicate(count)
         } else {
@@ -161,29 +165,30 @@ fn maybe_duplicate_send(fd: c_int, b: *const c_void, sent: ssize_t, f: c_int) {
         }
     }));
     for _ in 0..count {
-        unsafe {
-            let _ = (ORIG_SEND)(fd, b, sent as size_t, f);
-        }
+        send_fn();
     }
 }
 
+fn maybe_duplicate_send(fd: c_int, b: *const c_void, sent: ssize_t, f: c_int) {
+    maybe_duplicate_common(
+        "stream_uplink_post_send",
+        sent,
+        || uplink_duplicate_count_for_fd(global_fault_osi_engine(), fd),
+        || unsafe {
+            let _ = (ORIG_SEND)(fd, b, sent as size_t, f);
+        },
+    );
+}
+
 fn maybe_duplicate_write(fd: c_int, b: *const c_void, sent: ssize_t) {
-    if sent <= 0 {
-        return;
-    }
-    let count = duplicate_count_from_decision(record_replay_evaluate_or_replay("stream_uplink_post_write", || {
-        let count = uplink_duplicate_count_for_fd(global_fault_osi_engine(), fd);
-        if count > 0 {
-            LayerDecision::Duplicate(count)
-        } else {
-            LayerDecision::Continue
-        }
-    }));
-    for _ in 0..count {
-        unsafe {
+    maybe_duplicate_common(
+        "stream_uplink_post_write",
+        sent,
+        || uplink_duplicate_count_for_fd(global_fault_osi_engine(), fd),
+        || unsafe {
             let _ = (ORIG_WRITE)(fd, b, sent as size_t);
-        }
-    }
+        },
+    );
 }
 
 fn maybe_duplicate_sendto(
@@ -194,24 +199,14 @@ fn maybe_duplicate_sendto(
     addr: *const sockaddr,
     addr_len: socklen_t,
 ) {
-    if sent <= 0 {
-        return;
-    }
-    let count = duplicate_count_from_decision(record_replay_evaluate_or_replay("stream_uplink_post_sendto", || {
-        let count = unsafe {
-            uplink_duplicate_count_for_addr_or_fd(global_fault_osi_engine(), fd, addr, addr_len)
-        };
-        if count > 0 {
-            LayerDecision::Duplicate(count)
-        } else {
-            LayerDecision::Continue
-        }
-    }));
-    for _ in 0..count {
-        unsafe {
+    maybe_duplicate_common(
+        "stream_uplink_post_sendto",
+        sent,
+        || unsafe { uplink_duplicate_count_for_addr_or_fd(global_fault_osi_engine(), fd, addr, addr_len) },
+        || unsafe {
             let _ = (ORIG_SENDTO)(fd, b, sent as size_t, f, addr, addr_len);
-        }
-    }
+        },
+    );
 }
 
 fn send_pending_datagram(fd: c_int, pkt: &PendingDatagram) {

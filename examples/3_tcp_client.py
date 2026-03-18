@@ -17,7 +17,7 @@ def start_echo_client(host: str, port: int, message: str) -> str:
         sock.close()
 
 
-@rate(rate="5mbps")
+@rate("5mbps")
 def rate_limited_echo(host: str, port: int, message: str):
     return start_echo_client(host, port, message)
 

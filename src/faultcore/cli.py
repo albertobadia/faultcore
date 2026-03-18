@@ -5,6 +5,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import typer
 
@@ -119,31 +120,25 @@ def _extract_scenario_metrics_path(command: list[str], env: dict[str, str]) -> P
     return None
 
 
-def _coerce_int(value: object, default: int = 0) -> int:
+def _coerce_int(value: Any, default: int = 0) -> int:
     try:
-        if isinstance(value, bool):
-            return default
-        if isinstance(value, str):
-            return int(float(value))
-        return int(value)
+        return int(float(value)) if not isinstance(value, bool) else default
     except (TypeError, ValueError):
         return default
 
 
-def _coerce_float(value: object, default: float = 0.0) -> float:
+def _coerce_float(value: Any, default: float = 0.0) -> float:
     try:
-        if isinstance(value, bool):
-            return default
-        return float(value)
+        return float(value) if not isinstance(value, bool) else default
     except (TypeError, ValueError):
         return default
 
 
-def _as_dict(value: object) -> dict[str, object]:
+def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _as_list(value: object) -> list[object]:
+def _as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
@@ -284,45 +279,35 @@ def _load_scenario_metrics(path: Path | None) -> tuple[Path | None, dict[str, ob
 
 
 def _merge_scenario_metrics_into_run_record(
-    record: dict[str, object],
+    record: dict[str, Any],
     *,
-    scenario_metrics: dict[str, object],
+    scenario_metrics: dict[str, Any],
     ended_at: str,
     scenario_metrics_path: Path | None,
 ) -> None:
     if not scenario_metrics:
         return
 
-    metric_sources = {
-        "latency_ms": _as_dict(scenario_metrics.get("latency_ms")),
-        "jitter_ms": _as_dict(scenario_metrics.get("jitter_ms")),
-        "bytes": _as_dict(scenario_metrics.get("bytes")),
-        "throughput_bps": _as_dict(scenario_metrics.get("throughput_bps")),
-        "scenario": _as_dict(scenario_metrics.get("scenario")),
+    sources = {
+        k: _as_dict(scenario_metrics.get(k)) for k in ("latency_ms", "jitter_ms", "bytes", "throughput_bps", "scenario")
     }
-    functions_map = _as_dict(scenario_metrics.get("functions"))
-    series_map = _as_dict(scenario_metrics.get("series"))
 
     network_metrics = dict(_as_dict(record.get("network_metrics")))
-
-    for metric_name, source_name, source_key in _SCENARIO_INT_METRICS:
-        network_metrics[metric_name] = _coerce_int(metric_sources[source_name].get(source_key))
-
-    for metric_name, source_name, source_key in _SCENARIO_FLOAT_METRICS:
-        network_metrics[metric_name] = _coerce_float(metric_sources[source_name].get(source_key))
-
+    for name, src, key in _SCENARIO_INT_METRICS:
+        network_metrics[name] = _coerce_int(sources[src].get(key))
+    for name, src, key in _SCENARIO_FLOAT_METRICS:
+        network_metrics[name] = _coerce_float(sources[src].get(key))
     record["network_metrics"] = network_metrics
 
+    series_map = _as_dict(scenario_metrics.get("series"))
     merged_series = dict(_as_dict(record.get("network_series")))
     for key, values in series_map.items():
-        if not (isinstance(key, str) and isinstance(values, list)):
-            continue
-        normalized = [_normalize_series_entry(key, value) for value in values]
-        merged_series[key] = normalized
+        if isinstance(key, str) and isinstance(values, list):
+            merged_series[key] = [_normalize_series_entry(key, v) for v in values]
     record["network_series"] = merged_series
 
-    if functions_map:
-        record["function_metrics"] = functions_map
+    if functions := _as_dict(scenario_metrics.get("functions")):
+        record["function_metrics"] = functions
 
     events = list(_as_list(record.get("events")))
     events.append(
@@ -332,16 +317,16 @@ def _merge_scenario_metrics_into_run_record(
             "type": "scenario.metrics",
             "source": "faultcore.cli",
             "name": "multi_protocol_summary",
-            "details": _metric_details(metric_sources, _SCENARIO_SUMMARY_FIELDS),
+            "details": _metric_details(sources, _SCENARIO_SUMMARY_FIELDS),
         }
     )
     record["events"] = events
 
-    if scenario_metrics_path is not None:
+    if scenario_metrics_path:
         artifacts = list(_as_list(record.get("artifacts")))
-        metrics_artifact = {"kind": "scenario_metrics", "path": str(scenario_metrics_path)}
-        if metrics_artifact not in artifacts:
-            artifacts.append(metrics_artifact)
+        item = {"kind": "scenario_metrics", "path": str(scenario_metrics_path)}
+        if item not in artifacts:
+            artifacts.append(item)
         record["artifacts"] = artifacts
 
 

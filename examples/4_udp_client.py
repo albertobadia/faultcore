@@ -19,7 +19,7 @@ def send_udp_message(host: str, port: int, message: str) -> str:
         sock.close()
 
 
-@rate(rate="10mbps")
+@rate("10mbps")
 def rate_limited_udp(host: str, port: int, message: str):
     return send_udp_message(host, port, message)
 

@@ -4,7 +4,7 @@ import time
 from faultcore import rate
 
 
-@rate(rate="5mbps")
+@rate("5mbps")
 def limited_api_call():
     return "API Response"
 

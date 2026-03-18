@@ -3,12 +3,12 @@ import time
 from faultcore import rate
 
 
-@rate(rate="1mbps")
+@rate("1mbps")
 def send_at_1mbps(data_size: int) -> int:
     return data_size
 
 
-@rate(rate="10mbps")
+@rate("10mbps")
 def send_at_10mbps(data_size: int) -> int:
     return data_size
 

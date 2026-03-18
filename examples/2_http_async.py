@@ -11,7 +11,7 @@ except ImportError:
 from faultcore import rate, timeout
 
 
-@rate(rate="10mbps")
+@rate("10mbps")
 async def fetch_url(session: aiohttp.ClientSession, url: str):
     async with session.get(url) as response:
         return await response.json()
