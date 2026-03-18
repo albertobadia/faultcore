@@ -27,11 +27,9 @@ def utc_now_iso() -> str:
 
 
 def status_from_returncode(returncode: int) -> str:
-    if returncode == 0:
-        return "passed"
-    if returncode > 0:
-        return "failed"
-    return "error"
+    if returncode < 0:
+        return "error"
+    return "passed" if returncode == 0 else "failed"
 
 
 def _git_value(args: list[str]) -> str:
@@ -188,11 +186,7 @@ def summarize_record_replay(events: list[dict[str, Any]]) -> dict[str, int]:
 
 
 def extract_policy_sources(events: list[dict[str, Any]]) -> list[dict[str, str]]:
-    policy_names: set[str] = set()
-    for event in events:
-        policy_name = event.get("policy_name")
-        if policy_name:
-            policy_names.add(policy_name)
+    policy_names = {policy_name for event in events if (policy_name := event.get("policy_name"))}
     return [{"kind": "record_replay", "name": name} for name in sorted(policy_names)]
 
 
@@ -347,11 +341,12 @@ def build_record_replay_timeline_events(
     events: list[dict[str, Any]], *, ts: str, max_items: int = 300
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
+    severity_by_decision = {"error": "error", "continue": "info"}
     for item in events[:max_items]:
         decision = str(item.get("decision", ""))
         site = str(item.get("site", ""))
         value = item.get("value", 0)
-        severity = "error" if decision == "error" else ("info" if decision == "continue" else "warning")
+        severity = severity_by_decision.get(decision, "warning")
         out.append(
             {
                 "ts": ts,

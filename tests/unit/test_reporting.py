@@ -228,15 +228,13 @@ def test_render_report_html_embeds_event_metadata():
     assert "events_included=1" not in html_text
     assert "events_truncated=true" not in html_text
     assert "faultcore report" in html_text
-    assert "stdout (tail)" in html_text
+    assert 'id="run-data"' in html_text
+    assert '"stdout_tail": "hello"' in html_text
     assert "Network Metrics" in html_text
-    assert "Applied Configuration" in html_text
     assert "Per Function/Site" in html_text
-    assert "Functions/Sites" not in html_text
     assert "Network Timeline" in html_text
-    assert "Fault Events Per Bucket" not in html_text
-    assert "data-series-values" in html_text
-    assert "chart-tooltip" in html_text
+    assert "Applied Configuration" in html_text
+    assert "charts-loading" in html_text
 
 
 def test_normalize_chart_series_trims_leading_zeros_when_followed_by_data():

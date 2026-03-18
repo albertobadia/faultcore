@@ -38,27 +38,30 @@ def _with_wrapper(**kwargs: Any) -> Callable[[Callable[..., Any]], "FaultWrapper
     return lambda func: FaultWrapper(func, **kwargs)
 
 
+_DIRECTIONAL_PROFILE_PARSERS = {
+    "latency": _parse_duration,
+    "jitter": _parse_duration,
+    "packet_loss": _parse_packet_loss,
+    "burst_loss": _parse_burst_loss,
+    "rate": _parse_rate,
+}
+
+
 def _with_directional_profile(
-    *,
-    field_name: str,
-    latency: str | None = None,
-    jitter: str | None = None,
-    packet_loss: str | None = None,
-    burst_loss: str | None = None,
-    rate: str | None = None,
+    field_name: str, **profiles: str | None
 ) -> Callable[[Callable[..., Any]], "FaultWrapper"]:
-    profile: dict[str, Any] = {}
-    if latency is not None:
-        profile["latency"] = _parse_duration(latency)
-    if jitter is not None:
-        profile["jitter"] = _parse_duration(jitter)
-    if packet_loss is not None:
-        profile["packet_loss_ppm"] = _parse_packet_loss(packet_loss)
-    if burst_loss is not None:
-        profile["burst_loss"] = _parse_burst_loss(burst_loss)
-    if rate is not None:
-        profile["rate"] = _parse_rate(rate)
-    return _with_wrapper(**{field_name: profile})
+    parsed: dict[str, Any] = {}
+
+    for name, value in profiles.items():
+        if value is None:
+            continue
+        parser = _DIRECTIONAL_PROFILE_PARSERS.get(name)
+        if parser is None:
+            continue
+        key = f"{name}_ppm" if name == "packet_loss" else name
+        parsed[key] = parser(value)
+
+    return _with_wrapper(**{field_name: parsed})
 
 
 _POLICY_FIELDS = (
@@ -84,8 +87,6 @@ _POLICY_FIELDS = (
 
 
 class FaultWrapper:
-    """Applies fault profiles before calling a function."""
-
     def __init__(self, func: Callable[..., Any], policy_name: str | None = None, **profiles: Any):
         functools.update_wrapper(self, func)
         self._func = func
@@ -96,25 +97,28 @@ class FaultWrapper:
         return getattr(self._func, name)
 
     def __get__(self, obj: Any, objtype: type | None = None) -> Any:
-        return self if obj is None else functools.partial(self.__call__, obj)
+        if obj is None:
+            return self
+        return functools.partial(self.__call__, obj)
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         shm = get_shm_writer()
         tid = threading.get_native_id()
 
+        if self._policy_name:
+            shm.write_policy_name(self._policy_name)
+
         result = None
+        is_awaitable = False
         try:
-            if self._policy_name:
-                shm.write_policy_name(self._policy_name)
-
             apply_fault_profiles(shm, tid, self._profiles, started_monotonic_ns=time.monotonic_ns())
-
             result = self._func(*args, **kwargs)
-            if inspect.isawaitable(result):
+            is_awaitable = inspect.isawaitable(result)
+            if is_awaitable:
                 return self._run_async(result, shm, tid)
             return result
         finally:
-            if not inspect.isawaitable(result):
+            if not is_awaitable:
                 shm.clear(tid)
 
     async def _run_async(self, awaitable: Any, shm: Any, tid: int) -> Any:
@@ -248,19 +252,18 @@ def packet_reorder(
 
 
 def fault(policy_name: str = "auto") -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """Applies a policy by name or from thread context."""
-
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            name = policy_name if policy_name != "auto" else (get_thread_policy() or "")
-            policy = get_policy_for_apply(name) if name else None
+            resolved_policy_name = policy_name if policy_name != "auto" else (get_thread_policy() or "")
+            policy = get_policy_for_apply(resolved_policy_name) if resolved_policy_name else None
 
             if not policy:
                 return func(*args, **kwargs)
 
-            profiles = {f: policy.get(f) for f in _POLICY_FIELDS if f in policy}
-            return FaultWrapper(func, policy_name=name, **profiles)(*args, **kwargs)
+            profiles = {field: policy[field] for field in _POLICY_FIELDS if field in policy}
+            wrapped = FaultWrapper(func, policy_name=resolved_policy_name, **profiles)
+            return wrapped(*args, **kwargs)
 
         return wrapper
 

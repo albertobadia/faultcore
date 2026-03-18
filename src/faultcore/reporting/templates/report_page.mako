@@ -56,98 +56,24 @@
     </div>
     <div class="tab-content">
       <section id="charts" class="tab-panel active" data-tab-panel="charts">
-        ${delay_chart}
-        ${extra_charts_html}
+        <div id="charts-loading" class="muted">Initializing timeline...</div>
       </section>
       <section id="network" class="tab-panel" data-tab-panel="network">
-        ${network_metrics_html}
-        <div class="outputs-grid">
-          <div class="output-panel">
-            <div class="output-panel-title">Failures/Errors <span class="output-badge">${safe(failures_count)}</span></div>
-            <ul class="output-list">
-              % if failures:
-                ${''.join('<li>{} {}: {}</li>'.format(safe(item.get('ts', '')), safe(item.get('type', '')), safe(item.get('name', ''))) for item in failures)}
-              % else:
-                <li>No failures/errors in current view</li>
-              % endif
-            </ul>
-          </div>
-          <div class="output-panel">
-            <div class="output-panel-title">Artifacts <span class="output-badge">${safe(artifacts_count)}</span></div>
-            <ul class="output-list">
-              % if artifacts:
-                ${''.join('<li>{}: <code>{}</code>'.format(safe(item.get('kind', 'artifact')), safe(item.get('path', ''))) for item in artifacts)}
-              % else:
-                <li>No artifacts</li>
-              % endif
-            </ul>
-          </div>
-        </div>
-        <div class="logs-grid">
-          <div class="log-panel">
-            <div class="log-title">stdout (tail)</div>
-            <pre><code>${safe(stdout_tail) if stdout_tail else 'No stdout captured'}</code></pre>
-          </div>
-          <div class="log-panel">
-            <div class="log-title">stderr (tail)</div>
-            <pre><code>${safe(stderr_tail) if stderr_tail else 'No stderr captured'}</code></pre>
-          </div>
-        </div>
+        <div id="network-loading" class="muted">Initializing network metrics...</div>
       </section>
       <section id="site-details" class="tab-panel" data-tab-panel="site-details">
-        <div class="details-toolbar" id="site-details-toolbar">
-          <input id="site-search" type="search" placeholder="Search function/site..." />
-          <select id="site-kind">
-            <option value="">All types</option>
-            <option value="function">Functions</option>
-            <option value="site">Sites</option>
-          </select>
-          <select id="site-faults">
-            <option value="">All items</option>
-            <option value="faults">With faults only</option>
-          </select>
-          <button id="site-expand-all" type="button">Expand all</button>
-          <button id="site-collapse-all" type="button">Collapse all</button>
-          <span class="count" id="site-details-count">visible=0</span>
-        </div>
-        <div class="details-stack">
-          <div class="details-column-title">Functions</div>
-          ${function_details_html}
-          <div class="details-column-title">Sites</div>
-          ${site_details_html}
-        </div>
+        <div id="site-details-loading" class="muted">Initializing per-function details...</div>
       </section>
       <section id="timeline" class="tab-panel tab-panel-timeline" data-tab-panel="timeline">
-        <div class="controls" id="events-controls">
-          <input id="events-search" type="search" placeholder="Search events..." />
-          <select id="events-severity">
-            <option value="">All severities</option>
-            <option value="info">info</option>
-            <option value="warning">warning</option>
-            <option value="error">error</option>
-          </select>
-          <input id="events-type" type="search" placeholder="Type contains..." />
-          <select id="events-page-size">
-            <option value="25">25 / page</option>
-            <option value="50" selected>50 / page</option>
-            <option value="100">100 / page</option>
-            <option value="200">200 / page</option>
-          </select>
-          <button id="events-prev" type="button">Prev</button>
-          <button id="events-next" type="button">Next</button>
-          <span class="muted" id="events-page-info">page 1</span>
-        </div>
-        <div class="events-table-wrap">
-          <table>
-            <thead><tr><th>ts</th><th>severity</th><th>type</th><th>source</th><th>name</th><th>details</th></tr></thead>
-            <tbody id="events-body">
-              <%include file="event_rows.mako" args="events=viewed_events, safe=safe"/>
-            </tbody>
-          </table>
-        </div>
+        <div id="timeline-loading" class="muted">Initializing decisions timeline...</div>
       </section>
     </div>
-    <script src="scripts.js"></script>
+    <script id="run-data" type="application/json">
+      ${run_data_json}
+    </script>
+    <script>
+      <%include file="scripts.js"/>
+    </script>
   </main>
 </body>
 </html>

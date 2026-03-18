@@ -5,7 +5,6 @@ _DIRECTIONAL_WRITERS = {
     "downlink_profile": "write_downlink",
 }
 
-# Profile writers with their default parameter values
 _PROFILE_WRITERS = {
     "correlated_loss_profile": (
         "write_correlated_loss",
@@ -39,7 +38,6 @@ _DIRECTIONAL_FIELDS = ("latency", "jitter", "packet_loss_ppm", "burst_loss", "ra
 
 
 def apply_fault_profiles(shm: Any, tid: int, profiles: dict[str, Any], *, started_monotonic_ns: int) -> None:
-    """Applies fault profiles to shared memory for a given thread."""
     if seed := profiles.get("seed"):
         shm.write_policy_seed(tid, seed)
 
@@ -51,14 +49,18 @@ def apply_fault_profiles(shm: Any, tid: int, profiles: dict[str, Any], *, starte
         shm.write_timeouts(tid, timeouts.get("connect_ms", 0), timeouts.get("recv_ms", 0))
 
     for field, writer in _DIRECTIONAL_WRITERS.items():
-        if profile := profiles.get(field):
-            params = {f: profile.get(f) for f in _DIRECTIONAL_FIELDS}
-            getattr(shm, writer)(tid, **params)
+        profile = profiles.get(field)
+        if not profile:
+            continue
+        values = {name: profile.get(name) for name in _DIRECTIONAL_FIELDS}
+        getattr(shm, writer)(tid, **values)
 
     for field, (writer, defaults) in _PROFILE_WRITERS.items():
-        if profile := profiles.get(field):
-            params = {f: profile.get(f, d) for f, d in defaults.items()}
-            getattr(shm, writer)(tid, **params)
+        profile = profiles.get(field)
+        if not profile:
+            continue
+        values = {name: profile.get(name, default) for name, default in defaults.items()}
+        getattr(shm, writer)(tid, **values)
 
     if target_profiles := profiles.get("target_profiles"):
         shm.write_targets(tid, target_profiles)

@@ -666,15 +666,19 @@ def _render_report_html_document(
         f"events_truncated={str(truncated).lower()}"
     )
 
+    run_data_json = json.dumps(run_data, ensure_ascii=True)
+
     return str(
         _REPORT_TEMPLATE.render(
             run_data=run_data,
+            run_data_json=run_data_json,
             viewed_events=viewed_events,
             status=status,
             tool=tool,
             environment=environment,
             interceptor=interceptor,
             summary=summary,
+            extra_series=extra_series,
             faultcore=faultcore,
             scenarios=scenarios,
             artifacts=artifacts,

@@ -219,16 +219,11 @@ def parse_rate(rate: str) -> int:
         raise TypeError("rate must be a string with suffix (e.g., '100mbps', '1gbps', '500kbps', '1000bps')")
 
     normalized_rate = _non_empty_normalized(rate, "rate must be non-empty")
-    has_suffix = False
     for suffix, multiplier in _RATE_SUFFIX_MULTIPLIERS.items():
         if normalized_rate.endswith(suffix):
-            has_suffix = True
             return _rate_to_bps(normalized_rate[: -len(suffix)], multiplier)
 
-    if not has_suffix:
-        raise ValueError("rate must include a unit suffix (e.g., '100mbps', '1gbps', '500kbps', '1000bps')")
-
-    return _rate_to_bps(normalized_rate, 1_000_000)
+    raise ValueError("rate must include a unit suffix (e.g., '100mbps', '1gbps', '500kbps', '1000bps')")
 
 
 def parse_packet_loss(loss: str) -> int:
@@ -308,15 +303,14 @@ def parse_port(value: str | int) -> tuple[int, int | None, int | None]:
             raise ValueError("port range start must be <= end")
         return (0, start, end)
     if "," in normalized:
-        ports = normalized.split(",")
-        if len(ports) != 1:
-            try:
-                single_port = int(ports[0])
-            except ValueError:
-                raise ValueError("port list must contain valid integers") from None
-            if not 0 <= single_port <= 65535:
-                raise ValueError("port must be between 0 and 65535")
-            return (single_port, None, None)
+        first_port, *_ = normalized.split(",")
+        try:
+            single_port = int(first_port)
+        except ValueError:
+            raise ValueError("port list must contain valid integers") from None
+        if not 0 <= single_port <= 65535:
+            raise ValueError("port must be between 0 and 65535")
+        return (single_port, None, None)
     try:
         parsed = int(normalized)
     except ValueError:

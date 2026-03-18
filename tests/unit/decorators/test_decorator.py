@@ -8,13 +8,14 @@ import faultcore
 
 @pytest.fixture
 def mock_shm():
+    tid = 12345
     with (
         patch("faultcore.decorator.get_shm_writer") as mock_get_shm,
-        patch("faultcore.decorator.threading.get_native_id", return_value=12345),
+        patch("faultcore.decorator.threading.get_native_id", return_value=tid),
     ):
-        mock_shm = MagicMock()
-        mock_get_shm.return_value = mock_shm
-        yield mock_shm, 12345
+        mock = MagicMock()
+        mock_get_shm.return_value = mock
+        yield mock, tid
 
 
 class TestScalarDecorators:

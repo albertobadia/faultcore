@@ -396,14 +396,17 @@ svg {
 .chart-inspector {
   display: none;
   margin-top: 4px;
-  border: 1px solid var(--border);
-  background: #16140f;
-  padding: 4px 6px;
-  font-size: 10px;
-  font-family: "JetBrains Mono", "Cascadia Mono", monospace;
-  color: #dccca7;
+  padding: 8px 12px;
+  background: #1c1a12;
+  border: 1px solid #4b412e;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 11px;
+  color: #efe0b8;
+  line-height: 1.4;
   white-space: pre-wrap;
-  line-height: 1.35;
+  word-break: break-all;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.5);
 }
 .kv-list {
   list-style: none;
