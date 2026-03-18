@@ -7,8 +7,7 @@ import faultcore
 
 
 @pytest.fixture
-def mock_shm_context():
-    """Context manager for patching SHM and TID."""
+def mock_shm():
     with (
         patch("faultcore.decorator.get_shm_writer") as mock_get_shm,
         patch("faultcore.decorator.threading.get_native_id", return_value=12345),
@@ -29,18 +28,18 @@ class TestScalarDecorators:
             (faultcore.burst_loss, "5", "write_burst_loss", 5),
         ],
     )
-    def test_scalar_writes_to_shm(self, mock_shm_context, decorator, value, writer_method, expected_shm_val):
-        mock_shm, tid = mock_shm_context
+    def test_scalar_writes_to_shm(self, mock_shm, decorator, value, writer_method, expected_shm_val):
+        mock, tid = mock_shm
 
         @decorator(value)
         def my_func():
             return "ok"
 
         assert my_func() == "ok"
-        getattr(mock_shm, writer_method).assert_called_once_with(tid, expected_shm_val)
-        mock_shm.clear.assert_called_once_with(tid)
+        getattr(mock, writer_method).assert_called_once_with(tid, expected_shm_val)
+        mock.clear.assert_called_once_with(tid)
 
-    def test_latency_preserves_metadata(self):
+    def test_metadata_preservation(self):
         @faultcore.latency("100ms")
         def my_function():
             """Docstring."""
@@ -49,9 +48,9 @@ class TestScalarDecorators:
         assert my_function.__name__ == "my_function"
         assert my_function.__doc__ == "Docstring."
 
-    def test_failure_still_clears_shm(self, mock_shm_context):
-        mock_shm, tid = mock_shm_context
-        mock_shm.write_latency.side_effect = RuntimeError("failed")
+    def test_error_clears_shm(self, mock_shm):
+        mock, tid = mock_shm
+        mock.write_latency.side_effect = RuntimeError("failed")
 
         @faultcore.latency("10ms")
         def my_func():
@@ -60,19 +59,19 @@ class TestScalarDecorators:
         with pytest.raises(RuntimeError, match="failed"):
             my_func()
 
-        mock_shm.clear.assert_called_once_with(tid)
+        mock.clear.assert_called_once_with(tid)
 
 
 class TestComplexDecorators:
-    def test_timeout_writes_correct_fields(self, mock_shm_context):
-        mock_shm, tid = mock_shm_context
+    def test_timeout_writes(self, mock_shm):
+        mock, tid = mock_shm
 
         @faultcore.timeout(connect="2s", recv="500ms")
         def my_func():
             return "ok"
 
         assert my_func() == "ok"
-        mock_shm.write_timeouts.assert_called_once_with(tid, 2000, 500)
+        mock.write_timeouts.assert_called_once_with(tid, 2000, 500)
 
     @pytest.mark.parametrize(
         "decorator_call,writer_method",
@@ -93,33 +92,34 @@ class TestComplexDecorators:
             (lambda: faultcore.session_budget(max_tx="1kb"), "write_session_budget"),
         ],
     )
-    def test_profile_writes_to_shm(self, mock_shm_context, decorator_call, writer_method):
-        mock_shm, tid = mock_shm_context
+    def test_profile_writes(self, mock_shm, decorator_call, writer_method):
+        mock, tid = mock_shm
 
         @decorator_call()
         def my_func():
             return "ok"
 
         assert my_func() == "ok"
-        getattr(mock_shm, writer_method).assert_called_once()
-        mock_shm.clear.assert_called_once_with(tid)
+        getattr(mock, writer_method).assert_called_once()
+        mock.clear.assert_called_once_with(tid)
 
 
-class TestAsyncAndLifecycle:
-    async def test_async_decorator_lifecycle(self, mock_shm_context):
-        mock_shm, tid = mock_shm_context
+class TestAsync:
+    @pytest.mark.asyncio
+    async def test_async_lifecycle(self, mock_shm):
+        mock, tid = mock_shm
 
         @faultcore.latency("100ms")
         async def my_func():
             await asyncio.sleep(0.01)
             return "ok"
 
-        result = await my_func()
-        assert result == "ok"
-        mock_shm.clear.assert_called_once_with(tid)
+        assert await my_func() == "ok"
+        mock.clear.assert_called_once_with(tid)
 
-    async def test_awaitable_keeps_shm_until_await(self, mock_shm_context):
-        mock_shm, tid = mock_shm_context
+    @pytest.mark.asyncio
+    async def test_awaitable_keeps_shm(self, mock_shm):
+        mock, tid = mock_shm
 
         class AwaitableValue:
             def __await__(self):
@@ -130,6 +130,6 @@ class TestAsyncAndLifecycle:
         def func_returning_awaitable():
             return AwaitableValue()
 
-        result = await func_returning_awaitable()
-        assert result == "result"
-        mock_shm.clear.assert_called_once_with(tid)
+        result = func_returning_awaitable()
+        assert await result == "result"
+        mock.clear.assert_called_once_with(tid)

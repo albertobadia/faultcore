@@ -3,12 +3,20 @@ import inspect
 import threading
 import time
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
-from faultcore import policy_registry as _policy_registry
 from faultcore.decorator_helpers import apply_fault_profiles
-from faultcore.policy_registry import get_policy_for_apply
+from faultcore.policy_registry import (
+    clear_policies,
+    get_policy,
+    get_policy_for_apply,
+    get_thread_policy,
+    list_policies,
+    load_policies,
+    register_policy,
+    set_thread_policy,
+    unregister_policy,
+)
 from faultcore.profile_parsers import (
     build_connection_error_profile as _build_connection_error_profile,
     build_correlated_loss_profile as _build_correlated_loss_profile,
@@ -26,68 +34,31 @@ from faultcore.profile_parsers import (
 from faultcore.shm_writer import get_shm_writer
 
 
-def register_policy(*args: Any, **kwargs: Any) -> None:
-    _policy_registry.register_policy(*args, **kwargs)
-
-
-def clear_policies() -> None:
-    _policy_registry.clear_policies()
-
-
-def list_policies() -> list[str]:
-    return _policy_registry.list_policies()
-
-
-def get_policy(name: str) -> dict[str, Any] | None:
-    return _policy_registry.get_policy(name)
-
-
-def unregister_policy(name: str) -> bool:
-    return _policy_registry.unregister_policy(name)
-
-
-def load_policies(path: str | Path) -> int:
-    return _policy_registry.load_policies(path)
-
-
-def set_thread_policy(policy_name: str | None) -> None:
-    _policy_registry.set_thread_policy(policy_name)
-
-
-def get_thread_policy() -> str | None:
-    return _policy_registry.get_thread_policy()
-
-
-def _with_wrapper(**wrapper_kwargs: Any) -> Callable[[Callable[..., Any]], "FaultWrapper"]:
-    def decorator(func: Callable[..., Any]) -> FaultWrapper:
-        return FaultWrapper(func, **wrapper_kwargs)
-
-    return decorator
+def _with_wrapper(**kwargs: Any) -> Callable[[Callable[..., Any]], "FaultWrapper"]:
+    return lambda func: FaultWrapper(func, **kwargs)
 
 
 def _with_directional_profile(
     *,
     field_name: str,
-    direction_name: str,
     latency: str | None = None,
     jitter: str | None = None,
     packet_loss: str | None = None,
     burst_loss: str | None = None,
     rate: str | None = None,
 ) -> Callable[[Callable[..., Any]], "FaultWrapper"]:
-    direction_profile: dict[str, Any] = {}
-
+    profile: dict[str, Any] = {}
     if latency is not None:
-        direction_profile["latency"] = _parse_duration(latency)
+        profile["latency"] = _parse_duration(latency)
     if jitter is not None:
-        direction_profile["jitter"] = _parse_duration(jitter)
+        profile["jitter"] = _parse_duration(jitter)
     if packet_loss is not None:
-        direction_profile["packet_loss_ppm"] = _parse_packet_loss(packet_loss)
+        profile["packet_loss_ppm"] = _parse_packet_loss(packet_loss)
     if burst_loss is not None:
-        direction_profile["burst_loss"] = _parse_burst_loss(burst_loss)
+        profile["burst_loss"] = _parse_burst_loss(burst_loss)
     if rate is not None:
-        direction_profile["rate"] = _parse_rate(rate)
-    return _with_wrapper(**{field_name: direction_profile})
+        profile["rate"] = _parse_rate(rate)
+    return _with_wrapper(**{field_name: profile})
 
 
 _POLICY_FIELDS = (
@@ -112,22 +83,8 @@ _POLICY_FIELDS = (
 )
 
 
-def _policy_to_wrapper_kwargs(policy: dict[str, Any]) -> dict[str, Any]:
-    return {f: policy.get(f) for f in _POLICY_FIELDS if f in policy}
-
-
-def _resolve_runtime_policy_name(policy_name: str) -> str:
-    return policy_name if policy_name != "auto" else (get_thread_policy() or "")
-
-
-def _require_non_negative(value: int, *, field_name: str) -> int:
-    if value < 0:
-        raise ValueError(f"{field_name} must be >= 0")
-    return value
-
-
 class FaultWrapper:
-    """Wrapper that applies fault profiles from shared memory before calling the function."""
+    """Applies fault profiles before calling a function."""
 
     def __init__(self, func: Callable[..., Any], policy_name: str | None = None, **profiles: Any):
         functools.update_wrapper(self, func)
@@ -139,13 +96,13 @@ class FaultWrapper:
         return getattr(self._func, name)
 
     def __get__(self, obj: Any, objtype: type | None = None) -> Any:
-        # Support instance methods
         return self if obj is None else functools.partial(self.__call__, obj)
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        tid = threading.get_native_id()
         shm = get_shm_writer()
-        async_handoff = False
+        tid = threading.get_native_id()
+
+        result = None
         try:
             if self._policy_name:
                 shm.write_policy_name(self._policy_name)
@@ -153,19 +110,16 @@ class FaultWrapper:
             apply_fault_profiles(shm, tid, self._profiles, started_monotonic_ns=time.monotonic_ns())
 
             result = self._func(*args, **kwargs)
-
-            if not inspect.isawaitable(result):
-                return result
-
-            async_handoff = True
-            return self._run_async(result, shm, tid)
+            if inspect.isawaitable(result):
+                return self._run_async(result, shm, tid)
+            return result
         finally:
-            if not async_handoff:
+            if not inspect.isawaitable(result):
                 shm.clear(tid)
 
-    async def _run_async(self, awaitable_result: Any, shm: Any, tid: int) -> Any:
+    async def _run_async(self, awaitable: Any, shm: Any, tid: int) -> Any:
         try:
-            return await awaitable_result
+            return await awaitable
         finally:
             shm.clear(tid)
 
@@ -237,7 +191,6 @@ def uplink(
 ) -> Callable[[Callable[..., Any]], FaultWrapper]:
     return _with_directional_profile(
         field_name="uplink_profile",
-        direction_name="uplink",
         latency=latency,
         jitter=jitter,
         packet_loss=packet_loss,
@@ -256,7 +209,6 @@ def downlink(
 ) -> Callable[[Callable[..., Any]], FaultWrapper]:
     return _with_directional_profile(
         field_name="downlink_profile",
-        direction_name="downlink",
         latency=latency,
         jitter=jitter,
         packet_loss=packet_loss,
@@ -296,18 +248,48 @@ def packet_reorder(
 
 
 def fault(policy_name: str = "auto") -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """Universal decorator to apply a policy by name (or from thread context)."""
+    """Applies a policy by name or from thread context."""
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(func)
-        def runtime_dispatch(*args: Any, **kwargs: Any) -> Any:
-            name = _resolve_runtime_policy_name(policy_name)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            name = policy_name if policy_name != "auto" else (get_thread_policy() or "")
             policy = get_policy_for_apply(name) if name else None
-            if policy is None:
-                return func(*args, **kwargs)
-            kwargs_wrapper = _policy_to_wrapper_kwargs(policy)
-            return FaultWrapper(func, policy_name=name, **kwargs_wrapper)(*args, **kwargs)
 
-        return runtime_dispatch
+            if not policy:
+                return func(*args, **kwargs)
+
+            profiles = {f: policy.get(f) for f in _POLICY_FIELDS if f in policy}
+            return FaultWrapper(func, policy_name=name, **profiles)(*args, **kwargs)
+
+        return wrapper
 
     return decorator
+
+
+__all__ = [
+    "burst_loss",
+    "clear_policies",
+    "connection_error",
+    "correlated_loss",
+    "dns",
+    "downlink",
+    "fault",
+    "get_policy",
+    "get_thread_policy",
+    "half_open",
+    "jitter",
+    "latency",
+    "list_policies",
+    "load_policies",
+    "packet_duplicate",
+    "packet_loss",
+    "packet_reorder",
+    "rate",
+    "register_policy",
+    "session_budget",
+    "set_thread_policy",
+    "timeout",
+    "unregister_policy",
+    "uplink",
+]
