@@ -1,6 +1,7 @@
 import pytest
 
 from faultcore.profile_parsers import (
+    build_payload_mutation_profile,
     build_session_budget_profile,
     build_target_profile,
     build_timeout_profile,
@@ -266,3 +267,19 @@ def test_build_timeout_profile_accepts_partial():
 def test_build_timeout_profile_accepts_empty():
     profile = build_timeout_profile()
     assert profile == {}
+
+
+def test_build_payload_mutation_profile_parses_expected_shape():
+    profile = build_payload_mutation_profile(
+        enabled=True,
+        type="inject_bytes",
+        target="uplink_only",
+        prob="50%",
+        inject_position=2,
+        inject_data=b"xyz",
+    )
+    assert profile["enabled"] == 1
+    assert profile["type"] == 3
+    assert profile["target"] == 1
+    assert profile["prob_ppm"] == 500_000
+    assert profile["inject_len"] == 3

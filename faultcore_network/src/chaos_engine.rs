@@ -18,6 +18,7 @@ pub struct DecisionCounters {
     pub reorder_count: u64,
     pub duplicate_count: u64,
     pub nxdomain_count: u64,
+    pub mutate_count: u64,
     pub skipped_count: u64,
 }
 
@@ -32,11 +33,12 @@ enum CounterType {
     Reorder = 6,
     Duplicate = 7,
     NxDomain = 8,
-    Skipped = 9,
+    Mutate = 9,
+    Skipped = 10,
 }
 
 struct LayerMetrics {
-    counters: [AtomicU64; 10],
+    counters: [AtomicU64; 11],
 }
 
 impl LayerMetrics {
@@ -57,6 +59,7 @@ impl LayerMetrics {
             LayerDecision::StageReorder => CounterType::Reorder,
             LayerDecision::Duplicate(_) => CounterType::Duplicate,
             LayerDecision::NxDomain => CounterType::NxDomain,
+            LayerDecision::Mutate(_) => CounterType::Mutate,
         };
         self.counters[ty as usize].fetch_add(1, Ordering::Relaxed);
     }
@@ -77,6 +80,7 @@ impl LayerMetrics {
             reorder_count: load(CounterType::Reorder),
             duplicate_count: load(CounterType::Duplicate),
             nxdomain_count: load(CounterType::NxDomain),
+            mutate_count: load(CounterType::Mutate),
             skipped_count: load(CounterType::Skipped),
         }
     }
@@ -201,6 +205,12 @@ impl ChaosEngine {
                         layer.name()
                     ));
                 }
+                LayerDecision::Mutate(_) => {
+                    return LayerDecision::Error(format!(
+                        "{} returned a payload decision in main pipeline",
+                        layer.name()
+                    ));
+                }
             }
         }
 
@@ -300,6 +310,43 @@ impl ChaosEngine {
         let decision = self.process_pipeline(&ctx);
         record_fault_observability_decision(&decision);
         decision
+    }
+
+    pub fn evaluate_l6_with_buffer(
+        &self,
+        fd: i32,
+        config: &Config,
+        direction: Direction,
+        bytes: u64,
+        buffer: &[u8],
+    ) -> (LayerDecision, Option<Vec<u8>>) {
+        let effective = match direction {
+            Direction::Uplink => config.effective_for_send(),
+            Direction::Downlink => config.effective_for_recv(),
+        };
+        let operation = match direction {
+            Direction::Uplink => Operation::Send,
+            Direction::Downlink => Operation::Recv,
+        };
+        let ctx = PacketContext {
+            fd,
+            bytes,
+            operation,
+            direction: Some(direction),
+            config: &effective,
+            now_ns: crate::monotonic_now_ns(),
+        };
+        let stage_idx = Self::stage_index(LayerStage::L6);
+        if !self.l6.applies_to(&ctx) {
+            self.metrics[stage_idx].record_skipped();
+            return (LayerDecision::Continue, None);
+        }
+        let (decision, maybe_buffer) = self.l6.process_with_buffer(&ctx, buffer);
+        self.metrics[stage_idx].record_decision(&decision);
+        if !matches!(decision, LayerDecision::Continue) {
+            record_fault_observability_decision(&decision);
+        }
+        (decision, maybe_buffer)
     }
 
     pub fn record_stream_bytes(&self, fd: i32, bytes: u64) {

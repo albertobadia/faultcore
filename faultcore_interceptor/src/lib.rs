@@ -1,6 +1,6 @@
 use faultcore_network::{
     Config, Direction, FaultOsiAdvancedMetricsSnapshot, FaultOsiMetricsSnapshot, LayerDecision,
-    PendingDatagram,
+    MutationOutcome, PendingDatagram,
     SetpriorityCompatOutcome, apply_connect_directive, apply_stream_directive,
     bind_fd_to_current_thread, clear_fd_binding, clone_fd_binding, get_current_policy_name,
     global_fault_osi_engine,
@@ -146,6 +146,16 @@ fn duplicate_count_from_decision(decision: LayerDecision) -> u64 {
         LayerDecision::Duplicate(count) => count,
         _ => 0,
     }
+}
+
+fn record_mutation(applied: bool, input_len: usize, output_len: usize) {
+    global_interceptor_runtime().record_mutation_outcome(&MutationOutcome {
+        applied,
+        input_len,
+        output_len,
+        skipped_rules: if applied { 0 } else { 1 },
+        error_count: 0,
+    });
 }
 
 fn maybe_duplicate_common<F, G>(site: &str, sent: ssize_t, mut count_lookup: F, mut send_fn: G)
@@ -494,6 +504,7 @@ fn handle_uplink_send<FConfig, FOrig, FStage, FDuplicate>(
     site: &str,
     s: c_int,
     l: size_t,
+    payload: Option<&[u8]>,
     non_blocking: bool,
     pending: &mut VecDeque<PendingDatagram>,
     config_lookup: FConfig,
@@ -503,12 +514,14 @@ fn handle_uplink_send<FConfig, FOrig, FStage, FDuplicate>(
 ) -> ssize_t
 where
     FConfig: FnOnce() -> Option<Config>,
-    FOrig: FnMut() -> ssize_t,
-    FStage: FnMut(&mut VecDeque<PendingDatagram>) -> ssize_t,
-    FDuplicate: FnOnce(ssize_t),
+    FOrig: FnMut(&[u8]) -> ssize_t,
+    FStage: FnMut(&mut VecDeque<PendingDatagram>, &[u8]) -> ssize_t,
+    FDuplicate: FnOnce(ssize_t, &[u8]),
 {
     let mut staged_reorder = false;
     let mut faults_applied = false;
+    let original_payload = payload.map(|bytes| bytes.to_vec());
+    let mut effective_payload: Vec<u8> = original_payload.clone().unwrap_or_default();
     let result = if let Some(network_cfg) = config_lookup() {
         faults_applied = true;
         for pkt in global_interceptor_runtime()
@@ -524,13 +537,36 @@ where
                 Direction::Uplink,
             )
         });
+        let mutation_result = original_payload.as_deref().map(|raw_payload| {
+            let (_, maybe_mutated) = global_fault_osi_engine().evaluate_l6_with_buffer(
+                s,
+                &network_cfg,
+                Direction::Uplink,
+                raw_payload.len() as u64,
+                raw_payload,
+            );
+            if let Some(ref data) = maybe_mutated {
+                record_mutation(true, raw_payload.len(), data.len());
+            } else {
+                record_mutation(false, raw_payload.len(), raw_payload.len());
+            }
+            (raw_payload, maybe_mutated)
+        });
+        if let Some((raw_payload, maybe_mutated)) = mutation_result.as_ref() {
+            if let Some(data) = maybe_mutated {
+                effective_payload = data.clone();
+            } else {
+                effective_payload = raw_payload.to_vec();
+            }
+        }
+
         let directive =
             global_interceptor_runtime().map_stream_decision(s, decision.clone(), non_blocking);
         if let Some(error) = apply_stream_directive(directive) {
             error as ssize_t
         } else if matches!(decision, LayerDecision::StageReorder) {
             staged_reorder = true;
-            let staged = stage_reorder(pending);
+            let staged = stage_reorder(pending, &effective_payload);
             for pkt in global_interceptor_runtime()
                 .enforce_reorder_window(pending, network_cfg.reorder_window as usize)
             {
@@ -538,16 +574,16 @@ where
             }
             staged
         } else {
-            call_orig()
+            call_orig(&effective_payload)
         }
     } else {
-        call_orig()
+        call_orig(&effective_payload)
     };
 
     if result > 0 {
         record_stream_bytes(s, result as u64);
         if faults_applied && !staged_reorder {
-            duplicate_after_success(result);
+            duplicate_after_success(result, &effective_payload);
         }
         if faults_applied
             && let Some(pkt) =
@@ -591,7 +627,7 @@ where
         });
         let directive =
             global_interceptor_runtime().map_stream_decision(s, decision.clone(), non_blocking);
-        let out = if let Some(error) = apply_stream_directive(directive) {
+        let mut out = if let Some(error) = apply_stream_directive(directive) {
             error as ssize_t
         } else if !non_blocking && matches!(decision, LayerDecision::StageReorder) {
             let first_recv = call_orig();
@@ -624,6 +660,25 @@ where
                 recv_result
             }
         };
+        if out > 0
+            && let Some(pkt) = snapshot(out)
+        {
+            let (_, maybe_mutated) = global_fault_osi_engine().evaluate_l6_with_buffer(
+                s,
+                &network_cfg,
+                Direction::Downlink,
+                out as u64,
+                pkt.data.as_ref(),
+            );
+            if let Some(data) = maybe_mutated {
+                let mut mutated_pkt = pkt;
+                mutated_pkt.data = data.into();
+                out = write_staged(&mutated_pkt);
+                record_mutation(true, out as usize, mutated_pkt.data.len());
+            } else {
+                record_mutation(false, out as usize, out as usize);
+            }
+        }
         (out, true)
     } else {
         (call_orig(), true)
@@ -776,12 +831,36 @@ pub unsafe extern "C" fn write(s: c_int, b: *const c_void, l: size_t) -> ssize_t
             "stream_uplink_pre_write",
             s,
             l,
+            if !b.is_null() && l > 0 {
+                Some(unsafe { std::slice::from_raw_parts(b.cast::<u8>(), l) })
+            } else {
+                None
+            },
             is_non_blocking(s),
             pending,
             || runtime_config_for_fd(s),
-            || unsafe { (ORIG_WRITE)(s, b, l) },
-            |pending| unsafe { stage_reorder_send(pending, b, l, 0) }.unwrap_or(l as ssize_t),
-            |sent| maybe_duplicate_write(s, b, sent),
+            |payload| unsafe {
+                if payload.is_empty() {
+                    (ORIG_WRITE)(s, b, l)
+                } else {
+                    (ORIG_WRITE)(s, payload.as_ptr().cast::<c_void>(), payload.len())
+                }
+            },
+            |pending, payload| unsafe {
+                if payload.is_empty() {
+                    stage_reorder_send(pending, b, l, 0)
+                } else {
+                    stage_reorder_send(pending, payload.as_ptr().cast::<c_void>(), payload.len(), 0)
+                }
+            }
+            .unwrap_or(l as ssize_t),
+            |sent, payload| {
+                if payload.is_empty() {
+                    maybe_duplicate_write(s, b, sent);
+                } else {
+                    maybe_duplicate_write(s, payload.as_ptr().cast::<c_void>(), sent);
+                }
+            },
         )
     });
 
@@ -836,12 +915,36 @@ pub unsafe extern "C" fn send(s: c_int, b: *const c_void, l: size_t, f: c_int) -
             "stream_uplink_pre_send",
             s,
             l,
+            if !b.is_null() && l > 0 {
+                Some(unsafe { std::slice::from_raw_parts(b.cast::<u8>(), l) })
+            } else {
+                None
+            },
             is_non_blocking(s),
             pending,
             || runtime_config_for_fd(s),
-            || unsafe { (ORIG_SEND)(s, b, l, f) },
-            |pending| unsafe { stage_reorder_send(pending, b, l, f) }.unwrap_or(l as ssize_t),
-            |result| maybe_duplicate_send(s, b, result, f),
+            |payload| unsafe {
+                if payload.is_empty() {
+                    (ORIG_SEND)(s, b, l, f)
+                } else {
+                    (ORIG_SEND)(s, payload.as_ptr().cast::<c_void>(), payload.len(), f)
+                }
+            },
+            |pending, payload| unsafe {
+                if payload.is_empty() {
+                    stage_reorder_send(pending, b, l, f)
+                } else {
+                    stage_reorder_send(pending, payload.as_ptr().cast::<c_void>(), payload.len(), f)
+                }
+            }
+            .unwrap_or(l as ssize_t),
+            |result, payload| {
+                if payload.is_empty() {
+                    maybe_duplicate_send(s, b, result, f);
+                } else {
+                    maybe_duplicate_send(s, payload.as_ptr().cast::<c_void>(), result, f);
+                }
+            },
         )
     });
 
@@ -933,15 +1036,59 @@ pub unsafe extern "C" fn sendto(
             "stream_uplink_pre_sendto",
             s,
             l,
+            if !b.is_null() && l > 0 {
+                Some(unsafe { std::slice::from_raw_parts(b.cast::<u8>(), l) })
+            } else {
+                None
+            },
             is_non_blocking(s),
             pending,
             || unsafe { runtime_config_for_addr_or_fd(s, addr, addr_len) },
-            || unsafe { (ORIG_SENDTO)(s, b, l, f, addr, addr_len) },
-            |pending| {
-                unsafe { stage_reorder_sendto(pending, b, l, f, addr, addr_len) }
+            |payload| unsafe {
+                if payload.is_empty() {
+                    (ORIG_SENDTO)(s, b, l, f, addr, addr_len)
+                } else {
+                    (ORIG_SENDTO)(
+                        s,
+                        payload.as_ptr().cast::<c_void>(),
+                        payload.len(),
+                        f,
+                        addr,
+                        addr_len,
+                    )
+                }
+            },
+            |pending, payload| {
+                unsafe {
+                    if payload.is_empty() {
+                        stage_reorder_sendto(pending, b, l, f, addr, addr_len)
+                    } else {
+                        stage_reorder_sendto(
+                            pending,
+                            payload.as_ptr().cast::<c_void>(),
+                            payload.len(),
+                            f,
+                            addr,
+                            addr_len,
+                        )
+                    }
+                }
                     .unwrap_or(l as ssize_t)
             },
-            |result| maybe_duplicate_sendto(s, b, result, f, addr, addr_len),
+            |result, payload| {
+                if payload.is_empty() {
+                    maybe_duplicate_sendto(s, b, result, f, addr, addr_len);
+                } else {
+                    maybe_duplicate_sendto(
+                        s,
+                        payload.as_ptr().cast::<c_void>(),
+                        result,
+                        f,
+                        addr,
+                        addr_len,
+                    );
+                }
+            },
         )
     });
 

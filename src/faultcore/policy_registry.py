@@ -15,6 +15,7 @@ from faultcore.profile_parsers import (
     build_half_open_profile,
     build_packet_duplicate_profile,
     build_packet_reorder_profile,
+    build_payload_mutation_profile,
     build_schedule_profile,
     build_session_budget_profile,
     build_target_profile,
@@ -52,6 +53,7 @@ _REGISTERABLE_FIELDS = (
     "targets",
     "schedule",
     "session_budget",
+    "payload_mutation",
 )
 
 _TRANSPORT_EFFECT_POLICY_KEYS = (
@@ -70,6 +72,7 @@ _TRANSPORT_EFFECT_POLICY_KEYS = (
     "packet_reorder_profile",
     "schedule_profile",
     "session_budget_profile",
+    "payload_mutation_profile",
 )
 
 _OPTIONAL_MAPPING_PROFILE_SPECS: tuple[
@@ -286,6 +289,7 @@ def _build_optional_mapping_profiles(
     half_open: dict[str, Any] | None,
     packet_duplicate: dict[str, Any] | None,
     packet_reorder: dict[str, Any] | None,
+    payload_mutation: dict[str, Any] | None,
 ) -> dict[str, dict[str, Any]]:
     raw_values = {
         "correlated_loss": correlated_loss,
@@ -293,6 +297,7 @@ def _build_optional_mapping_profiles(
         "half_open": half_open,
         "packet_duplicate": packet_duplicate,
         "packet_reorder": packet_reorder,
+        "payload_mutation": payload_mutation,
     }
     profiles: dict[str, dict[str, Any]] = {}
     for field_name, policy_key, builder, defaults in _OPTIONAL_MAPPING_PROFILE_SPECS:
@@ -300,6 +305,29 @@ def _build_optional_mapping_profiles(
         if config is None:
             continue
         profiles[policy_key] = builder(**{key: config.get(key, default) for key, default in defaults.items()})
+
+    payload_mutation_config = _as_mapping(raw_values["payload_mutation"], "payload_mutation")
+    if payload_mutation_config is not None:
+        profiles["payload_mutation_profile"] = build_payload_mutation_profile(
+            enabled=bool(payload_mutation_config.get("enabled", False)),
+            prob=payload_mutation_config.get("prob", "100%"),
+            type=payload_mutation_config.get("type", "none"),
+            target=payload_mutation_config.get("target", "both"),
+            truncate_size=payload_mutation_config.get("truncate_size"),
+            corrupt_count=payload_mutation_config.get("corrupt_count"),
+            corrupt_seed=payload_mutation_config.get("corrupt_seed"),
+            inject_position=payload_mutation_config.get("inject_position"),
+            inject_data=payload_mutation_config.get("inject_data"),
+            replace_find=payload_mutation_config.get("replace_find"),
+            replace_with=payload_mutation_config.get("replace_with"),
+            swap_pos1=payload_mutation_config.get("swap_pos1"),
+            swap_pos2=payload_mutation_config.get("swap_pos2"),
+            min_size=payload_mutation_config.get("min_size"),
+            max_size=payload_mutation_config.get("max_size"),
+            every_n_packets=int(payload_mutation_config.get("every_n_packets", 1)),
+            dry_run=bool(payload_mutation_config.get("dry_run", False)),
+            max_buffer_size=payload_mutation_config.get("max_buffer_size", "64kb"),
+        )
     return profiles
 
 
@@ -325,6 +353,7 @@ def register_policy(
     half_open: dict[str, Any] | None = None,
     packet_duplicate: dict[str, Any] | None = None,
     packet_reorder: dict[str, Any] | None = None,
+    payload_mutation: dict[str, Any] | None = None,
     dns: dict[str, Any] | None = None,
     targets: list[str | dict[str, Any]] | None = None,
     schedule: dict[str, Any] | None = None,
@@ -368,6 +397,7 @@ def register_policy(
             half_open=half_open,
             packet_duplicate=packet_duplicate,
             packet_reorder=packet_reorder,
+            payload_mutation=payload_mutation,
         )
     )
 

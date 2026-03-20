@@ -24,6 +24,32 @@ _PROFILE_WRITERS = {
         {"prob_ppm": 0, "max_delay_ns": 0, "window": 1},
     ),
     "dns_profile": ("write_dns", {"delay_ms": None, "timeout_ms": None, "nxdomain_ppm": None}),
+    "payload_mutation_profile": (
+        "write_payload_mutation",
+        {
+            "enabled": 0,
+            "prob_ppm": 0,
+            "type": 0,
+            "target": 0,
+            "truncate_size": 0,
+            "corrupt_count": 0,
+            "corrupt_seed": 0,
+            "inject_position": 0,
+            "inject_data": b"",
+            "inject_len": 0,
+            "replace_find": b"",
+            "replace_find_len": 0,
+            "replace_with": b"",
+            "replace_with_len": 0,
+            "swap_pos1": 0,
+            "swap_pos2": 0,
+            "min_size": 0,
+            "max_size": 0,
+            "every_n_packets": 1,
+            "dry_run": 0,
+            "max_buffer_size": 65536,
+        },
+    ),
 }
 
 _SCALAR_WRITERS = {

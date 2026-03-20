@@ -28,7 +28,8 @@ pub use interceptor_bridge::{
 };
 pub use layers::{
     Direction, L1Chaos, L2QoS, L3Routing, L4Transport, L5Session, L6Presentation, L7Resolver,
-    Layer, LayerDecision, LayerStage, Operation, PacketContext,
+    Layer, LayerDecision, LayerStage, Mutation, MutationKind, MutationOutcome, MutationTarget,
+    Operation, PacketContext,
 };
 pub use runtime::{
     ConnectDirective, InterceptorRuntime, PendingDatagram, StreamDirective,
@@ -80,6 +81,7 @@ pub struct FaultOsiLayerMetricsSnapshot {
     pub reorder_count: u64,
     pub duplicate_count: u64,
     pub nxdomain_count: u64,
+    pub mutate_count: u64,
     pub skipped_count: u64,
 }
 
@@ -134,6 +136,7 @@ pub fn global_fault_osi_metrics_snapshot() -> FaultOsiMetricsSnapshot {
             reorder_count: counters.reorder_count,
             duplicate_count: counters.duplicate_count,
             nxdomain_count: counters.nxdomain_count,
+            mutate_count: counters.mutate_count,
             skipped_count: counters.skipped_count,
         };
     }
@@ -158,7 +161,7 @@ pub struct Endpoint {
     pub protocol: u64,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct Config {
     pub latency_ns: u64,
     pub jitter_ns: u64,
@@ -213,12 +216,39 @@ pub struct Config {
     pub session_budget_timeout_ms: u64,
     pub session_error_kind: u64,
     pub policy_seed: u64,
+    pub payload_mutation_enabled: u64,
+    pub payload_mutation_prob_ppm: u64,
+    pub payload_mutation_type: u64,
+    pub payload_mutation_target: u64,
+    pub payload_mutation_truncate_size: u64,
+    pub payload_mutation_corrupt_count: u64,
+    pub payload_mutation_corrupt_seed: u64,
+    pub payload_mutation_inject_position: u64,
+    pub payload_mutation_inject_data: [u8; 64],
+    pub payload_mutation_inject_len: u64,
+    pub payload_mutation_replace_find: [u8; 32],
+    pub payload_mutation_replace_find_len: u64,
+    pub payload_mutation_replace_with: [u8; 32],
+    pub payload_mutation_replace_with_len: u64,
+    pub payload_mutation_swap_pos1: u64,
+    pub payload_mutation_swap_pos2: u64,
+    pub payload_mutation_min_size: u64,
+    pub payload_mutation_max_size: u64,
+    pub payload_mutation_every_n_packets: u64,
+    pub payload_mutation_dry_run: u64,
+    pub payload_mutation_max_buffer_size: u64,
     pub ruleset_generation: u64,
     pub schedule_type: u64,
     pub schedule_param_a_ns: u64,
     pub schedule_param_b_ns: u64,
     pub schedule_param_c_ns: u64,
     pub schedule_started_monotonic_ns: u64,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        unsafe { core::mem::zeroed() }
+    }
 }
 
 impl Config {
@@ -252,6 +282,7 @@ impl Config {
             || self.target_enabled > 0
             || self.session_budget_enabled > 0
             || self.policy_seed > 0
+            || self.payload_mutation_enabled > 0
             || self.schedule_type > 0
     }
 

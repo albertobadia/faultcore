@@ -14,7 +14,7 @@ pub const FAULTCORE_SHM_SIZE: usize = ((MAX_FDS + MAX_TIDS)
     + (MAX_FDS * core::mem::size_of::<u64>());
 
 #[repr(C, packed)]
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct FaultcoreConfig {
     pub magic: u32,
     pub version: u64,
@@ -78,6 +78,34 @@ pub struct FaultcoreConfig {
     pub session_budget_timeout_ms: u64,
     pub session_error_kind: u64,
     pub policy_seed: u64,
+    pub payload_mutation_enabled: u64,
+    pub payload_mutation_prob_ppm: u64,
+    pub payload_mutation_type: u64,
+    pub payload_mutation_target: u64,
+    pub payload_mutation_truncate_size: u64,
+    pub payload_mutation_corrupt_count: u64,
+    pub payload_mutation_corrupt_seed: u64,
+    pub payload_mutation_inject_position: u64,
+    pub payload_mutation_inject_data: [u8; 64],
+    pub payload_mutation_inject_len: u64,
+    pub payload_mutation_replace_find: [u8; 32],
+    pub payload_mutation_replace_find_len: u64,
+    pub payload_mutation_replace_with: [u8; 32],
+    pub payload_mutation_replace_with_len: u64,
+    pub payload_mutation_swap_pos1: u64,
+    pub payload_mutation_swap_pos2: u64,
+    pub payload_mutation_min_size: u64,
+    pub payload_mutation_max_size: u64,
+    pub payload_mutation_every_n_packets: u64,
+    pub payload_mutation_dry_run: u64,
+    pub payload_mutation_max_buffer_size: u64,
+    pub payload_mutation_reserved: [u64; 8],
+}
+
+impl Default for FaultcoreConfig {
+    fn default() -> Self {
+        unsafe { core::mem::zeroed() }
+    }
 }
 
 #[repr(C)]
@@ -148,6 +176,10 @@ impl FaultcoreConfig {
             && self.session_budget_enabled <= 1
             && self.session_action <= 3
             && self.session_error_kind <= 3
+            && self.payload_mutation_prob_ppm <= 1_000_000
+            && self.payload_mutation_type <= 6
+            && self.payload_mutation_target <= 2
+            && self.payload_mutation_dry_run <= 1
     }
 
     pub fn into_network_config(self) -> Config {
@@ -205,6 +237,27 @@ impl FaultcoreConfig {
             session_budget_timeout_ms: self.session_budget_timeout_ms,
             session_error_kind: self.session_error_kind,
             policy_seed: self.policy_seed,
+            payload_mutation_enabled: self.payload_mutation_enabled,
+            payload_mutation_prob_ppm: self.payload_mutation_prob_ppm,
+            payload_mutation_type: self.payload_mutation_type,
+            payload_mutation_target: self.payload_mutation_target,
+            payload_mutation_truncate_size: self.payload_mutation_truncate_size,
+            payload_mutation_corrupt_count: self.payload_mutation_corrupt_count,
+            payload_mutation_corrupt_seed: self.payload_mutation_corrupt_seed,
+            payload_mutation_inject_position: self.payload_mutation_inject_position,
+            payload_mutation_inject_data: self.payload_mutation_inject_data,
+            payload_mutation_inject_len: self.payload_mutation_inject_len,
+            payload_mutation_replace_find: self.payload_mutation_replace_find,
+            payload_mutation_replace_find_len: self.payload_mutation_replace_find_len,
+            payload_mutation_replace_with: self.payload_mutation_replace_with,
+            payload_mutation_replace_with_len: self.payload_mutation_replace_with_len,
+            payload_mutation_swap_pos1: self.payload_mutation_swap_pos1,
+            payload_mutation_swap_pos2: self.payload_mutation_swap_pos2,
+            payload_mutation_min_size: self.payload_mutation_min_size,
+            payload_mutation_max_size: self.payload_mutation_max_size,
+            payload_mutation_every_n_packets: self.payload_mutation_every_n_packets,
+            payload_mutation_dry_run: self.payload_mutation_dry_run,
+            payload_mutation_max_buffer_size: self.payload_mutation_max_buffer_size,
             ruleset_generation: self.ruleset_generation,
             schedule_type: self.schedule_type,
             schedule_param_a_ns: self.schedule_param_a_ns,

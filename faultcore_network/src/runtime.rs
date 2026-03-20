@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use libc::{
@@ -9,6 +10,7 @@ use libc::{
 use parking_lot::Mutex;
 
 use crate::LayerDecision;
+use crate::MutationOutcome;
 
 fn sleep_if_needed(ns: u64) {
     if ns > 0 {
@@ -41,6 +43,12 @@ pub struct InterceptorRuntime {
     latency_start_by_fd: Mutex<HashMap<i32, Instant>>,
     reorder_pending_by_fd: Mutex<HashMap<i32, Arc<Mutex<VecDeque<PendingDatagram>>>>>,
     reorder_pending_recv_by_fd: Mutex<HashMap<i32, Arc<Mutex<VecDeque<PendingDatagram>>>>>,
+    mutation_attempt_total: AtomicU64,
+    mutation_applied_total: AtomicU64,
+    mutation_skipped_total: AtomicU64,
+    mutation_error_total: AtomicU64,
+    mutation_bytes_in_total: AtomicU64,
+    mutation_bytes_out_total: AtomicU64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -235,7 +243,28 @@ impl InterceptorRuntime {
             latency_start_by_fd: Mutex::new(HashMap::new()),
             reorder_pending_by_fd: Mutex::new(HashMap::new()),
             reorder_pending_recv_by_fd: Mutex::new(HashMap::new()),
+            mutation_attempt_total: AtomicU64::new(0),
+            mutation_applied_total: AtomicU64::new(0),
+            mutation_skipped_total: AtomicU64::new(0),
+            mutation_error_total: AtomicU64::new(0),
+            mutation_bytes_in_total: AtomicU64::new(0),
+            mutation_bytes_out_total: AtomicU64::new(0),
         }
+    }
+
+    pub fn record_mutation_outcome(&self, outcome: &MutationOutcome) {
+        self.mutation_attempt_total.fetch_add(1, Ordering::Relaxed);
+        if outcome.applied {
+            self.mutation_applied_total.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.mutation_skipped_total.fetch_add(1, Ordering::Relaxed);
+        }
+        self.mutation_error_total
+            .fetch_add(outcome.error_count, Ordering::Relaxed);
+        self.mutation_bytes_in_total
+            .fetch_add(outcome.input_len as u64, Ordering::Relaxed);
+        self.mutation_bytes_out_total
+            .fetch_add(outcome.output_len as u64, Ordering::Relaxed);
     }
 
     pub fn clear_fd_state(&self, fd: i32) {
@@ -421,6 +450,12 @@ impl InterceptorRuntime {
                     ret: -1,
                 }
             }
+            LayerDecision::Mutate(_) => {
+                ConnectDirective::ReturnErrno {
+                    errno: EIO,
+                    ret: -1,
+                }
+            }
         }
     }
 
@@ -431,7 +466,10 @@ impl InterceptorRuntime {
         is_non_blocking: bool,
     ) -> StreamDirective {
         match decision {
-            LayerDecision::Continue | LayerDecision::StageReorder | LayerDecision::Duplicate(_) => {
+            LayerDecision::Continue
+            | LayerDecision::StageReorder
+            | LayerDecision::Duplicate(_)
+            | LayerDecision::Mutate(_) => {
                 StreamDirective::Continue
             }
             LayerDecision::Drop => StreamDirective::ReturnErrno {
@@ -475,7 +513,8 @@ impl InterceptorRuntime {
             | LayerDecision::Error(_)
             | LayerDecision::ConnectionErrorKind(_)
             | LayerDecision::StageReorder
-            | LayerDecision::Duplicate(_) => Some(EAI_FAIL),
+            | LayerDecision::Duplicate(_)
+            | LayerDecision::Mutate(_) => Some(EAI_FAIL),
         }
     }
 }

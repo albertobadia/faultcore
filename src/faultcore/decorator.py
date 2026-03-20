@@ -24,6 +24,7 @@ from faultcore.profile_parsers import (
     build_half_open_profile as _build_half_open_profile,
     build_packet_duplicate_profile as _build_packet_duplicate_profile,
     build_packet_reorder_profile as _build_packet_reorder_profile,
+    build_payload_mutation_profile as _build_payload_mutation_profile,
     build_session_budget_profile as _build_session_budget_profile,
     build_timeout_profile as _build_timeout_profile,
     parse_burst_loss as _parse_burst_loss,
@@ -83,6 +84,7 @@ _POLICY_FIELDS = (
     "target_profiles",
     "schedule_profile",
     "session_budget_profile",
+    "payload_mutation_profile",
 )
 
 
@@ -250,6 +252,51 @@ def packet_reorder(
     )
 
 
+def payload_mutation(
+    *,
+    enabled: bool,
+    prob: str = "100%",
+    type: str,
+    target: str = "both",
+    truncate_size: str | None = None,
+    corrupt_count: int | None = None,
+    corrupt_seed: str | int | None = None,
+    inject_position: int | None = None,
+    inject_data: str | bytes | None = None,
+    replace_find: str | bytes | None = None,
+    replace_with: str | bytes | None = None,
+    swap_pos1: int | None = None,
+    swap_pos2: int | None = None,
+    min_size: str | None = None,
+    max_size: str | None = None,
+    every_n_packets: int = 1,
+    dry_run: bool = False,
+    max_buffer_size: str = "64kb",
+) -> Callable[[Callable[..., Any]], FaultWrapper]:
+    return _with_wrapper(
+        payload_mutation_profile=_build_payload_mutation_profile(
+            enabled=enabled,
+            prob=prob,
+            type=type,
+            target=target,
+            truncate_size=truncate_size,
+            corrupt_count=corrupt_count,
+            corrupt_seed=corrupt_seed,
+            inject_position=inject_position,
+            inject_data=inject_data,
+            replace_find=replace_find,
+            replace_with=replace_with,
+            swap_pos1=swap_pos1,
+            swap_pos2=swap_pos2,
+            min_size=min_size,
+            max_size=max_size,
+            every_n_packets=every_n_packets,
+            dry_run=dry_run,
+            max_buffer_size=max_buffer_size,
+        )
+    )
+
+
 def fault(policy_name: str = "auto") -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(func)
@@ -287,6 +334,7 @@ __all__ = [
     "packet_duplicate",
     "packet_loss",
     "packet_reorder",
+    "payload_mutation",
     "rate",
     "register_policy",
     "session_budget",

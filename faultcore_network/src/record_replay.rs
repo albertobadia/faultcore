@@ -36,6 +36,7 @@ impl RecordReplayEvent {
             LayerDecision::StageReorder => ("stage_reorder", 0),
             LayerDecision::Duplicate(extra) => ("duplicate", *extra),
             LayerDecision::NxDomain => ("nxdomain", 0),
+            LayerDecision::Mutate(_) => ("mutate", 0),
         };
         Self {
             site: site.to_string(),
@@ -61,6 +62,7 @@ impl RecordReplayEvent {
             "stage_reorder" => LayerDecision::StageReorder,
             "duplicate" => LayerDecision::Duplicate(self.value),
             "nxdomain" => LayerDecision::NxDomain,
+            "mutate" => LayerDecision::Continue,
             _ => return None,
         })
     }

@@ -17,7 +17,7 @@ MAX_FDS = 131072
 MAX_TIDS = 65536
 MAX_POLICIES = 1024
 MAX_TARGET_RULES_PER_TID = 8
-CONFIG_SIZE = 544
+CONFIG_SIZE = 880
 POLICY_STATE_SIZE = 56
 TARGET_RULE_SIZE = 152
 SHM_SIZE = (
@@ -113,6 +113,27 @@ _OFFSET_SESSION_ACTION = 512
 _OFFSET_SESSION_BUDGET_TIMEOUT_MS = 520
 _OFFSET_SESSION_ERROR_KIND = 528
 _OFFSET_POLICY_SEED = 536
+_OFFSET_PAYLOAD_MUTATION_ENABLED = 544
+_OFFSET_PAYLOAD_MUTATION_PROB_PPM = 552
+_OFFSET_PAYLOAD_MUTATION_TYPE = 560
+_OFFSET_PAYLOAD_MUTATION_TARGET = 568
+_OFFSET_PAYLOAD_MUTATION_TRUNCATE_SIZE = 576
+_OFFSET_PAYLOAD_MUTATION_CORRUPT_COUNT = 584
+_OFFSET_PAYLOAD_MUTATION_CORRUPT_SEED = 592
+_OFFSET_PAYLOAD_MUTATION_INJECT_POSITION = 600
+_OFFSET_PAYLOAD_MUTATION_INJECT_DATA = 608
+_OFFSET_PAYLOAD_MUTATION_INJECT_LEN = 672
+_OFFSET_PAYLOAD_MUTATION_REPLACE_FIND = 680
+_OFFSET_PAYLOAD_MUTATION_REPLACE_FIND_LEN = 712
+_OFFSET_PAYLOAD_MUTATION_REPLACE_WITH = 720
+_OFFSET_PAYLOAD_MUTATION_REPLACE_WITH_LEN = 752
+_OFFSET_PAYLOAD_MUTATION_SWAP_POS1 = 760
+_OFFSET_PAYLOAD_MUTATION_SWAP_POS2 = 768
+_OFFSET_PAYLOAD_MUTATION_MIN_SIZE = 776
+_OFFSET_PAYLOAD_MUTATION_MAX_SIZE = 784
+_OFFSET_PAYLOAD_MUTATION_EVERY_N_PACKETS = 792
+_OFFSET_PAYLOAD_MUTATION_DRY_RUN = 800
+_OFFSET_PAYLOAD_MUTATION_MAX_BUFFER_SIZE = 808
 
 _POLICY_STATE_MAGIC_OFFSET = 0
 _POLICY_STATE_NAME_OFFSET = 4
@@ -708,6 +729,72 @@ class SHMWriter:
         if int(seed) < 0:
             raise ValueError("policy seed must be >= 0")
         self._write_fields(tid, ((_OFFSET_POLICY_SEED, int(seed)),))
+
+    def write_payload_mutation(
+        self,
+        tid: int,
+        *,
+        enabled: int,
+        prob_ppm: int,
+        type: int,
+        target: int,
+        truncate_size: int,
+        corrupt_count: int,
+        corrupt_seed: int,
+        inject_position: int,
+        inject_data: bytes,
+        inject_len: int,
+        replace_find: bytes,
+        replace_find_len: int,
+        replace_with: bytes,
+        replace_with_len: int,
+        swap_pos1: int,
+        swap_pos2: int,
+        min_size: int,
+        max_size: int,
+        every_n_packets: int,
+        dry_run: int,
+        max_buffer_size: int,
+    ) -> None:
+        normalized_inject = bytes(inject_data[:64]).ljust(64, b"\x00")
+        normalized_replace_find = bytes(replace_find[:32]).ljust(32, b"\x00")
+        normalized_replace_with = bytes(replace_with[:32]).ljust(32, b"\x00")
+
+        def writer(offset: int) -> None:
+            self._pack_u64_fields(
+                offset,
+                (
+                    (_OFFSET_PAYLOAD_MUTATION_ENABLED, int(enabled)),
+                    (_OFFSET_PAYLOAD_MUTATION_PROB_PPM, int(prob_ppm)),
+                    (_OFFSET_PAYLOAD_MUTATION_TYPE, int(type)),
+                    (_OFFSET_PAYLOAD_MUTATION_TARGET, int(target)),
+                    (_OFFSET_PAYLOAD_MUTATION_TRUNCATE_SIZE, int(truncate_size)),
+                    (_OFFSET_PAYLOAD_MUTATION_CORRUPT_COUNT, int(corrupt_count)),
+                    (_OFFSET_PAYLOAD_MUTATION_CORRUPT_SEED, int(corrupt_seed)),
+                    (_OFFSET_PAYLOAD_MUTATION_INJECT_POSITION, int(inject_position)),
+                    (_OFFSET_PAYLOAD_MUTATION_INJECT_LEN, int(inject_len)),
+                    (_OFFSET_PAYLOAD_MUTATION_REPLACE_FIND_LEN, int(replace_find_len)),
+                    (_OFFSET_PAYLOAD_MUTATION_REPLACE_WITH_LEN, int(replace_with_len)),
+                    (_OFFSET_PAYLOAD_MUTATION_SWAP_POS1, int(swap_pos1)),
+                    (_OFFSET_PAYLOAD_MUTATION_SWAP_POS2, int(swap_pos2)),
+                    (_OFFSET_PAYLOAD_MUTATION_MIN_SIZE, int(min_size)),
+                    (_OFFSET_PAYLOAD_MUTATION_MAX_SIZE, int(max_size)),
+                    (_OFFSET_PAYLOAD_MUTATION_EVERY_N_PACKETS, int(every_n_packets)),
+                    (_OFFSET_PAYLOAD_MUTATION_DRY_RUN, int(dry_run)),
+                    (_OFFSET_PAYLOAD_MUTATION_MAX_BUFFER_SIZE, int(max_buffer_size)),
+                ),
+            )
+            self._mmap[
+                offset + _OFFSET_PAYLOAD_MUTATION_INJECT_DATA : offset + _OFFSET_PAYLOAD_MUTATION_INJECT_DATA + 64
+            ] = normalized_inject
+            self._mmap[
+                offset + _OFFSET_PAYLOAD_MUTATION_REPLACE_FIND : offset + _OFFSET_PAYLOAD_MUTATION_REPLACE_FIND + 32
+            ] = normalized_replace_find
+            self._mmap[
+                offset + _OFFSET_PAYLOAD_MUTATION_REPLACE_WITH : offset + _OFFSET_PAYLOAD_MUTATION_REPLACE_WITH + 32
+            ] = normalized_replace_with
+
+        self._write_with_generation_publish(tid, writer)
 
     def write_policy_name(self, name: str | None) -> None:
         name_bytes = name.encode("utf-8")[:32] if name else b"\x00" * 32

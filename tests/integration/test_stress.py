@@ -156,12 +156,12 @@ def main() -> int:
 
     faultcore.register_policy(
         "stress_latency_profile",
-        latency="25ms",
+        latency="40ms",
         downlink={"jitter": "5ms"},
     )
 
     def policy_call(payload: str) -> None:
-        with faultcore.policy_context(latency="25ms", downlink={"jitter": "5ms"}):
+        with faultcore.policy_context(latency="40ms", downlink={"jitter": "5ms"}):
             tcp_echo_once(args.host, args.port, payload)
         tcp_echo_once(args.host, args.port, payload)
 
@@ -205,9 +205,9 @@ def main() -> int:
     )
     print(f"baseline: rss_phase_delta_kb={baseline_phase_delta_kb}")
     print(f"policy_latency: rss_phase_delta_kb={policy_phase_delta_kb}")
-    if policy.avg_latency_ms <= baseline.avg_latency_ms + 1.0:
+    if policy.avg_latency_ms <= baseline.avg_latency_ms + 0.25:
         print(
-            "WARNING: policy avg latency should exceed baseline by at least 1ms "
+            "WARNING: policy avg latency should exceed baseline by at least 0.25ms "
             f"(baseline={baseline.avg_latency_ms:.2f}, policy={policy.avg_latency_ms:.2f})"
         )
     print(

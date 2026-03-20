@@ -28,6 +28,7 @@ pub struct FaultTypeCountersSnapshot {
     pub reorder_count: u64,
     pub duplicate_count: u64,
     pub nxdomain_count: u64,
+    pub mutate_count: u64,
 }
 
 #[repr(C)]
@@ -80,6 +81,7 @@ struct FaultCounters {
     reorder_count: AtomicU64,
     duplicate_count: AtomicU64,
     nxdomain_count: AtomicU64,
+    mutate_count: AtomicU64,
 }
 
 impl FaultCounters {
@@ -93,6 +95,7 @@ impl FaultCounters {
             reorder_count: AtomicU64::new(0),
             duplicate_count: AtomicU64::new(0),
             nxdomain_count: AtomicU64::new(0),
+            mutate_count: AtomicU64::new(0),
         }
     }
 
@@ -105,6 +108,7 @@ impl FaultCounters {
         self.reorder_count.store(0, Ordering::Relaxed);
         self.duplicate_count.store(0, Ordering::Relaxed);
         self.nxdomain_count.store(0, Ordering::Relaxed);
+        self.mutate_count.store(0, Ordering::Relaxed);
     }
 
     fn snapshot(&self) -> FaultTypeCountersSnapshot {
@@ -117,6 +121,7 @@ impl FaultCounters {
             reorder_count: self.reorder_count.load(Ordering::Relaxed),
             duplicate_count: self.duplicate_count.load(Ordering::Relaxed),
             nxdomain_count: self.nxdomain_count.load(Ordering::Relaxed),
+            mutate_count: self.mutate_count.load(Ordering::Relaxed),
         }
     }
 }
@@ -174,6 +179,9 @@ impl AdvancedMetrics {
             }
             LayerDecision::NxDomain => {
                 self.fault_counters.nxdomain_count.fetch_add(1, Ordering::Relaxed);
+            }
+            LayerDecision::Mutate(_) => {
+                self.fault_counters.mutate_count.fetch_add(1, Ordering::Relaxed);
             }
         }
     }

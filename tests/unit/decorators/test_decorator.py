@@ -91,6 +91,10 @@ class TestComplexDecorators:
             (lambda: faultcore.packet_reorder(prob="5%"), "write_packet_reorder"),
             (lambda: faultcore.dns(delay="500ms"), "write_dns"),
             (lambda: faultcore.session_budget(max_tx="1kb"), "write_session_budget"),
+            (
+                lambda: faultcore.payload_mutation(enabled=True, type="truncate", truncate_size="1kb"),
+                "write_payload_mutation",
+            ),
         ],
     )
     def test_profile_writes(self, mock_shm, decorator_call, writer_method):

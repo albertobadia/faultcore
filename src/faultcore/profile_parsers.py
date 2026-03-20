@@ -401,6 +401,101 @@ def build_packet_reorder_profile(
     }
 
 
+def _parse_mutation_type(value: str) -> int:
+    mapping = {
+        "none": 0,
+        "truncate": 1,
+        "corrupt_bytes": 2,
+        "inject_bytes": 3,
+        "replace_pattern": 4,
+        "corrupt_encoding": 5,
+        "swap_bytes": 6,
+    }
+    normalized = _non_empty_normalized(value, "payload_mutation type must be non-empty")
+    if normalized not in mapping:
+        raise ValueError(
+            "payload_mutation type must be one of: "
+            "none, truncate, corrupt_bytes, inject_bytes, replace_pattern, corrupt_encoding, swap_bytes"
+        )
+    return mapping[normalized]
+
+
+def _parse_mutation_target(value: str) -> int:
+    mapping = {
+        "both": 0,
+        "uplink": 1,
+        "uplink_only": 1,
+        "downlink": 2,
+        "downlink_only": 2,
+    }
+    normalized = _non_empty_normalized(value, "payload_mutation target must be non-empty")
+    if normalized not in mapping:
+        raise ValueError("payload_mutation target must be one of: both, uplink_only, downlink_only")
+    return mapping[normalized]
+
+
+def _parse_mutation_bytes(value: str | bytes | None, max_len: int) -> tuple[bytes, int]:
+    if value is None:
+        return b"", 0
+    if isinstance(value, bytes):
+        data = value
+    elif isinstance(value, str):
+        data = value.encode("utf-8")
+    else:
+        raise TypeError("payload_mutation bytes values must be str or bytes")
+    clipped = data[:max_len]
+    return clipped, len(clipped)
+
+
+def build_payload_mutation_profile(
+    *,
+    enabled: bool,
+    prob: str = "100%",
+    type: str,
+    target: str = "both",
+    truncate_size: str | None = None,
+    corrupt_count: int | None = None,
+    corrupt_seed: str | int | None = None,
+    inject_position: int | None = None,
+    inject_data: str | bytes | None = None,
+    replace_find: str | bytes | None = None,
+    replace_with: str | bytes | None = None,
+    swap_pos1: int | None = None,
+    swap_pos2: int | None = None,
+    min_size: str | None = None,
+    max_size: str | None = None,
+    every_n_packets: int = 1,
+    dry_run: bool = False,
+    max_buffer_size: str = "64kb",
+) -> dict[str, object]:
+    inject_bytes, inject_len = _parse_mutation_bytes(inject_data, 64)
+    replace_find_bytes, replace_find_len = _parse_mutation_bytes(replace_find, 32)
+    replace_with_bytes, replace_with_len = _parse_mutation_bytes(replace_with, 32)
+    return {
+        "enabled": 1 if enabled else 0,
+        "prob_ppm": parse_packet_loss(prob),
+        "type": _parse_mutation_type(type),
+        "target": _parse_mutation_target(target),
+        "truncate_size": parse_size(truncate_size) if truncate_size is not None else 0,
+        "corrupt_count": _as_non_negative_int(corrupt_count or 0, "payload_mutation corrupt_count must be >= 0"),
+        "corrupt_seed": parse_seed(corrupt_seed or 0),
+        "inject_position": _as_non_negative_int(inject_position or 0, "payload_mutation inject_position must be >= 0"),
+        "inject_data": inject_bytes,
+        "inject_len": inject_len,
+        "replace_find": replace_find_bytes,
+        "replace_find_len": replace_find_len,
+        "replace_with": replace_with_bytes,
+        "replace_with_len": replace_with_len,
+        "swap_pos1": _as_non_negative_int(swap_pos1 or 0, "payload_mutation swap_pos1 must be >= 0"),
+        "swap_pos2": _as_non_negative_int(swap_pos2 or 0, "payload_mutation swap_pos2 must be >= 0"),
+        "min_size": parse_size(min_size) if min_size is not None else 0,
+        "max_size": parse_size(max_size) if max_size is not None else 0,
+        "every_n_packets": _as_non_negative_int(every_n_packets, "payload_mutation every_n_packets must be >= 0"),
+        "dry_run": 1 if dry_run else 0,
+        "max_buffer_size": parse_size(max_buffer_size),
+    }
+
+
 def build_dns_profile(
     *,
     delay: str | None = None,
