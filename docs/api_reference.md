@@ -16,6 +16,7 @@ flowchart TD
     D["faultcore decorators"] --> T["Network timeouts and QoS<br/>timeout, rate"]
     D --> L["Loss and transport faults<br/>packet_loss, burst_loss, correlated_loss,<br/>connection_error, half_open"]
     D --> R["Packet behavior<br/>packet_duplicate, packet_reorder"]
+    D --> M["Payload mutation<br/>payload_mutation"]
     D --> N["DNS faults<br/>dns (delay, timeout, nxdomain)"]
     D --> G["Directional profiles<br/>uplink, downlink"]
     D --> P["Policy application<br/>fault, policy_context"]
@@ -94,6 +95,47 @@ Inject packet reordering on stream paths.
 - `max_delay`: maximum delay for reordered packets (duration string like `"50ms"`)
 - `window`: number of packets to hold before releasing reordered ones
 
+### `payload_mutation(...)`
+
+Configure deterministic L6 payload mutation for stream operations.
+
+```python
+payload_mutation(
+    *,
+    enabled: bool,
+    prob: str = "100%",
+    type: str,
+    target: str = "both",
+    truncate_size: str | None = None,
+    corrupt_count: int | None = None,
+    corrupt_seed: str | int | None = None,
+    inject_position: int | None = None,
+    inject_data: str | bytes | None = None,
+    replace_find: str | bytes | None = None,
+    replace_with: str | bytes | None = None,
+    swap_pos1: int | None = None,
+    swap_pos2: int | None = None,
+    min_size: str | None = None,
+    max_size: str | None = None,
+    every_n_packets: int = 1,
+    dry_run: bool = False,
+    max_buffer_size: str = "64kb",
+)
+```
+
+Key fields:
+- `enabled`: enable/disable the mutation profile.
+- `prob`: probability of mutation (`"10%"`, `"1000ppm"`, etc.).
+- `type`: one of `none`, `truncate`, `corrupt_bytes`, `inject_bytes`, `replace_pattern`, `corrupt_encoding`, `swap_bytes`.
+- `target`: `both`, `uplink_only`, or `downlink_only`.
+- `every_n_packets`: apply cadence gate (`1` means every packet).
+- `dry_run`: evaluate and report mutation without changing bytes.
+- `max_buffer_size`: hard cap for mutation output.
+
+Operation scope:
+- Mutations apply to stream send/recv operations.
+- Mutations do not apply to connect and DNS operations.
+
 ### `dns(*, delay: str | None = None, timeout: str | None = None, nxdomain: str | None = None)`
 
 Inject DNS lookup faults. Parameters accept duration strings (e.g., `"50ms"`, `"1s"`) or probability values (e.g., `"100%"`).
@@ -150,6 +192,7 @@ register_policy(
     targets: list[str | dict[str, Any]] | None = None,
     schedule: dict[str, Any] | None = None,
     session_budget: dict[str, Any] | None = None,
+    payload_mutation: dict[str, Any] | None = None,
 ) -> None
 ```
 
@@ -159,6 +202,7 @@ Notes:
 - `rate` accepts bandwidth string (e.g., `"10mbps"`, `"1gbps"`).
 - `seed` provides deterministic random behavior when set.
 - `session_budget` supports `max_tx`, `max_rx` (size strings like "1kb"), `max_ops`, `max_duration` with required `action` (`drop`/`timeout`/`connection_error`). For `action=timeout`, also specify `budget_timeout`. For `action=connection_error`, optionally specify `error` (`reset`/`refused`/`unreachable`).
+- `payload_mutation` accepts the same schema as `payload_mutation(...)` and is normalized into SHM fields.
 
 ### `targets: list[str | dict[str, Any]] | None`
 

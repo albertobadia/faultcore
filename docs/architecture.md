@@ -87,7 +87,7 @@ Diagram focus: runtime interaction order from Python write to syscall result.
 - `layers/l3_routing.rs`: jitter/routing variance.
 - `layers/l4_transport.rs`: connect/recv timeouts and transport-level error injection.
 - `layers/l5_session.rs`: session-level budget pre-checks (`max_bytes_tx/rx`, `max_ops`, `max_duration_ms`) with terminal actions.
-- `layers/l6_presentation.rs`: presentation-level placeholder.
+- `layers/l6_presentation.rs`: deterministic payload mutation decisions and buffer-aware mutation for stream operations.
 - `layers/l7_resolver.rs`: DNS delay/timeout/NXDOMAIN decisions.
 - `chaos_engine.rs`: strict L1..L7 orchestration and stage metrics.
 - `runtime.rs`: interceptor runtime state (non-blocking delay tracking, reorder queues) and decision-to-directive mapping.
@@ -113,9 +113,37 @@ Diagram focus: runtime interaction order from Python write to syscall result.
 - Stage order is fixed: `L1 -> L2 -> L3 -> L4 -> L5 -> L6 -> L7`.
 - Main pipeline accepts terminal outcomes (`Drop`, `TimeoutMs`, `ConnectionErrorKind`, `NxDomain`) and short-circuits.
 - Delay decisions are accumulated.
+- L6 can emit `LayerDecision::Mutate(Vec<Mutation>)` for payload transformation in stream paths.
 - Reorder and duplicate are post-routing stream behaviors, handled outside main pipeline.
 - DNS path evaluates resolver layer behavior and skips non-DNS effects by layer applicability.
 - Gilbert-Elliott correlated-loss state is tracked per FD in `L1Chaos` to avoid cross-flow coupling.
+
+### L6 Payload Mutation Semantics
+
+- Applies only to stream operations (`Send`, `Recv`).
+- Never applies to `Connect` or `DnsLookup`.
+- Directional targeting:
+  - `both`
+  - `uplink_only`
+  - `downlink_only`
+- Selection gates:
+  - probability (`payload_mutation_prob_ppm`)
+  - packet cadence (`payload_mutation_every_n_packets`)
+  - size bounds (`payload_mutation_min_size`/`payload_mutation_max_size`)
+- Supported mutation primitives:
+  - truncate
+  - corrupt_bytes
+  - inject_bytes
+  - replace_pattern
+  - corrupt_encoding
+  - swap_bytes
+- `dry_run` preserves bytes while still emitting mutation decision for observability.
+
+### Stream Hook Ordering with Mutation
+
+- Uplink (`send`/`sendto`): evaluate decision, mutate before syscall, then reorder/duplicate operate on mutated bytes.
+- Downlink (`recv`/`recvfrom`): execute syscall first, then mutate only the received span before exposing to caller.
+- Non-blocking reorder paths that return `EAGAIN` do not apply mutation in that call.
 
 ### Fault Decision State Diagram
 

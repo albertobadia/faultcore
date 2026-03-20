@@ -32,7 +32,7 @@ flowchart LR
 
 Diagram focus: top-level SHM memory regions consumed by writer/runtime.
 
-## FaultcoreConfig (536 bytes)
+## FaultcoreConfig (880 bytes)
 - Endianness: little-endian
 - Fixed packed layout
 
@@ -100,14 +100,44 @@ Diagram focus: top-level SHM memory regions consumed by writer/runtime.
 | `session_budget_timeout_ms` | 520 | 8 | `u64` (`action=timeout`) |
 | `session_error_kind` | 528 | 8 | `u64` (`1=reset`, `2=refused`, `3=unreachable`) |
 | `policy_seed` | 536 | 8 | `u64` (random seed for deterministic behavior) |
+| `payload_mutation_enabled` | 544 | 8 | `u64` (`0/1`) |
+| `payload_mutation_prob_ppm` | 552 | 8 | `u64` (`0..1_000_000`) |
+| `payload_mutation_type` | 560 | 8 | `u64` (`0=none`, `1=truncate`, `2=corrupt_bytes`, `3=inject_bytes`, `4=replace_pattern`, `5=corrupt_encoding`, `6=swap_bytes`) |
+| `payload_mutation_target` | 568 | 8 | `u64` (`0=both`, `1=uplink_only`, `2=downlink_only`) |
+| `payload_mutation_truncate_size` | 576 | 8 | `u64` |
+| `payload_mutation_corrupt_count` | 584 | 8 | `u64` |
+| `payload_mutation_corrupt_seed` | 592 | 8 | `u64` |
+| `payload_mutation_inject_position` | 600 | 8 | `u64` |
+| `payload_mutation_inject_data` | 608 | 64 | `[u8;64]` |
+| `payload_mutation_inject_len` | 672 | 8 | `u64` |
+| `payload_mutation_replace_find` | 680 | 32 | `[u8;32]` |
+| `payload_mutation_replace_find_len` | 712 | 8 | `u64` |
+| `payload_mutation_replace_with` | 720 | 32 | `[u8;32]` |
+| `payload_mutation_replace_with_len` | 752 | 8 | `u64` |
+| `payload_mutation_swap_pos1` | 760 | 8 | `u64` |
+| `payload_mutation_swap_pos2` | 768 | 8 | `u64` |
+| `payload_mutation_min_size` | 776 | 8 | `u64` |
+| `payload_mutation_max_size` | 784 | 8 | `u64` |
+| `payload_mutation_every_n_packets` | 792 | 8 | `u64` |
+| `payload_mutation_dry_run` | 800 | 8 | `u64` (`0/1`) |
+| `payload_mutation_max_buffer_size` | 808 | 8 | `u64` |
+| `payload_mutation_reserved` | 816 | 64 | `[u64;8]` |
 
 Constants:
 - `FAULTCORE_MAGIC = 0xFACC0DE`
-- `CONFIG_SIZE = 544`
+- `CONFIG_SIZE = 880`
 - `MAX_FDS = 131072`
 - `MAX_TIDS = 65536`
 - `MAX_POLICIES = 1024`
 - `MAX_TARGET_RULES_PER_TID = 8`
+
+### Payload Mutation Notes
+
+- Mutation is applied only on stream operations (`send*`/`recv*`) and never on `connect` or DNS resolution.
+- Uplink mutation is evaluated before the send syscall and reorder staging stores the mutated payload.
+- Downlink mutation is evaluated after the recv syscall using only the received byte span.
+- If mutation cannot be applied (invalid params, out-of-bounds, size gate, `dry_run`), payload is preserved.
+- `payload_mutation_reserved` keeps ABI space for future additions without immediate row-size change.
 
 ## Target Rules Region
 
