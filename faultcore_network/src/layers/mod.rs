@@ -60,6 +60,7 @@ pub struct PacketContext<'a> {
     pub operation: Operation,
     pub direction: Option<Direction>,
     pub config: &'a super::Config,
+    pub now_ns: u64,
 }
 
 impl PacketContext<'_> {

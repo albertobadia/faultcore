@@ -1,9 +1,9 @@
 use crate::{
-    Config, Layer, record_fault_observability_decision,
     layers::{
         Direction, L1Chaos, L2QoS, L3Routing, L4Transport, L5Session, L6Presentation, L7Resolver,
         LayerDecision, LayerStage, Operation, PacketContext,
     },
+    record_fault_observability_decision, Config, Layer,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -176,9 +176,7 @@ impl ChaosEngine {
 
     fn process_pipeline(&self, ctx: &PacketContext<'_>) -> LayerDecision {
         let mut delay_ns: u64 = 0;
-        let stages: [&dyn Layer; 7] = [
-            &self.l1, &self.l2, &self.l3, &self.l4, &self.l5, &self.l6, &self.l7,
-        ];
+        let stages: [&dyn Layer; 6] = [&self.l1, &self.l2, &self.l3, &self.l4, &self.l6, &self.l7];
 
         for layer in stages {
             let stage_idx = Self::stage_index(layer.stage());
@@ -215,12 +213,14 @@ impl ChaosEngine {
 
     pub fn evaluate_connect(&self, fd: i32, config: &Config) -> LayerDecision {
         let effective = config.effective_for_send();
+        let now_ns = crate::monotonic_now_ns();
         let ctx = PacketContext {
             fd,
             bytes: 0,
             operation: Operation::Connect,
             direction: Some(Direction::Uplink),
             config: &effective,
+            now_ns,
         };
         let decision = self.process_pipeline(&ctx);
         record_fault_observability_decision(&decision);
@@ -238,25 +238,26 @@ impl ChaosEngine {
             Direction::Uplink => config.effective_for_send(),
             Direction::Downlink => config.effective_for_recv(),
         };
-        let session_precheck = self
-            .l5
-            .precheck(fd, bytes, direction, &effective, crate::monotonic_now_ns());
-        if !matches!(session_precheck, LayerDecision::Continue) {
-            self.metrics[Self::stage_index(LayerStage::L5)].record_decision(&session_precheck);
-            record_fault_observability_decision(&session_precheck);
-            return session_precheck;
-        }
         let operation = match direction {
             Direction::Uplink => Operation::Send,
             Direction::Downlink => Operation::Recv,
         };
+        let now_ns = crate::monotonic_now_ns();
         let ctx = PacketContext {
             fd,
             bytes,
             operation,
             direction: Some(direction),
             config: &effective,
+            now_ns,
         };
+
+        let session_decision = self.l5.process(&ctx);
+        if !matches!(session_decision, LayerDecision::Continue) {
+            self.metrics[Self::stage_index(LayerStage::L5)].record_decision(&session_decision);
+            record_fault_observability_decision(&session_decision);
+            return session_decision;
+        }
 
         let decision = self.process_pipeline(&ctx);
         if !matches!(decision, LayerDecision::Continue) {
@@ -287,12 +288,14 @@ impl ChaosEngine {
     }
 
     pub fn evaluate_dns_lookup(&self, config: &Config) -> LayerDecision {
+        let now_ns = crate::monotonic_now_ns();
         let ctx = PacketContext {
             fd: -1,
             bytes: 0,
             operation: Operation::DnsLookup,
             direction: None,
             config,
+            now_ns,
         };
         let decision = self.process_pipeline(&ctx);
         record_fault_observability_decision(&decision);

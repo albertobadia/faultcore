@@ -79,12 +79,6 @@ echo "=== Staging native artifacts for $PLATFORM_TAG ==="
 mkdir -p "$NATIVE_PLATFORM_DIR"
 cp "$INTERCEPTOR_BUILD_OUT" "$NATIVE_PLATFORM_DIR/libfaultcore_interceptor.so"
 
-if [ -f "src/faultcore/_faultcore.abi3.so" ]; then
-    cp "src/faultcore/_faultcore.abi3.so" "$NATIVE_PLATFORM_DIR/_faultcore.abi3.so"
-else
-    echo "Warning: src/faultcore/_faultcore.abi3.so was not found."
-fi
-
 echo "=== Building faultcore Python package ==="
 uv run python -m build
 

@@ -1,6 +1,6 @@
 use crate::layers::{Layer, LayerDecision, LayerStage, PacketContext};
 use parking_lot::Mutex;
-use rand::{Rng, SeedableRng, random, rngs::StdRng};
+use rand::{random, rngs::StdRng, Rng, SeedableRng};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub struct L3Routing {
@@ -74,7 +74,9 @@ impl Layer for L3Routing {
 
     fn process(&self, ctx: &PacketContext<'_>) -> LayerDecision {
         if ctx.config.jitter_ns > 0 {
-            return LayerDecision::DelayNs(self.random_u64_bounded(ctx.config.jitter_ns, ctx.config.policy_seed));
+            return LayerDecision::DelayNs(
+                self.random_u64_bounded(ctx.config.jitter_ns, ctx.config.policy_seed),
+            );
         }
         LayerDecision::Continue
     }
@@ -101,6 +103,7 @@ mod tests {
             operation: crate::layers::Operation::Recv,
             direction: None,
             config: &cfg,
+            now_ns: 0,
         };
 
         for _ in 0..256 {
@@ -127,6 +130,7 @@ mod tests {
             operation: crate::layers::Operation::Recv,
             direction: None,
             config: &cfg,
+            now_ns: 0,
         };
 
         let s1: Vec<u64> = (0..128)
@@ -159,6 +163,7 @@ mod tests {
             operation: crate::layers::Operation::Recv,
             direction: None,
             config: &cfg,
+            now_ns: 0,
         };
 
         let s1: Vec<u64> = (0..128)

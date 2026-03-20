@@ -1,6 +1,6 @@
 use crate::{
-    Config, Direction,
     layers::{Layer, LayerDecision, LayerStage, PacketContext},
+    Config, Direction,
 };
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -113,8 +113,12 @@ impl Layer for L5Session {
         LayerStage::L5
     }
 
-    fn process(&self, _ctx: &PacketContext<'_>) -> LayerDecision {
-        LayerDecision::Continue
+    fn process(&self, ctx: &PacketContext<'_>) -> LayerDecision {
+        let direction = match ctx.direction {
+            Some(d) => d,
+            None => return LayerDecision::Continue,
+        };
+        self.precheck(ctx.fd, ctx.bytes, direction, ctx.config, ctx.now_ns)
     }
 
     fn name(&self) -> &str {

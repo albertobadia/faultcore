@@ -1,6 +1,6 @@
 use crate::{
-    Config,
     layers::{Layer, LayerDecision, LayerStage, PacketContext},
+    Config,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
@@ -159,6 +159,7 @@ mod tests {
             operation: crate::layers::Operation::Recv,
             direction: None,
             config: &config,
+            now_ns: 0,
         };
 
         assert!(matches!(qos.process(&ctx), LayerDecision::DelayNs(_)));
@@ -181,6 +182,7 @@ mod tests {
             operation: crate::layers::Operation::Recv,
             direction: None,
             config: &config,
+            now_ns: 0,
         };
 
         match qos.process(&ctx) {

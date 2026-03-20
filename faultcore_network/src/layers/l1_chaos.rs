@@ -209,6 +209,7 @@ mod tests {
             operation: Operation::Recv,
             direction: None,
             config: &cfg,
+            now_ns: 0,
         };
         (0..n)
             .map(|_| matches!(layer.process(&ctx), LayerDecision::Drop))
@@ -247,6 +248,7 @@ mod tests {
             operation: Operation::Recv,
             direction: None,
             config: &cfg,
+            now_ns: 0,
         };
 
         let seq1: Vec<bool> = (0..256)
@@ -278,6 +280,7 @@ mod tests {
             operation: Operation::Recv,
             direction: None,
             config: &cfg,
+            now_ns: 0,
         };
 
         let seq1: Vec<bool> = (0..256)
@@ -301,6 +304,7 @@ mod tests {
             operation: Operation::Recv,
             direction: None,
             config: &cfg,
+            now_ns: 0,
         };
 
         assert!(matches!(layer.process(&ctx), LayerDecision::Drop));
@@ -322,6 +326,7 @@ mod tests {
             operation: Operation::Recv,
             direction: None,
             config: &cfg,
+            now_ns: 0,
         };
 
         assert!(matches!(layer.process(&ctx), LayerDecision::Drop));
@@ -351,6 +356,7 @@ mod tests {
             operation: Operation::Recv,
             direction: None,
             config: &cfg,
+            now_ns: 0,
         };
 
         assert!(matches!(layer.process(&ctx), LayerDecision::Drop));
@@ -373,6 +379,7 @@ mod tests {
             operation: Operation::Recv,
             direction: None,
             config: &cfg,
+            now_ns: 0,
         };
 
         assert!(matches!(layer.process(&ctx), LayerDecision::Continue));
@@ -394,6 +401,7 @@ mod tests {
             operation: Operation::Recv,
             direction: None,
             config: &cfg_trigger,
+            now_ns: 0,
         };
         let ctx_fd2 = PacketContext {
             fd: 11,
@@ -401,6 +409,7 @@ mod tests {
             operation: Operation::Recv,
             direction: None,
             config: &cfg_clean,
+            now_ns: 0,
         };
 
         assert!(matches!(layer.process(&ctx_fd1), LayerDecision::Drop));
@@ -433,6 +442,7 @@ mod tests {
             operation: Operation::Recv,
             direction: None,
             config: &cfg_fd1,
+            now_ns: 0,
         };
         let ctx_fd2 = PacketContext {
             fd: 21,
@@ -440,6 +450,7 @@ mod tests {
             operation: Operation::Recv,
             direction: None,
             config: &cfg_fd2,
+            now_ns: 0,
         };
 
         assert!(matches!(layer.process(&ctx_fd1), LayerDecision::Drop));
