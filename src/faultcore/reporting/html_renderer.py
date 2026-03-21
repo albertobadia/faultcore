@@ -11,9 +11,7 @@ _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _TEMPLATE_LOOKUP = TemplateLookup(directories=[str(_TEMPLATES_DIR)], input_encoding="utf-8", filesystem_checks=True)
 _REPORT_TEMPLATE = _TEMPLATE_LOOKUP.get_template("report_page.mako")
 _CHARTS_TEMPLATE = _TEMPLATE_LOOKUP.get_template("charts.mako")
-_NETWORK_METRICS_TEMPLATE = _TEMPLATE_LOOKUP.get_template("network_metrics_panel.mako")
 _NETWORK_PARTS_TEMPLATE = _TEMPLATE_LOOKUP.get_template("network_metrics_parts.mako")
-_SITE_DETAILS_TEMPLATE = _TEMPLATE_LOOKUP.get_template("site_details.mako")
 _DETAILS_TEMPLATE = _TEMPLATE_LOOKUP.get_template("details.mako")
 _NO_DATA_HTML = "<div class='muted'>No data</div>"
 _PROTOCOL_ORDER = ("tcp", "udp", "http", "total")
@@ -111,10 +109,7 @@ def _render_multi_line_chart_svg(
         line_scale = (line_max - line_min) or 1
         for idx, value in enumerate(values):
             x = int((idx / span) * (width - 20)) + 10
-            if should_normalize:
-                y_norm = (value - line_min) / line_scale
-            else:
-                y_norm = (value - min_v) / scale
+            y_norm = (value - line_min) / line_scale if should_normalize else (value - min_v) / scale
             y = int((1 - y_norm) * (height - 20)) + 10
             points.append(f"{x},{y}")
         polylines.append(f"<polyline fill='none' stroke='{color}' stroke-width='2' points='{' '.join(points)}'/>")
@@ -300,24 +295,6 @@ def _render_kpi_card(label: str, value: str) -> str:
     return _CHARTS_TEMPLATE.get_def("kpi_card").render(label=label, value=value)
 
 
-def _render_event_rows(events: list[dict[str, Any]]) -> str:
-    rows: list[str] = []
-    for event in events:
-        details = event.get("details", {})
-        details_str = json.dumps(details, ensure_ascii=True) if isinstance(details, dict) else str(details)
-        rows.append(
-            "<tr>"
-            f"<td>{_safe(event.get('ts', ''))}</td>"
-            f"<td>{_safe(event.get('severity', ''))}</td>"
-            f"<td>{_safe(event.get('type', ''))}</td>"
-            f"<td>{_safe(event.get('source', ''))}</td>"
-            f"<td>{_safe(event.get('name', ''))}</td>"
-            f"<td><code>{_safe(details_str)}</code></td>"
-            "</tr>"
-        )
-    return "\n".join(rows) or "<tr><td colspan='6'>No events</td></tr>"
-
-
 def _metric_group_for_key(key: str) -> str:
     lowered = key.lower()
     if "throughput" in lowered or "bytes" in lowered:
@@ -493,12 +470,9 @@ def _render_site_details(site_metrics: dict[str, Any], *, run_duration_ms: int =
             "latency_p50_ns": int(raw_data.get("latency_p50_ns", 0)),
             "latency_p95_ns": int(raw_data.get("latency_p95_ns", 0)),
             "latency_p99_ns": int(raw_data.get("latency_p99_ns", 0)),
-            "delay_count": int(decision_counts.get("delay_ns", 0)),
-            "drop_count": int(decision_counts.get("drop", 0)),
-            "timeout_count": int(decision_counts.get("timeout_ms", 0)),
-            "duplicate_count": int(decision_counts.get("duplicate", 0)),
-            "reorder_count": int(decision_counts.get("stage_reorder", 0)),
         }
+        for decision_key, count in decision_counts.items():
+            site_panel_metrics[f"{decision_key}_count"] = int(count)
         network_panel_html = _render_network_metrics_panel(
             site_panel_metrics,
             max_items_per_group=8,

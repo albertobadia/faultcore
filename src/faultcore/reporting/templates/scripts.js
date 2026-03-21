@@ -96,13 +96,18 @@
     const colors = ["#68a7db", "#6bc46d", "#d2b35a", "#de6f6f", "#9ac0ff", "#e9a96d"];
     let colorIdx = 0;
 
-    const polylines = seriesEntries.map(([name, values]) => {
+    const seriesShapes = seriesEntries.map(([name, values]) => {
+      const color = colors[colorIdx++ % colors.length];
+      if (values.length === 1) {
+        const x = xPadding;
+        const y = (1 - (transformY(values[0]) - transformedMin) / scale) * innerHeight + yPadding;
+        return `<circle cx='${x}' cy='${y}' r='3' fill='${color}'/>`;
+      }
       const pts = values.map((v, i) => {
         const x = (i / span) * innerWidth + xPadding;
         const y = (1 - (transformY(v) - transformedMin) / scale) * innerHeight + yPadding;
         return `${x},${y}`;
       }).join(" ");
-      const color = colors[colorIdx++ % colors.length];
       return `<polyline fill='none' stroke='${color}' stroke-width='2' points='${pts}'/>`;
     }).join("");
 
@@ -122,7 +127,7 @@
               data-events='${events ? safe(JSON.stringify(events)) : ""}'
              data-is-multi='${isMulti}' data-title='${safe(title)}' data-scale-mode='${scaleMode}'>
           <rect x='0' y='0' width='100%' height='100%' fill='#17150f'/>
-          ${polylines}
+          ${seriesShapes}
           <line class='chart-hover-line' x1='0' y1='${yPadding}' x2='0' y2='${height - yPadding}' stroke='#b7a982' stroke-width='1' stroke-dasharray='3 3' visibility='hidden'/>
           <circle class='chart-hover-dot' cx='0' cy='0' r='3.5' fill='#efe0b8' stroke='#17150f' stroke-width='1' visibility='hidden'/>
         </svg>
@@ -150,6 +155,7 @@
       stage_reorder: Number(net.reorder_count || 0),
       duplicate: Number(net.duplicate_count || 0),
       nxdomain: Number(net.nxdomain_count || 0),
+      mutate: Number(net.mutate_count || 0),
       error: Number(net.error_count || 0),
       connection_error_kind: Number(net.connection_error_count || 0)
     };
@@ -291,6 +297,26 @@
     return null;
   };
 
+  const sumSeriesByIndex = (seriesList) => {
+    const maxLen = seriesList.reduce((acc, series) => Math.max(acc, series.length), 0);
+    if (maxLen === 0) return [];
+    const out = new Array(maxLen).fill(0);
+    seriesList.forEach((series) => {
+      series.forEach((value, idx) => {
+        out[idx] += Number(value || 0);
+      });
+    });
+    return out;
+  };
+
+  const detectProtocolFromFunction = (fnName) => {
+    const lower = String(fnName || "").toLowerCase();
+    if (lower.includes("http")) return "http";
+    if (lower.includes("udp")) return "udp";
+    if (lower.includes("tcp")) return "tcp";
+    return "other";
+  };
+
   const renderMetricGrid = (metrics) => {
     const kpiOrder = [
       ["total_throughput_bps", "Throughput"], ["total_bytes", "Bytes"],
@@ -320,9 +346,10 @@
 
     const buildGroup = (name, items) => {
       if (!items.length) return "";
-      const sorted = items.sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, 10);
-      const maxVal = Math.max(...sorted.map(it => Math.abs(it[1]))) || 1;
-      const rows = sorted.map(([k, v]) => {
+      const sorted = items.sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+      const limited = name === "Events/Counters" ? sorted : sorted.slice(0, 10);
+      const maxVal = Math.max(...limited.map(it => Math.abs(it[1]))) || 1;
+      const rows = limited.map(([k, v]) => {
         const pct = Math.min(96, (Math.abs(v) / maxVal) * 96);
         return `
           <div class="metric-row">
@@ -363,10 +390,12 @@
       const faultEventsSeries = series.fault_events_per_bucket || [];
       
       const extra = {...series};
-      const thrGroup = {};
+      const thrSeriesByProtocol = { tcp: [], udp: [], http: [], other: [] };
       Object.entries(funcMetrics).forEach(([fn, data]) => {
         const s = data.series_throughput_bps || [];
-        if (s.length) thrGroup[fn] = s;
+        if (!s.length) return;
+        const protocol = detectProtocolFromFunction(fn);
+        thrSeriesByProtocol[protocol].push(s);
       });
 
       const grouped = {};
@@ -391,9 +420,20 @@
         }
       });
 
-      if (Object.keys(thrGroup).length > 0) {
-        panel.innerHTML += renderSVG(thrGroup, "Throughput Timeline", 760, 120, true, faultEventsSeries);
-        Object.keys(thrGroup).forEach(fn => consumed.add(`${fn}_throughput_bps`));
+      const consolidatedThroughput = {};
+      ["tcp", "udp", "http"].forEach((protocol) => {
+        const sum = sumSeriesByIndex(thrSeriesByProtocol[protocol]);
+        if (sum.length > 0) consolidatedThroughput[protocol] = sum;
+      });
+      if (Object.keys(consolidatedThroughput).length > 1) {
+        panel.innerHTML += renderSVG(
+          consolidatedThroughput,
+          "Throughput Timeline by Protocol",
+          760,
+          120,
+          true,
+          faultEventsSeries
+        );
       }
 
       filtered.sort().forEach(([name, values]) => {
@@ -445,12 +485,19 @@
       : Object.entries(funcs).sort().map(([name, data]) => {
           const m = { ...data };
           m.total_events = (data.series_latency_ms || []).length;
+          const functionSeriesEntries = Object.entries(data).filter(
+            ([k, v]) => k.startsWith("series_") && Array.isArray(v) && v.length >= 5
+          );
           return `
           <details class="metric-details function-item" data-name="${safe(name)}">
             <summary>Func: ${safe(name)} - Throughput: ${humanize("throughput_bps", data.throughput_bps || 0)}</summary>
             <div class="site-content">
               ${renderMetricGrid(m)}
-              ${Object.entries(data).filter(([k]) => k.startsWith("series_")).map(([k, v]) => renderSVG(v, k.slice(7), 760, 120, false, data.fault_events_per_bucket)).join("")}
+              ${functionSeriesEntries.length > 0
+                ? functionSeriesEntries
+                    .map(([k, v]) => renderSVG(v, k.slice(7), 760, 120, false, data.fault_events_per_bucket))
+                    .join("")
+                : "<div class='muted'>Insufficient samples for charts (min 5)</div>"}
             </div>
           </details>`;
         }).join("");
@@ -478,10 +525,13 @@
   };
 
   const renderTimeline = (container) => {
+    const allTypes = [...new Set(state.events.map(e => e.type))].sort();
+    const typeOptions = allTypes.map(t => `<option value="${safe(t)}">${safe(t)}</option>`).join("");
     container.innerHTML = `
       <div class="controls">
+        <select id="events-type-filter"><option value="">All types</option>${typeOptions}</select>
         <input id="events-search" type="search" placeholder="Search events..." />
-        <select id="events-page-size"><option value="50">50 / page</option><option value="200">200 / page</option></select>
+        <select id="events-page-size"><option value="50">50 / page</option><option value="200">200 / page</option><option value="500">500 / page</option></select>
         <button id="events-prev">Prev</button><button id="events-next">Next</button>
         <span id="events-info"></span>
       </div>
@@ -498,12 +548,16 @@
     const sizeSelect = container.querySelector("#events-page-size");
     const prevButton = container.querySelector("#events-prev");
     const nextButton = container.querySelector("#events-next");
+    const typeFilter = container.querySelector("#events-type-filter");
 
     const update = () => {
       const q = search.value.toLowerCase();
-      state.filteredEvents = state.events.filter(e => 
-        e.name.toLowerCase().includes(q) || e.type.toLowerCase().includes(q) || JSON.stringify(e.details).toLowerCase().includes(q)
-      );
+      const typeFilterVal = typeFilter.value;
+      state.filteredEvents = state.events.filter(e => {
+        if (typeFilterVal && e.type !== typeFilterVal) return false;
+        if (q && !e.name.toLowerCase().includes(q) && !e.type.toLowerCase().includes(q) && !JSON.stringify(e.details).toLowerCase().includes(q)) return false;
+        return true;
+      });
       state.eventPageSize = parseInt(sizeSelect.value, 10);
       const start = (state.eventPage - 1) * state.eventPageSize;
       const page = state.filteredEvents.slice(start, start + state.eventPageSize);
@@ -525,6 +579,7 @@
 
     search.oninput = () => { state.eventPage = 1; update(); };
     sizeSelect.onchange = () => { state.eventPage = 1; update(); };
+    typeFilter.onchange = () => { state.eventPage = 1; update(); };
     prevButton.onclick = () => { state.eventPage -= 1; update(); };
     nextButton.onclick = () => { state.eventPage += 1; update(); };
     

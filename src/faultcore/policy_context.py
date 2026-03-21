@@ -1,5 +1,5 @@
 import uuid
-from contextlib import AbstractAsyncContextManager, AbstractContextManager
+from contextlib import AbstractAsyncContextManager, AbstractContextManager, suppress
 from typing import Any
 
 from faultcore.decorator import (
@@ -44,10 +44,8 @@ class policy_context(AbstractContextManager, AbstractAsyncContextManager):
             set_thread_policy(self._previous)
         finally:
             if temp_policy is not None:
-                try:
+                with suppress(Exception):
                     unregister_policy(temp_policy)
-                except Exception:
-                    pass
 
     async def __aenter__(self) -> "policy_context":
         return self.__enter__()

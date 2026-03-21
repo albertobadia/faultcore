@@ -70,6 +70,8 @@ _SCENARIO_FLOAT_METRICS = (
     ("http_jitter_ms", "jitter_ms", "http"),
 )
 
+_SCENARIO_SOURCE_KEYS = ("latency_ms", "jitter_ms", "bytes", "throughput_bps", "scenario")
+
 _INTERCEPTOR_PROBE_CODE = """import ctypes
 import sys
 ok = False
@@ -292,9 +294,7 @@ def _merge_scenario_metrics_into_run_record(
     if not scenario_metrics:
         return
 
-    sources = {
-        k: _as_dict(scenario_metrics.get(k)) for k in ("latency_ms", "jitter_ms", "bytes", "throughput_bps", "scenario")
-    }
+    sources = {key: _as_dict(scenario_metrics.get(key)) for key in _SCENARIO_SOURCE_KEYS}
 
     network_metrics = dict(_as_dict(record.get("network_metrics")))
     for name, src, key in _SCENARIO_INT_METRICS:
@@ -310,7 +310,8 @@ def _merge_scenario_metrics_into_run_record(
             merged_series[key] = [_normalize_series_entry(key, v) for v in values]
     record["network_series"] = merged_series
 
-    if functions := _as_dict(scenario_metrics.get("functions")):
+    functions = _as_dict(scenario_metrics.get("functions"))
+    if functions:
         record["function_metrics"] = functions
 
     events = list(_as_list(record.get("events")))

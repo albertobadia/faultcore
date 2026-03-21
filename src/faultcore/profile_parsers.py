@@ -14,8 +14,10 @@ _TARGET_PROTOCOL_MAP = {
     "udp": 2,
 }
 
-_NS_PER_SECOND = 1_000_000_000
 _MS_PER_SECOND = 1000
+_NS_PER_MS = 1_000_000
+_PORT_MIN = 0
+_PORT_MAX = 65535
 _RATE_SUFFIX_MULTIPLIERS = {
     "gbps": 1_000_000_000,
     "mbps": 1_000_000,
@@ -98,8 +100,8 @@ def _apply_port_range(profile: dict[str, object], port_start: int | None, port_e
     return profile
 
 
-def _seconds_to_ns(value: int | float) -> int:
-    return int(value * _NS_PER_SECOND)
+def _duration_ms_to_ns(duration: str) -> int:
+    return parse_duration(duration) * _NS_PER_MS
 
 
 def _schedule_profile(schedule_type: int, param_a_ns: int, param_b_ns: int) -> dict[str, int]:
@@ -135,7 +137,7 @@ def _ppm_from_loss_value(value: float) -> int:
 
 
 def _validate_port_bounds(value: int, field_name: str) -> None:
-    _ensure_range(value, 0, 65535, f"target {field_name} must be between 0 and 65535")
+    _ensure_range(value, _PORT_MIN, _PORT_MAX, f"target {field_name} must be between 0 and 65535")
 
 
 def _as_positive_int(value: int | None, error_message: str) -> int | None:
@@ -195,10 +197,7 @@ def _network_target_profile(
 def _parse_priority(priority: str | int | None) -> int:
     if priority is None:
         return 100
-    if isinstance(priority, int):
-        parsed_priority = priority
-    else:
-        parsed_priority = int(priority)
+    parsed_priority = priority if isinstance(priority, int) else int(priority)
     _ensure_range(parsed_priority, 0, 65535, "target priority must be between 0 and 65535")
     return parsed_priority
 
@@ -282,42 +281,40 @@ def parse_seed(value: str | int) -> int:
 
 def parse_port(value: str | int) -> tuple[int, int | None, int | None]:
     if isinstance(value, int):
-        if not 0 <= value <= 65535:
+        if not _PORT_MIN <= value <= _PORT_MAX:
             raise ValueError("port must be between 0 and 65535")
-        return (value, None, None)
+        return value, None, None
     if not isinstance(value, str):
         raise TypeError("port must be a string or integer")
     normalized = _non_empty_normalized(value, "port must be non-empty")
     if "-" in normalized:
         parts = normalized.split("-", 1)
-        if len(parts) != 2:
-            raise ValueError("port range must be in format 'start-end' (e.g., '80-90')")
         try:
             start = int(parts[0])
             end = int(parts[1])
         except ValueError:
             raise ValueError("port range must contain valid integers") from None
-        if not (0 <= start <= 65535 and 0 <= end <= 65535):
+        if not (_PORT_MIN <= start <= _PORT_MAX and _PORT_MIN <= end <= _PORT_MAX):
             raise ValueError("port must be between 0 and 65535")
         if start > end:
             raise ValueError("port range start must be <= end")
-        return (0, start, end)
+        return 0, start, end
     if "," in normalized:
         first_port, *_ = normalized.split(",")
         try:
             single_port = int(first_port)
         except ValueError:
             raise ValueError("port list must contain valid integers") from None
-        if not 0 <= single_port <= 65535:
+        if not _PORT_MIN <= single_port <= _PORT_MAX:
             raise ValueError("port must be between 0 and 65535")
-        return (single_port, None, None)
+        return single_port, None, None
     try:
         parsed = int(normalized)
     except ValueError:
         raise ValueError("port must be a valid integer, range (e.g., '80-90'), or list (e.g., '80,443')") from None
-    if not 0 <= parsed <= 65535:
+    if not _PORT_MIN <= parsed <= _PORT_MAX:
         raise ValueError("port must be between 0 and 65535")
-    return (parsed, None, None)
+    return parsed, None, None
 
 
 def build_direction_profile(
@@ -724,23 +721,23 @@ def build_schedule_profile(
         case "spike":
             if every is None or duration is None:
                 raise ValueError("spike profile requires every and duration")
-            cycle_ns = _seconds_to_ns(parse_duration(every) / 1000)
-            active_ns = _seconds_to_ns(parse_duration(duration) / 1000)
+            cycle_ns = _duration_ms_to_ns(every)
+            active_ns = _duration_ms_to_ns(duration)
             if cycle_ns <= 0 or active_ns <= 0 or active_ns > cycle_ns:
                 raise ValueError("spike profile requires 0 < duration <= every")
             return _schedule_profile(2, cycle_ns, active_ns)
         case "flapping":
             if on is None or off is None:
                 raise ValueError("flapping profile requires on and off")
-            on_ns = _seconds_to_ns(parse_duration(on) / 1000)
-            off_ns = _seconds_to_ns(parse_duration(off) / 1000)
+            on_ns = _duration_ms_to_ns(on)
+            off_ns = _duration_ms_to_ns(off)
             if on_ns <= 0 or off_ns <= 0:
                 raise ValueError("flapping profile requires on > 0 and off > 0")
             return _schedule_profile(3, on_ns, off_ns)
         case "ramp":
             if ramp is None:
                 raise ValueError("ramp profile requires ramp")
-            ramp_ns = _seconds_to_ns(parse_duration(ramp) / 1000)
+            ramp_ns = _duration_ms_to_ns(ramp)
             if ramp_ns <= 0:
                 raise ValueError("ramp profile requires ramp > 0")
             return _schedule_profile(1, ramp_ns, 0)

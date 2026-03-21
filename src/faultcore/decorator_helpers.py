@@ -64,7 +64,8 @@ _DIRECTIONAL_FIELDS = ("latency", "jitter", "packet_loss_ppm", "burst_loss", "ra
 
 
 def apply_fault_profiles(shm: Any, tid: int, profiles: dict[str, Any], *, started_monotonic_ns: int) -> None:
-    if seed := profiles.get("seed"):
+    seed = profiles.get("seed")
+    if seed is not None:
         shm.write_policy_seed(tid, seed)
 
     for field, writer in _SCALAR_WRITERS.items():

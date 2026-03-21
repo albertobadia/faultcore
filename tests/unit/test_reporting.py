@@ -113,15 +113,49 @@ def test_summarize_record_replay_counts_and_percentiles():
             {"site": "b", "decision": "delay_ns", "value": 1_000_000},
             {"site": "c", "decision": "delay_ns", "value": 10_000_000},
             {"site": "d", "decision": "drop", "value": 0},
+            {"site": "e", "decision": "mutate", "value": 0},
         ]
     )
 
-    assert metrics["recorded_events_total"] == 4
-    assert metrics["fault_events_total"] == 3
+    assert metrics["recorded_events_total"] == 5
+    assert metrics["fault_events_total"] == 4
     assert metrics["continue_count"] == 1
     assert metrics["delay_count"] == 2
     assert metrics["drop_count"] == 1
+    assert metrics["mutate_count"] == 1
     assert metrics["latency_p50_ns"] >= 1_000_000
+    assert "decision_counts" in metrics
+    assert metrics["decision_counts"] == {"continue": 1, "delay_ns": 2, "drop": 1, "mutate": 1}
+
+
+def test_summarize_record_replay_includes_all_decision_types():
+    metrics = reporting.summarize_record_replay(
+        [
+            {"site": "a", "decision": "delay_ns", "value": 1_000_000},
+            {"site": "b", "decision": "drop", "value": 0},
+            {"site": "c", "decision": "timeout_ms", "value": 5000},
+            {"site": "d", "decision": "error", "value": 0},
+            {"site": "e", "decision": "connection_error_kind", "value": 0},
+            {"site": "f", "decision": "stage_reorder", "value": 0},
+            {"site": "g", "decision": "duplicate", "value": 0},
+            {"site": "h", "decision": "nxdomain", "value": 0},
+            {"site": "i", "decision": "mutate", "value": 0},
+            {"site": "j", "decision": "custom_decision", "value": 0},
+        ]
+    )
+
+    assert metrics["decision_counts"]["delay_ns"] == 1
+    assert metrics["decision_counts"]["drop"] == 1
+    assert metrics["decision_counts"]["timeout_ms"] == 1
+    assert metrics["decision_counts"]["error"] == 1
+    assert metrics["decision_counts"]["connection_error_kind"] == 1
+    assert metrics["decision_counts"]["stage_reorder"] == 1
+    assert metrics["decision_counts"]["duplicate"] == 1
+    assert metrics["decision_counts"]["nxdomain"] == 1
+    assert metrics["decision_counts"]["mutate"] == 1
+    assert metrics["decision_counts"]["custom_decision"] == 1
+    assert metrics["drop_count"] == 1
+    assert metrics["connection_error_count"] == 1
 
 
 def test_build_record_replay_timeline_events_maps_decisions():
@@ -132,6 +166,12 @@ def test_build_record_replay_timeline_events_maps_decisions():
     assert len(events) == 1
     assert events[0]["type"] == "network.delay_ns"
     assert events[0]["name"] == "stream_uplink_pre"
+
+
+def test_build_record_replay_timeline_events_no_limit():
+    all_events = [{"site": f"site_{i}", "decision": "delay_ns", "value": i} for i in range(100)]
+    events = reporting.build_record_replay_timeline_events(all_events, ts="2026-03-12T00:00:01.000Z", max_items=0)
+    assert len(events) == 100
 
 
 def test_build_record_replay_series_and_sites():
@@ -154,13 +194,15 @@ def test_build_record_replay_site_metrics_groups_by_site():
         {"site": "connect_pre", "decision": "continue", "value": 0},
         {"site": "stream_uplink_pre", "decision": "delay_ns", "value": 5_000_000},
         {"site": "stream_uplink_pre", "decision": "drop", "value": 0},
+        {"site": "stream_uplink_pre", "decision": "mutate", "value": 0},
     ]
     site_metrics = reporting.build_record_replay_site_metrics(raw)
 
     assert "stream_uplink_pre" in site_metrics
-    assert site_metrics["stream_uplink_pre"]["fault_events"] == 2
+    assert site_metrics["stream_uplink_pre"]["fault_events"] == 3
     assert site_metrics["stream_uplink_pre"]["inferred_config"]["delay_active"] is True
     assert site_metrics["stream_uplink_pre"]["inferred_config"]["drop_active"] is True
+    assert site_metrics["stream_uplink_pre"]["inferred_config"]["mutate_active"] is True
 
 
 def test_is_pytest_command_detects_path_and_python_module_forms():
@@ -232,7 +274,7 @@ def test_render_report_html_embeds_event_metadata():
     assert '"stdout_tail": "hello"' in html_text
     assert "Network Metrics" in html_text
     assert "Per Site" in html_text
-    assert "Per Function" in html_text
+    assert "Per Function / Test" in html_text
     assert "Network Timeline" in html_text
     assert "Applied Configuration" in html_text
     assert "charts-loading" in html_text

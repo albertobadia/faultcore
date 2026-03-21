@@ -538,13 +538,16 @@ where
             )
         });
         let mutation_result = original_payload.as_deref().map(|raw_payload| {
-            let (_, maybe_mutated) = global_fault_osi_engine().evaluate_l6_with_buffer(
+            let (l6_decision, maybe_mutated) = global_fault_osi_engine().evaluate_l6_with_buffer(
                 s,
                 &network_cfg,
                 Direction::Uplink,
                 raw_payload.len() as u64,
                 raw_payload,
             );
+            let _ = record_replay_evaluate_or_replay("stream_uplink_l6_mutation", || {
+                l6_decision.clone()
+            });
             if let Some(ref data) = maybe_mutated {
                 record_mutation(true, raw_payload.len(), data.len());
             } else {
@@ -663,13 +666,16 @@ where
         if out > 0
             && let Some(pkt) = snapshot(out)
         {
-            let (_, maybe_mutated) = global_fault_osi_engine().evaluate_l6_with_buffer(
+            let (l6_decision, maybe_mutated) = global_fault_osi_engine().evaluate_l6_with_buffer(
                 s,
                 &network_cfg,
                 Direction::Downlink,
                 out as u64,
                 pkt.data.as_ref(),
             );
+            let _ = record_replay_evaluate_or_replay("stream_downlink_l6_mutation", || {
+                l6_decision.clone()
+            });
             if let Some(data) = maybe_mutated {
                 let mut mutated_pkt = pkt;
                 mutated_pkt.data = data.into();
@@ -1541,7 +1547,25 @@ mod tests {
        assert!(recv_block.contains("handle_downlink_recv("));
        assert!(recvfrom_block.contains("handle_downlink_recv("));
     }
-    
+
+    #[test]
+    fn l6_mutation_decisions_are_recorded_in_record_replay() {
+       let src = include_str!("lib.rs");
+       let uplink_helper = src
+           .split("fn handle_uplink_send")
+           .nth(1)
+           .expect("handle_uplink_send must exist");
+       let downlink_helper = src
+           .split("fn handle_downlink_recv")
+           .nth(1)
+           .expect("handle_downlink_recv must exist");
+
+       assert!(uplink_helper.contains("stream_uplink_l6_mutation"));
+       assert!(downlink_helper.contains("stream_downlink_l6_mutation"));
+       assert!(uplink_helper.contains("record_replay_evaluate_or_replay"));
+       assert!(downlink_helper.contains("record_replay_evaluate_or_replay"));
+    }
+
     #[test]
     fn aliasing_hooks_propagate_fd_binding() {
        let src = include_str!("lib.rs");

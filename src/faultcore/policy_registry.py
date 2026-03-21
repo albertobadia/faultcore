@@ -75,6 +75,15 @@ _TRANSPORT_EFFECT_POLICY_KEYS = (
     "payload_mutation_profile",
 )
 
+_SCALAR_POLICY_PARSERS: tuple[tuple[str, str, Callable[[Any], int]], ...] = (
+    ("seed", "seed", parse_seed),
+    ("latency", "latency", parse_duration),
+    ("jitter", "jitter", parse_duration),
+    ("packet_loss", "packet_loss_ppm", parse_packet_loss),
+    ("burst_loss", "burst_loss", parse_burst_loss),
+    ("rate", "rate", parse_rate),
+)
+
 _OPTIONAL_MAPPING_PROFILE_SPECS: tuple[
     tuple[
         str,
@@ -139,13 +148,6 @@ def _require_mapping(value: Any, field_name: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{field_name} must be a mapping when provided")
     return value
-
-
-def _coerce_non_negative_int(value: Any, error_message: str) -> int:
-    coerced = int(value)
-    if coerced < 0:
-        raise ValueError(error_message)
-    return coerced
 
 
 def _build_target_rule_from_mapping(target: dict[str, Any]) -> dict[str, Any]:
@@ -263,23 +265,19 @@ def _set_direction_profile(
 
 def _coerce_timeout_pair(timeout: dict[str, Any] | None) -> tuple[int, int]:
     if timeout is None:
-        return (0, 0)
+        return 0, 0
     connect = timeout.get("connect")
     recv = timeout.get("recv")
     connect_ms = parse_duration(connect) if connect is not None else 0
     recv_ms = parse_duration(recv) if recv is not None else 0
-    return (connect_ms, recv_ms)
+    return connect_ms, recv_ms
 
 
-def _set_non_negative_optional(
-    policy: dict[str, Any],
-    *,
-    source_value: Any,
-    policy_key: str,
-    error_message: str,
-) -> None:
-    if source_value is not None:
-        policy[policy_key] = _coerce_non_negative_int(source_value, error_message)
+def _set_scalar_policy_values(policy: dict[str, Any], values: dict[str, Any]) -> None:
+    for source_key, policy_key, parser in _SCALAR_POLICY_PARSERS:
+        raw_value = values.get(source_key)
+        if raw_value is not None:
+            policy[policy_key] = parser(raw_value)
 
 
 def _build_optional_mapping_profiles(
@@ -297,7 +295,6 @@ def _build_optional_mapping_profiles(
         "half_open": half_open,
         "packet_duplicate": packet_duplicate,
         "packet_reorder": packet_reorder,
-        "payload_mutation": payload_mutation,
     }
     profiles: dict[str, dict[str, Any]] = {}
     for field_name, policy_key, builder, defaults in _OPTIONAL_MAPPING_PROFILE_SPECS:
@@ -306,7 +303,7 @@ def _build_optional_mapping_profiles(
             continue
         profiles[policy_key] = builder(**{key: config.get(key, default) for key, default in defaults.items()})
 
-    payload_mutation_config = _as_mapping(raw_values["payload_mutation"], "payload_mutation")
+    payload_mutation_config = _as_mapping(payload_mutation, "payload_mutation")
     if payload_mutation_config is not None:
         profiles["payload_mutation_profile"] = build_payload_mutation_profile(
             enabled=bool(payload_mutation_config.get("enabled", False)),
@@ -363,18 +360,17 @@ def register_policy(
         raise ValueError("policy name must be non-empty")
 
     policy: dict[str, Any] = {}
-    if seed is not None:
-        policy["seed"] = parse_seed(seed)
-    if latency is not None:
-        policy["latency"] = parse_duration(latency)
-    if jitter is not None:
-        policy["jitter"] = parse_duration(jitter)
-    if packet_loss is not None:
-        policy["packet_loss_ppm"] = parse_packet_loss(packet_loss)
-    if burst_loss is not None:
-        policy["burst_loss"] = parse_burst_loss(burst_loss)
-    if rate is not None:
-        policy["rate"] = parse_rate(rate)
+    _set_scalar_policy_values(
+        policy,
+        {
+            "seed": seed,
+            "latency": latency,
+            "jitter": jitter,
+            "packet_loss": packet_loss,
+            "burst_loss": burst_loss,
+            "rate": rate,
+        },
+    )
     if timeout is not None:
         policy["timeouts"] = _coerce_timeout_pair(timeout)
     _set_direction_profile(

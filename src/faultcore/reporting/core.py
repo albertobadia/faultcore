@@ -167,22 +167,25 @@ def summarize_record_replay(events: list[dict[str, Any]]) -> dict[str, int]:
         if decision == "delay_ns":
             delay_values.append(_to_int(event.get("value", 0)))
     fault_events_total = sum(decision_counts.values()) - decision_counts.get("continue", 0)
-    return {
+    result = {
         "recorded_events_total": len(events),
         "fault_events_total": fault_events_total,
-        "continue_count": decision_counts.get("continue", 0),
-        "delay_count": decision_counts.get("delay_ns", 0),
-        "drop_count": decision_counts.get("drop", 0),
-        "timeout_count": decision_counts.get("timeout_ms", 0),
-        "error_count": decision_counts.get("error", 0),
-        "connection_error_count": decision_counts.get("connection_error_kind", 0),
-        "reorder_count": decision_counts.get("stage_reorder", 0),
-        "duplicate_count": decision_counts.get("duplicate", 0),
-        "nxdomain_count": decision_counts.get("nxdomain", 0),
+        "decision_counts": dict(decision_counts),
         "latency_p50_ns": _percentile(delay_values, 50),
         "latency_p95_ns": _percentile(delay_values, 95),
         "latency_p99_ns": _percentile(delay_values, 99),
     }
+    result["continue_count"] = decision_counts.get("continue", 0)
+    result["delay_count"] = decision_counts.get("delay_ns", 0)
+    result["drop_count"] = decision_counts.get("drop", 0)
+    result["timeout_count"] = decision_counts.get("timeout_ms", 0)
+    result["error_count"] = decision_counts.get("error", 0)
+    result["connection_error_count"] = decision_counts.get("connection_error_kind", 0)
+    result["reorder_count"] = decision_counts.get("stage_reorder", 0)
+    result["duplicate_count"] = decision_counts.get("duplicate", 0)
+    result["nxdomain_count"] = decision_counts.get("nxdomain", 0)
+    result["mutate_count"] = decision_counts.get("mutate", 0)
+    return result
 
 
 def extract_policy_sources(events: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -332,17 +335,19 @@ def build_record_replay_site_metrics(
                 "reorder_active": decision_counts.get("stage_reorder", 0) > 0,
                 "connection_error_active": decision_counts.get("connection_error_kind", 0) > 0,
                 "nxdomain_active": decision_counts.get("nxdomain", 0) > 0,
+                "mutate_active": decision_counts.get("mutate", 0) > 0,
             },
         }
     return summarized
 
 
 def build_record_replay_timeline_events(
-    events: list[dict[str, Any]], *, ts: str, max_items: int = 300
+    events: list[dict[str, Any]], *, ts: str, max_items: int = 0
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     severity_by_decision = {"error": "error", "continue": "info"}
-    for item in events[:max_items]:
+    limited_events = events if max_items <= 0 else events[:max_items]
+    for item in limited_events:
         decision = str(item.get("decision", ""))
         site = str(item.get("site", ""))
         value = item.get("value", 0)

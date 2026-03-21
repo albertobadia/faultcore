@@ -9,9 +9,7 @@ from pathlib import Path
 import faultcore
 
 
-@faultcore.latency("25ms")
-@faultcore.jitter("10ms")
-def tcp_roundtrip(host: str, port: int, payload: str) -> int:
+def _tcp_roundtrip_raw(host: str, port: int, payload: str) -> int:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(5)
     try:
@@ -23,8 +21,7 @@ def tcp_roundtrip(host: str, port: int, payload: str) -> int:
         sock.close()
 
 
-@faultcore.rate("4mbps")
-def udp_roundtrip(host: str, port: int, payload: str) -> int:
+def _udp_roundtrip_raw(host: str, port: int, payload: str) -> int:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(3)
     try:
@@ -35,11 +32,113 @@ def udp_roundtrip(host: str, port: int, payload: str) -> int:
         sock.close()
 
 
-@faultcore.latency("40ms")
-def http_roundtrip(base_url: str, path: str) -> int:
+def _http_roundtrip_raw(base_url: str, path: str) -> int:
     with urllib.request.urlopen(f"{base_url}{path}", timeout=5) as response:
         body = response.read()
     return len(body)
+
+
+@faultcore.latency("25ms")
+@faultcore.jitter("10ms")
+def tcp_roundtrip(host: str, port: int, payload: str) -> int:
+    return _tcp_roundtrip_raw(host, port, payload)
+
+
+@faultcore.rate("4mbps")
+def udp_roundtrip(host: str, port: int, payload: str) -> int:
+    return _udp_roundtrip_raw(host, port, payload)
+
+
+@faultcore.latency("40ms")
+def http_roundtrip(base_url: str, path: str) -> int:
+    return _http_roundtrip_raw(base_url, path)
+
+
+@faultcore.timeout(connect="1000ms", recv="1000ms")
+def test_timeout_tcp(host: str, port: int, idx: int) -> int:
+    return _tcp_roundtrip_raw(host, port, f"timeout-{idx}\n")
+
+
+@faultcore.packet_loss("100%")
+def test_packet_loss_udp(host: str, port: int, idx: int) -> int:
+    return _udp_roundtrip_raw(host, port, f"packet-loss-{idx}")
+
+
+@faultcore.burst_loss("2")
+def test_burst_loss_udp(host: str, port: int, idx: int) -> int:
+    return _udp_roundtrip_raw(host, port, f"burst-loss-{idx}")
+
+
+@faultcore.latency("1ms")
+def test_uplink_tcp(host: str, port: int, idx: int) -> int:
+    return _tcp_roundtrip_raw(host, port, f"uplink-{idx}\n")
+
+
+@faultcore.jitter("1ms")
+def test_downlink_tcp(host: str, port: int, idx: int) -> int:
+    return _tcp_roundtrip_raw(host, port, f"downlink-{idx}\n")
+
+
+@faultcore.correlated_loss(p_good_to_bad="100%", p_bad_to_good="0%", loss_good="0%", loss_bad="100%")
+def test_correlated_loss_tcp(host: str, port: int, idx: int) -> int:
+    return _tcp_roundtrip_raw(host, port, f"correlated-loss-{idx}\n")
+
+
+@faultcore.connection_error(kind="reset", prob="100%")
+def test_connection_error_tcp(host: str, port: int, idx: int) -> int:
+    return _tcp_roundtrip_raw(host, port, f"connection-error-{idx}\n")
+
+
+@faultcore.connection_error(kind="refused", prob="100%")
+def test_half_open_tcp(host: str, port: int, idx: int) -> int:
+    return _tcp_roundtrip_raw(host, port, f"half-open-{idx}\n")
+
+
+@faultcore.packet_duplicate(prob="100%", max_extra=1)
+def test_packet_duplicate_tcp(host: str, port: int, idx: int) -> int:
+    return _tcp_roundtrip_raw(host, port, f"packet-duplicate-{idx}\n")
+
+
+@faultcore.packet_reorder(prob="100%", max_delay="10ms", window=2)
+def test_packet_reorder_tcp(host: str, port: int, idx: int) -> int:
+    return _tcp_roundtrip_raw(host, port, f"packet-reorder-{idx}\n")
+
+
+@faultcore.payload_mutation(enabled=True, prob="100%", type="truncate", target="both", truncate_size="1kb")
+def test_payload_mutation_tcp(host: str, port: int, idx: int) -> int:
+    return _tcp_roundtrip_raw(host, port, f"payload-mutation-{idx}\n")
+
+
+@faultcore.session_budget(max_tx="1kb", max_rx="1gb", max_ops=1_000_000, max_duration="600s", action="drop")
+def test_session_budget_tcp(host: str, port: int, idx: int) -> int:
+    return _tcp_roundtrip_raw(host, port, f"session-budget-{idx}\n")
+
+
+@faultcore.dns(delay="1ms", timeout="0ms", nxdomain="0%")
+def test_dns_http(base_url: str, idx: int) -> int:
+    return _http_roundtrip_raw(base_url, f"/echo/dns-{idx}")
+
+
+@faultcore.fault("docker_policy_safe")
+def test_fault_policy_tcp(host: str, port: int, idx: int) -> int:
+    return _tcp_roundtrip_raw(host, port, f"fault-policy-{idx}\n")
+
+
+def _run_case_once(name: str, call) -> tuple[str, dict[str, object]]:
+    start = time.perf_counter()
+    try:
+        payload_bytes = int(call())
+    except OSError:
+        payload_bytes = 0
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    profile = _build_function_profile(
+        latency_ms=[elapsed_ms],
+        bytes_series=[payload_bytes],
+        duration_series_ms=[elapsed_ms],
+        total_bytes=payload_bytes,
+        wall_seconds=max(0.001, elapsed_ms / 1000.0),
+    )
+    return name, profile
 
 
 def _avg(values: list[float]) -> float:
@@ -99,6 +198,8 @@ def main() -> int:
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument("--metrics-out", default="/workspace/artifacts/network_metrics.json")
     args = parser.parse_args()
+
+    faultcore.register_policy(name="docker_policy_safe", latency="1ms", jitter="0ms", packet_loss="0%")
 
     tcp_ms: list[float] = []
     udp_ms: list[float] = []
@@ -161,6 +262,41 @@ def main() -> int:
 
     wall_seconds = max(0.001, time.perf_counter() - wall_start)
 
+    function_metrics = {
+        "tcp_roundtrip": _build_function_profile(
+            tcp_ms, tcp_bytes_series, tcp_duration_series_ms, tcp_bytes, wall_seconds
+        ),
+        "udp_roundtrip": _build_function_profile(
+            udp_ms, udp_bytes_series, udp_duration_series_ms, udp_bytes, wall_seconds
+        ),
+        "http_roundtrip": _build_function_profile(
+            http_ms, http_bytes_series, http_duration_series_ms, http_bytes, wall_seconds
+        ),
+    }
+
+    unit_case_calls = (
+        ("test_latency", lambda: tcp_roundtrip(args.tcp_host, args.tcp_port, "test-latency\n")),
+        ("test_jitter", lambda: tcp_roundtrip(args.tcp_host, args.tcp_port, "test-jitter\n")),
+        ("test_rate", lambda: udp_roundtrip(args.udp_host, args.udp_port, "test-rate")),
+        ("test_timeout", lambda: test_timeout_tcp(args.tcp_host, args.tcp_port, 0)),
+        ("test_packet_loss", lambda: test_packet_loss_udp(args.udp_host, args.udp_port, 0)),
+        ("test_burst_loss", lambda: test_burst_loss_udp(args.udp_host, args.udp_port, 0)),
+        ("test_uplink", lambda: test_uplink_tcp(args.tcp_host, args.tcp_port, 0)),
+        ("test_downlink", lambda: test_downlink_tcp(args.tcp_host, args.tcp_port, 0)),
+        ("test_correlated_loss", lambda: test_correlated_loss_tcp(args.tcp_host, args.tcp_port, 0)),
+        ("test_connection_error", lambda: test_connection_error_tcp(args.tcp_host, args.tcp_port, 0)),
+        ("test_half_open", lambda: test_half_open_tcp(args.tcp_host, args.tcp_port, 0)),
+        ("test_packet_duplicate", lambda: test_packet_duplicate_tcp(args.tcp_host, args.tcp_port, 0)),
+        ("test_packet_reorder", lambda: test_packet_reorder_tcp(args.tcp_host, args.tcp_port, 0)),
+        ("test_payload_mutation", lambda: test_payload_mutation_tcp(args.tcp_host, args.tcp_port, 0)),
+        ("test_dns", lambda: test_dns_http(args.http_url, 0)),
+        ("test_session_budget", lambda: test_session_budget_tcp(args.tcp_host, args.tcp_port, 0)),
+        ("test_fault_policy", lambda: test_fault_policy_tcp(args.tcp_host, args.tcp_port, 0)),
+    )
+    for case_name, case_call in unit_case_calls:
+        name, profile = _run_case_once(case_name, case_call)
+        function_metrics[name] = profile
+
     metrics = {
         "scenario": {
             "iterations": args.iterations,
@@ -203,17 +339,7 @@ def main() -> int:
             "udp_latency_ms": [round(v, 3) for v in udp_ms],
             "http_latency_ms": [round(v, 3) for v in http_ms],
         },
-        "functions": {
-            "tcp_roundtrip": _build_function_profile(
-                tcp_ms, tcp_bytes_series, tcp_duration_series_ms, tcp_bytes, wall_seconds
-            ),
-            "udp_roundtrip": _build_function_profile(
-                udp_ms, udp_bytes_series, udp_duration_series_ms, udp_bytes, wall_seconds
-            ),
-            "http_roundtrip": _build_function_profile(
-                http_ms, http_bytes_series, http_duration_series_ms, http_bytes, wall_seconds
-            ),
-        },
+        "functions": function_metrics,
     }
 
     metrics_out = Path(args.metrics_out)

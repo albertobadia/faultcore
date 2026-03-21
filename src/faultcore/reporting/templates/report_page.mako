@@ -52,7 +52,7 @@
       <button type="button" class="tab-btn active" data-tab-target="charts">Network Timeline</button>
       <button type="button" class="tab-btn" data-tab-target="network">Network Metrics</button>
       <button type="button" class="tab-btn" data-tab-target="site-details">Per Site</button>
-      <button type="button" class="tab-btn" data-tab-target="function-details">Per Function</button>
+      <button type="button" class="tab-btn" data-tab-target="function-details">Per Function / Test</button>
       <button type="button" class="tab-btn" data-tab-target="timeline">Decisions Timeline</button>
     </div>
     <div class="tab-content">
