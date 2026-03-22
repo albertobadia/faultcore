@@ -150,7 +150,9 @@ impl AdvancedMetrics {
             .unwrap_or(LATENCY_BUCKET_COUNT - 1);
         self.latency_histogram[idx].fetch_add(1, Ordering::Relaxed);
         self.latency_sample_count.fetch_add(1, Ordering::Relaxed);
-        self.fault_counters.delay_count.fetch_add(1, Ordering::Relaxed);
+        self.fault_counters
+            .delay_count
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     fn record_fault_decision(&self, decision: &LayerDecision) {
@@ -158,13 +160,19 @@ impl AdvancedMetrics {
             LayerDecision::Continue => {}
             LayerDecision::DelayNs(ns) => self.record_delay_ns(*ns),
             LayerDecision::Drop => {
-                self.fault_counters.drop_count.fetch_add(1, Ordering::Relaxed);
+                self.fault_counters
+                    .drop_count
+                    .fetch_add(1, Ordering::Relaxed);
             }
             LayerDecision::TimeoutMs(_) => {
-                self.fault_counters.timeout_count.fetch_add(1, Ordering::Relaxed);
+                self.fault_counters
+                    .timeout_count
+                    .fetch_add(1, Ordering::Relaxed);
             }
             LayerDecision::Error(_) => {
-                self.fault_counters.error_count.fetch_add(1, Ordering::Relaxed);
+                self.fault_counters
+                    .error_count
+                    .fetch_add(1, Ordering::Relaxed);
             }
             LayerDecision::ConnectionErrorKind(_) => {
                 self.fault_counters
@@ -172,16 +180,24 @@ impl AdvancedMetrics {
                     .fetch_add(1, Ordering::Relaxed);
             }
             LayerDecision::StageReorder => {
-                self.fault_counters.reorder_count.fetch_add(1, Ordering::Relaxed);
+                self.fault_counters
+                    .reorder_count
+                    .fetch_add(1, Ordering::Relaxed);
             }
             LayerDecision::Duplicate(_) => {
-                self.fault_counters.duplicate_count.fetch_add(1, Ordering::Relaxed);
+                self.fault_counters
+                    .duplicate_count
+                    .fetch_add(1, Ordering::Relaxed);
             }
             LayerDecision::NxDomain => {
-                self.fault_counters.nxdomain_count.fetch_add(1, Ordering::Relaxed);
+                self.fault_counters
+                    .nxdomain_count
+                    .fetch_add(1, Ordering::Relaxed);
             }
             LayerDecision::Mutate(_) => {
-                self.fault_counters.mutate_count.fetch_add(1, Ordering::Relaxed);
+                self.fault_counters
+                    .mutate_count
+                    .fetch_add(1, Ordering::Relaxed);
             }
         }
     }
@@ -229,7 +245,10 @@ impl AdvancedMetrics {
 
         let map = self.target_rule_hits.lock();
         if !map.is_empty() {
-            let mut entries: Vec<(u64, u64)> = map.iter().map(|(rule_id, hits)| (*rule_id, *hits)).collect();
+            let mut entries: Vec<(u64, u64)> = map
+                .iter()
+                .map(|(rule_id, hits)| (*rule_id, *hits))
+                .collect();
             entries.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
             let top_len = usize::min(entries.len(), TARGET_RULE_TOP_N);
             out.target_rule_top_len = top_len as u64;

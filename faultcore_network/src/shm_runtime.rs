@@ -318,11 +318,8 @@ pub fn clone_rule_for_fd(src_fd: c_int, dst_fd: c_int) {
 
 unsafe fn read_stable_config(config_ptr: *mut FaultcoreConfig) -> Option<FaultcoreConfig> {
     for _ in 0..10 {
-        let generation_ptr = unsafe {
-            config_ptr
-                .cast::<u8>()
-                .add(OFFSET_RULESET_GENERATION) as *const u64
-        };
+        let generation_ptr =
+            unsafe { config_ptr.cast::<u8>().add(OFFSET_RULESET_GENERATION) as *const u64 };
         let g1 = unsafe { ptr::read_unaligned(generation_ptr) };
         if !g1.is_multiple_of(2) {
             continue;
@@ -903,7 +900,10 @@ mod tests {
             ptr::write_unaligned(owners.add(fd as usize), INVALID_TID_SLOT);
         }
         let slot = get_tid_slot_for_fd(fd);
-        assert!(slot.is_none(), "unassigned fd must not resolve to a tid slot");
+        assert!(
+            slot.is_none(),
+            "unassigned fd must not resolve to a tid slot"
+        );
 
         *SHM_POINTER.write() = prev_ptr;
         SHM_OPEN.store(prev_open, Ordering::SeqCst);

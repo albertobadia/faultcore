@@ -104,7 +104,8 @@ impl RecordReplayCore {
             RecordReplayMode::Record => {
                 let decision = evaluate();
                 let policy_name = get_current_policy_name();
-                let event = RecordReplayEvent::from_decision(site, &decision).with_policy_name(policy_name);
+                let event =
+                    RecordReplayEvent::from_decision(site, &decision).with_policy_name(policy_name);
                 (decision, Some(event))
             }
             RecordReplayMode::Replay => {

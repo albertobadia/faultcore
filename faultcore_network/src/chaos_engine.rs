@@ -1,9 +1,10 @@
 use crate::{
+    Config, Layer,
     layers::{
         Direction, L1Chaos, L2QoS, L3Routing, L4Transport, L5Session, L6Presentation, L7Resolver,
         LayerDecision, LayerStage, Operation, PacketContext,
     },
-    record_fault_observability_decision, Config, Layer,
+    record_fault_observability_decision,
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 

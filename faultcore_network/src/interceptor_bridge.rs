@@ -1,15 +1,15 @@
 use libc::{c_int, sockaddr, socklen_t};
 use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{
-    assign_rule_to_fd, clear_rule_for_fd, clone_rule_for_fd, endpoint_for_addr_or_fd,
-    endpoint_for_fd, get_config_for_tid, get_config_for_tid_slot, get_target_rules_for_tid_slot,
-    get_thread_id, get_tid_slot_for_fd, get_tid_slot_for_tid, monotonic_now_ns,
-    record_target_rule_observability_hit, try_open_shm, Config, Direction, Endpoint,
-    FaultOsiEngine, LayerDecision, TargetRule,
+    Config, Direction, Endpoint, FaultOsiEngine, LayerDecision, TargetRule, assign_rule_to_fd,
+    clear_rule_for_fd, clone_rule_for_fd, endpoint_for_addr_or_fd, endpoint_for_fd,
+    get_config_for_tid, get_config_for_tid_slot, get_target_rules_for_tid_slot, get_thread_id,
+    get_tid_slot_for_fd, get_tid_slot_for_tid, monotonic_now_ns,
+    record_target_rule_observability_hit, try_open_shm,
 };
 
 const RULESET_READ_RETRY_LIMIT: usize = 3;
@@ -700,13 +700,15 @@ mod tests {
             hostname: [0; 32],
             sni: [0; 32],
         }];
-        assert!(select_best_target_rule(
-            Some(endpoint),
-            SemanticContext::default(),
-            &rules,
-            rules.len()
-        )
-        .is_none());
+        assert!(
+            select_best_target_rule(
+                Some(endpoint),
+                SemanticContext::default(),
+                &rules,
+                rules.len()
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -853,13 +855,15 @@ mod tests {
             hostname: [0; 32],
             sni: [0; 32],
         }];
-        assert!(select_best_target_rule(
-            Some(endpoint),
-            SemanticContext::default(),
-            &rules,
-            rules.len()
-        )
-        .is_none());
+        assert!(
+            select_best_target_rule(
+                Some(endpoint),
+                SemanticContext::default(),
+                &rules,
+                rules.len()
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -983,13 +987,15 @@ mod tests {
             hostname: name32("api.foo.com"),
             sni: [0; 32],
         }];
-        assert!(select_best_target_rule(
-            Some(endpoint),
-            SemanticContext::default(),
-            &rules,
-            rules.len()
-        )
-        .is_none());
+        assert!(
+            select_best_target_rule(
+                Some(endpoint),
+                SemanticContext::default(),
+                &rules,
+                rules.len()
+            )
+            .is_none()
+        );
     }
 
     #[test]

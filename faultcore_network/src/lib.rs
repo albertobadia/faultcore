@@ -1,9 +1,9 @@
 pub mod chaos_engine;
 pub mod interceptor_bridge;
-pub mod observability;
 pub mod layers;
-pub mod runtime;
+pub mod observability;
 pub mod record_replay;
+pub mod runtime;
 pub mod setpriority_compat;
 pub mod shm_contract;
 pub mod shm_runtime;
@@ -22,23 +22,23 @@ pub type FaultOsiDecisionCounters = DecisionCounters;
 pub use interceptor_bridge::{
     bind_fd_to_current_thread, clear_fd_binding, clone_fd_binding, init_runtime_shm,
     observe_hostname_for_current_thread_addr, observe_sni_for_fd, reset_runtime_reload_metrics,
-    runtime_reload_metrics_snapshot, runtime_config_for_addr_or_fd, runtime_config_for_fd,
-    runtime_dns_config_for_current_thread, runtime_dns_config_for_query, uplink_duplicate_count_for_addr_or_fd,
-    uplink_duplicate_count_for_fd,
+    runtime_config_for_addr_or_fd, runtime_config_for_fd, runtime_dns_config_for_current_thread,
+    runtime_dns_config_for_query, runtime_reload_metrics_snapshot,
+    uplink_duplicate_count_for_addr_or_fd, uplink_duplicate_count_for_fd,
 };
 pub use layers::{
     Direction, L1Chaos, L2QoS, L3Routing, L4Transport, L5Session, L6Presentation, L7Resolver,
     Layer, LayerDecision, LayerStage, Mutation, MutationKind, MutationOutcome, MutationTarget,
     Operation, PacketContext,
 };
+pub use record_replay::{
+    RecordReplayCore, RecordReplayEvent, RecordReplayMode, record_replay_evaluate_or_replay,
+};
 pub use runtime::{
     ConnectDirective, InterceptorRuntime, PendingDatagram, StreamDirective,
     apply_connect_directive, apply_stream_directive, set_errno_value, snapshot_recv_datagram,
     snapshot_recvfrom_datagram, stage_reorder_send, stage_reorder_sendto,
     write_pending_recv_result, write_pending_recvfrom_result,
-};
-pub use record_replay::{
-    RecordReplayCore, RecordReplayEvent, RecordReplayMode, record_replay_evaluate_or_replay,
 };
 pub use setpriority_compat::{
     FAULTCORE_SETPRIORITY_BANDWIDTH, FAULTCORE_SETPRIORITY_LATENCY, FAULTCORE_SETPRIORITY_TIMEOUT,
@@ -536,7 +536,10 @@ mod tests {
     fn advanced_metrics_snapshot_contract_is_stable() {
         let _guard = observability::advanced_metrics_test_guard();
         let snapshot = global_fault_osi_advanced_metrics_snapshot();
-        assert_eq!(snapshot.latency_bucket_len as usize, observability::LATENCY_BUCKET_COUNT);
+        assert_eq!(
+            snapshot.latency_bucket_len as usize,
+            observability::LATENCY_BUCKET_COUNT
+        );
         assert_eq!(
             snapshot.latency_bucket_upper_bounds_ns,
             observability::LATENCY_BUCKET_UPPER_BOUNDS_NS

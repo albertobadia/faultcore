@@ -1,6 +1,6 @@
 use crate::layers::{Layer, LayerDecision, LayerStage, PacketContext};
 use parking_lot::Mutex;
-use rand::{random, rngs::StdRng, Rng, SeedableRng};
+use rand::{Rng, SeedableRng, random, rngs::StdRng};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub struct L3Routing {

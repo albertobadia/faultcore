@@ -1,15 +1,12 @@
 use faultcore_network::{
     Config, Direction, FaultOsiAdvancedMetricsSnapshot, FaultOsiMetricsSnapshot, LayerDecision,
-    MutationOutcome, PendingDatagram,
-    SetpriorityCompatOutcome, apply_connect_directive, apply_stream_directive,
-    bind_fd_to_current_thread, clear_fd_binding, clone_fd_binding, get_current_policy_name,
-    global_fault_osi_engine,
-    global_interceptor_runtime, handle_setpriority_compat, init_runtime_shm,
-    observe_hostname_for_current_thread_addr, observe_sni_for_fd,
-    record_replay_evaluate_or_replay,
-    reset_global_fault_osi_metrics, runtime_config_for_addr_or_fd, runtime_config_for_fd,
-    runtime_dns_config_for_current_thread, runtime_dns_config_for_query, set_errno_value,
-    snapshot_recv_datagram,
+    MutationOutcome, PendingDatagram, SetpriorityCompatOutcome, apply_connect_directive,
+    apply_stream_directive, bind_fd_to_current_thread, clear_fd_binding, clone_fd_binding,
+    get_current_policy_name, global_fault_osi_engine, global_interceptor_runtime,
+    handle_setpriority_compat, init_runtime_shm, observe_hostname_for_current_thread_addr,
+    observe_sni_for_fd, record_replay_evaluate_or_replay, reset_global_fault_osi_metrics,
+    runtime_config_for_addr_or_fd, runtime_config_for_fd, runtime_dns_config_for_current_thread,
+    runtime_dns_config_for_query, set_errno_value, snapshot_recv_datagram,
     snapshot_recvfrom_datagram, stage_reorder_send, stage_reorder_sendto,
     uplink_duplicate_count_for_addr_or_fd, uplink_duplicate_count_for_fd,
     write_pending_recv_result, write_pending_recvfrom_result,
@@ -56,7 +53,8 @@ type GetAddrInfoFn = unsafe extern "C" fn(
     *const addrinfo,
     *mut *mut addrinfo,
 ) -> c_int;
-type SslCtrlFn = unsafe extern "C" fn(*mut c_void, c_int, libc::c_long, *mut c_void) -> libc::c_long;
+type SslCtrlFn =
+    unsafe extern "C" fn(*mut c_void, c_int, libc::c_long, *mut c_void) -> libc::c_long;
 type SslSetFdFn = unsafe extern "C" fn(*mut c_void, c_int) -> c_int;
 type SslGetFdFn = unsafe extern "C" fn(*const c_void) -> c_int;
 type SslFreeFn = unsafe extern "C" fn(*mut c_void);
@@ -212,7 +210,9 @@ fn maybe_duplicate_sendto(
     maybe_duplicate_common(
         "stream_uplink_post_sendto",
         sent,
-        || unsafe { uplink_duplicate_count_for_addr_or_fd(global_fault_osi_engine(), fd, addr, addr_len) },
+        || unsafe {
+            uplink_duplicate_count_for_addr_or_fd(global_fault_osi_engine(), fd, addr, addr_len)
+        },
         || unsafe {
             let _ = (ORIG_SENDTO)(fd, b, sent as size_t, f, addr, addr_len);
         },
@@ -852,14 +852,21 @@ pub unsafe extern "C" fn write(s: c_int, b: *const c_void, l: size_t) -> ssize_t
                     (ORIG_WRITE)(s, payload.as_ptr().cast::<c_void>(), payload.len())
                 }
             },
-            |pending, payload| unsafe {
-                if payload.is_empty() {
-                    stage_reorder_send(pending, b, l, 0)
-                } else {
-                    stage_reorder_send(pending, payload.as_ptr().cast::<c_void>(), payload.len(), 0)
+            |pending, payload| {
+                unsafe {
+                    if payload.is_empty() {
+                        stage_reorder_send(pending, b, l, 0)
+                    } else {
+                        stage_reorder_send(
+                            pending,
+                            payload.as_ptr().cast::<c_void>(),
+                            payload.len(),
+                            0,
+                        )
+                    }
                 }
-            }
-            .unwrap_or(l as ssize_t),
+                .unwrap_or(l as ssize_t)
+            },
             |sent, payload| {
                 if payload.is_empty() {
                     maybe_duplicate_write(s, b, sent);
@@ -936,14 +943,21 @@ pub unsafe extern "C" fn send(s: c_int, b: *const c_void, l: size_t, f: c_int) -
                     (ORIG_SEND)(s, payload.as_ptr().cast::<c_void>(), payload.len(), f)
                 }
             },
-            |pending, payload| unsafe {
-                if payload.is_empty() {
-                    stage_reorder_send(pending, b, l, f)
-                } else {
-                    stage_reorder_send(pending, payload.as_ptr().cast::<c_void>(), payload.len(), f)
+            |pending, payload| {
+                unsafe {
+                    if payload.is_empty() {
+                        stage_reorder_send(pending, b, l, f)
+                    } else {
+                        stage_reorder_send(
+                            pending,
+                            payload.as_ptr().cast::<c_void>(),
+                            payload.len(),
+                            f,
+                        )
+                    }
                 }
-            }
-            .unwrap_or(l as ssize_t),
+                .unwrap_or(l as ssize_t)
+            },
             |result, payload| {
                 if payload.is_empty() {
                     maybe_duplicate_send(s, b, result, f);
@@ -1079,7 +1093,7 @@ pub unsafe extern "C" fn sendto(
                         )
                     }
                 }
-                    .unwrap_or(l as ssize_t)
+                .unwrap_or(l as ssize_t)
             },
             |result, payload| {
                 if payload.is_empty() {
@@ -1186,7 +1200,11 @@ pub unsafe extern "C" fn getaddrinfo(
             let addr_len = unsafe { (*item).ai_addrlen };
             if !addr.is_null() && addr_len > 0 {
                 unsafe {
-                    observe_hostname_for_current_thread_addr(addr.cast_const(), addr_len as socklen_t, hostname)
+                    observe_hostname_for_current_thread_addr(
+                        addr.cast_const(),
+                        addr_len as socklen_t,
+                        hostname,
+                    )
                 };
             }
             item = unsafe { (*item).ai_next };
@@ -1352,259 +1370,258 @@ pub extern "C" fn faultcore_get_policy_name() -> *const std::os::raw::c_char {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn build_client_hello_record(server_name: &str) -> Vec<u8> {
-       let host = server_name.as_bytes();
-       let server_name_list_len = 1 + 2 + host.len();
-       let sni_ext_data_len = 2 + server_name_list_len;
-       let extensions_len = 4 + sni_ext_data_len;
-       let handshake_len = 2 + 32 + 1 + 2 + 2 + 1 + 1 + 2 + extensions_len;
-       let record_len = 4 + handshake_len;
+        let host = server_name.as_bytes();
+        let server_name_list_len = 1 + 2 + host.len();
+        let sni_ext_data_len = 2 + server_name_list_len;
+        let extensions_len = 4 + sni_ext_data_len;
+        let handshake_len = 2 + 32 + 1 + 2 + 2 + 1 + 1 + 2 + extensions_len;
+        let record_len = 4 + handshake_len;
 
-       let mut out = Vec::with_capacity(5 + record_len);
-       out.extend_from_slice(&[22, 0x03, 0x03]);
-       out.extend_from_slice(&(record_len as u16).to_be_bytes());
-       out.push(1);
-       out.push(((handshake_len >> 16) & 0xFF) as u8);
-       out.push(((handshake_len >> 8) & 0xFF) as u8);
-       out.push((handshake_len & 0xFF) as u8);
-       out.extend_from_slice(&[0x03, 0x03]);
-       out.extend_from_slice(&[0; 32]);
-       out.push(0);
-       out.extend_from_slice(&2u16.to_be_bytes());
-       out.extend_from_slice(&[0x00, 0x2F]);
-       out.push(1);
-       out.push(0);
-       out.extend_from_slice(&(extensions_len as u16).to_be_bytes());
-       out.extend_from_slice(&0u16.to_be_bytes());
-       out.extend_from_slice(&(sni_ext_data_len as u16).to_be_bytes());
-       out.extend_from_slice(&(server_name_list_len as u16).to_be_bytes());
-       out.push(0);
-       out.extend_from_slice(&(host.len() as u16).to_be_bytes());
-       out.extend_from_slice(host);
-       out
+        let mut out = Vec::with_capacity(5 + record_len);
+        out.extend_from_slice(&[22, 0x03, 0x03]);
+        out.extend_from_slice(&(record_len as u16).to_be_bytes());
+        out.push(1);
+        out.push(((handshake_len >> 16) & 0xFF) as u8);
+        out.push(((handshake_len >> 8) & 0xFF) as u8);
+        out.push((handshake_len & 0xFF) as u8);
+        out.extend_from_slice(&[0x03, 0x03]);
+        out.extend_from_slice(&[0; 32]);
+        out.push(0);
+        out.extend_from_slice(&2u16.to_be_bytes());
+        out.extend_from_slice(&[0x00, 0x2F]);
+        out.push(1);
+        out.push(0);
+        out.extend_from_slice(&(extensions_len as u16).to_be_bytes());
+        out.extend_from_slice(&0u16.to_be_bytes());
+        out.extend_from_slice(&(sni_ext_data_len as u16).to_be_bytes());
+        out.extend_from_slice(&(server_name_list_len as u16).to_be_bytes());
+        out.push(0);
+        out.extend_from_slice(&(host.len() as u16).to_be_bytes());
+        out.extend_from_slice(host);
+        out
     }
-    
+
     #[test]
     fn connect_timeout_maps_to_etimedout() {
-       let directive =
-           global_interceptor_runtime().map_connect_decision(LayerDecision::TimeoutMs(10));
-       assert_eq!(
-           directive,
-           faultcore_network::ConnectDirective::ReturnErrno {
-               errno: libc::ETIMEDOUT,
-               ret: -1,
-           }
-       );
+        let directive =
+            global_interceptor_runtime().map_connect_decision(LayerDecision::TimeoutMs(10));
+        assert_eq!(
+            directive,
+            faultcore_network::ConnectDirective::ReturnErrno {
+                errno: libc::ETIMEDOUT,
+                ret: -1,
+            }
+        );
     }
-    
+
     #[test]
     fn connect_error_kind_maps_to_errno() {
-       let directive = global_interceptor_runtime()
-           .map_connect_decision(LayerDecision::ConnectionErrorKind(1));
-       assert_eq!(
-           directive,
-           faultcore_network::ConnectDirective::ReturnErrno {
-               errno: libc::ECONNRESET,
-               ret: -1,
-           }
-       );
+        let directive = global_interceptor_runtime()
+            .map_connect_decision(LayerDecision::ConnectionErrorKind(1));
+        assert_eq!(
+            directive,
+            faultcore_network::ConnectDirective::ReturnErrno {
+                errno: libc::ECONNRESET,
+                ret: -1,
+            }
+        );
     }
-    
+
     #[test]
     fn stream_drop_maps_to_errno() {
-       let directive =
-           global_interceptor_runtime().map_stream_decision(1, LayerDecision::Drop, false);
-       assert_eq!(
-           directive,
-           faultcore_network::StreamDirective::ReturnErrno {
-               errno: libc::EIO,
-               ret: -1,
-           }
-       );
+        let directive =
+            global_interceptor_runtime().map_stream_decision(1, LayerDecision::Drop, false);
+        assert_eq!(
+            directive,
+            faultcore_network::StreamDirective::ReturnErrno {
+                errno: libc::EIO,
+                ret: -1,
+            }
+        );
     }
-    
+
     #[test]
     fn stream_drop_must_not_look_like_successful_zero_byte_io() {
-       let directive =
-           global_interceptor_runtime().map_stream_decision(1, LayerDecision::Drop, false);
-       assert!(
-           !matches!(
-               directive,
-               faultcore_network::StreamDirective::ReturnValue(0)
-           ),
-           "drop for stream I/O should not be mapped as a successful zero-byte operation"
-       );
+        let directive =
+            global_interceptor_runtime().map_stream_decision(1, LayerDecision::Drop, false);
+        assert!(
+            !matches!(
+                directive,
+                faultcore_network::StreamDirective::ReturnValue(0)
+            ),
+            "drop for stream I/O should not be mapped as a successful zero-byte operation"
+        );
     }
-    
+
     #[test]
     fn stream_timeout_maps_to_etimedout() {
-       let directive = global_interceptor_runtime().map_stream_decision(
-           1,
-           LayerDecision::TimeoutMs(50),
-           false,
-       );
-       assert_eq!(
-           directive,
-           faultcore_network::StreamDirective::ReturnErrno {
-               errno: libc::ETIMEDOUT,
-               ret: -1,
-           }
-       );
+        let directive = global_interceptor_runtime().map_stream_decision(
+            1,
+            LayerDecision::TimeoutMs(50),
+            false,
+        );
+        assert_eq!(
+            directive,
+            faultcore_network::StreamDirective::ReturnErrno {
+                errno: libc::ETIMEDOUT,
+                ret: -1,
+            }
+        );
     }
-    
+
     #[test]
     fn stream_stage_reorder_is_non_terminal() {
-       let directive =
-           global_interceptor_runtime().map_stream_decision(1, LayerDecision::StageReorder, false);
-       assert_eq!(directive, faultcore_network::StreamDirective::Continue);
+        let directive =
+            global_interceptor_runtime().map_stream_decision(1, LayerDecision::StageReorder, false);
+        assert_eq!(directive, faultcore_network::StreamDirective::Continue);
     }
-    
+
     #[test]
     fn dns_mapping_contract_is_stable() {
-       assert_eq!(
-           global_interceptor_runtime().map_dns_decision_to_eai(&LayerDecision::TimeoutMs(1)),
-           Some(libc::EAI_AGAIN)
-       );
-       assert_eq!(
-           global_interceptor_runtime().map_dns_decision_to_eai(&LayerDecision::NxDomain),
-           Some(libc::EAI_NONAME)
-       );
-       assert_eq!(
-           global_interceptor_runtime()
-               .map_dns_decision_to_eai(&LayerDecision::ConnectionErrorKind(1)),
-           Some(libc::EAI_FAIL)
-       );
-       assert_eq!(
-           global_interceptor_runtime().map_dns_decision_to_eai(&LayerDecision::DelayNs(1)),
-           None
-       );
+        assert_eq!(
+            global_interceptor_runtime().map_dns_decision_to_eai(&LayerDecision::TimeoutMs(1)),
+            Some(libc::EAI_AGAIN)
+        );
+        assert_eq!(
+            global_interceptor_runtime().map_dns_decision_to_eai(&LayerDecision::NxDomain),
+            Some(libc::EAI_NONAME)
+        );
+        assert_eq!(
+            global_interceptor_runtime()
+                .map_dns_decision_to_eai(&LayerDecision::ConnectionErrorKind(1)),
+            Some(libc::EAI_FAIL)
+        );
+        assert_eq!(
+            global_interceptor_runtime().map_dns_decision_to_eai(&LayerDecision::DelayNs(1)),
+            None
+        );
     }
-    
+
     #[test]
     fn metrics_snapshot_null_pointer_returns_false() {
-       let ok = unsafe { faultcore_metrics_snapshot(std::ptr::null_mut()) };
-       assert!(!ok);
+        let ok = unsafe { faultcore_metrics_snapshot(std::ptr::null_mut()) };
+        assert!(!ok);
     }
 
     #[test]
     fn advanced_metrics_snapshot_null_pointer_returns_false() {
-       let ok = unsafe { faultcore_advanced_metrics_snapshot(std::ptr::null_mut()) };
-       assert!(!ok);
+        let ok = unsafe { faultcore_advanced_metrics_snapshot(std::ptr::null_mut()) };
+        assert!(!ok);
     }
-    
+
     #[test]
     fn setpriority_hook_must_check_dlsym_pointer_before_transmute() {
-       let src = include_str!("lib.rs");
-       let setpriority_block = src
-           .split("pub extern \"C\" fn setpriority")
-           .nth(1)
-           .expect("setpriority hook must exist");
-       assert!(setpriority_block.contains("is_null"));
+        let src = include_str!("lib.rs");
+        let setpriority_block = src
+            .split("pub extern \"C\" fn setpriority")
+            .nth(1)
+            .expect("setpriority hook must exist");
+        assert!(setpriority_block.contains("is_null"));
     }
-    
+
     #[test]
     fn setpriority_faultcore_failure_must_return_errno_without_libc_fallback() {
-       let src = include_str!("lib.rs");
-       let setpriority_block = src
-           .split("pub extern \"C\" fn setpriority")
-           .nth(1)
-           .expect("setpriority hook must exist");
-       assert!(setpriority_block.contains("SetpriorityCompatOutcome::FaultcoreError"));
-       assert!(setpriority_block.contains("set_errno_value(errno)"));
+        let src = include_str!("lib.rs");
+        let setpriority_block = src
+            .split("pub extern \"C\" fn setpriority")
+            .nth(1)
+            .expect("setpriority hook must exist");
+        assert!(setpriority_block.contains("SetpriorityCompatOutcome::FaultcoreError"));
+        assert!(setpriority_block.contains("set_errno_value(errno)"));
     }
-    
+
     #[test]
     fn send_hooks_share_uplink_helper_flow() {
-       let src = include_str!("lib.rs");
-       let send_block = src
-           .split("pub unsafe extern \"C\" fn send(")
-           .nth(1)
-           .expect("send hook must exist");
-       let sendto_block = src
-           .split("pub unsafe extern \"C\" fn sendto(")
-           .nth(1)
-           .expect("sendto hook must exist");
-       assert!(send_block.contains("handle_uplink_send("));
-       assert!(sendto_block.contains("handle_uplink_send("));
+        let src = include_str!("lib.rs");
+        let send_block = src
+            .split("pub unsafe extern \"C\" fn send(")
+            .nth(1)
+            .expect("send hook must exist");
+        let sendto_block = src
+            .split("pub unsafe extern \"C\" fn sendto(")
+            .nth(1)
+            .expect("sendto hook must exist");
+        assert!(send_block.contains("handle_uplink_send("));
+        assert!(sendto_block.contains("handle_uplink_send("));
     }
-    
+
     #[test]
     fn recv_hooks_share_downlink_helper_flow() {
-       let src = include_str!("lib.rs");
-       let recv_block = src
-           .split("pub unsafe extern \"C\" fn recv(")
-           .nth(1)
-           .expect("recv hook must exist");
-       let recvfrom_block = src
-           .split("pub unsafe extern \"C\" fn recvfrom(")
-           .nth(1)
-           .expect("recvfrom hook must exist");
-       assert!(recv_block.contains("handle_downlink_recv("));
-       assert!(recvfrom_block.contains("handle_downlink_recv("));
+        let src = include_str!("lib.rs");
+        let recv_block = src
+            .split("pub unsafe extern \"C\" fn recv(")
+            .nth(1)
+            .expect("recv hook must exist");
+        let recvfrom_block = src
+            .split("pub unsafe extern \"C\" fn recvfrom(")
+            .nth(1)
+            .expect("recvfrom hook must exist");
+        assert!(recv_block.contains("handle_downlink_recv("));
+        assert!(recvfrom_block.contains("handle_downlink_recv("));
     }
 
     #[test]
     fn l6_mutation_decisions_are_recorded_in_record_replay() {
-       let src = include_str!("lib.rs");
-       let uplink_helper = src
-           .split("fn handle_uplink_send")
-           .nth(1)
-           .expect("handle_uplink_send must exist");
-       let downlink_helper = src
-           .split("fn handle_downlink_recv")
-           .nth(1)
-           .expect("handle_downlink_recv must exist");
+        let src = include_str!("lib.rs");
+        let uplink_helper = src
+            .split("fn handle_uplink_send")
+            .nth(1)
+            .expect("handle_uplink_send must exist");
+        let downlink_helper = src
+            .split("fn handle_downlink_recv")
+            .nth(1)
+            .expect("handle_downlink_recv must exist");
 
-       assert!(uplink_helper.contains("stream_uplink_l6_mutation"));
-       assert!(downlink_helper.contains("stream_downlink_l6_mutation"));
-       assert!(uplink_helper.contains("record_replay_evaluate_or_replay"));
-       assert!(downlink_helper.contains("record_replay_evaluate_or_replay"));
+        assert!(uplink_helper.contains("stream_uplink_l6_mutation"));
+        assert!(downlink_helper.contains("stream_downlink_l6_mutation"));
+        assert!(uplink_helper.contains("record_replay_evaluate_or_replay"));
+        assert!(downlink_helper.contains("record_replay_evaluate_or_replay"));
     }
 
     #[test]
     fn aliasing_hooks_propagate_fd_binding() {
-       let src = include_str!("lib.rs");
-       let dup_block = src
-           .split("pub extern \"C\" fn dup(")
-           .nth(1)
-           .expect("dup hook must exist");
-       let dup2_block = src
-           .split("pub extern \"C\" fn dup2(")
-           .nth(1)
-           .expect("dup2 hook must exist");
-       let dup3_block = src
-           .split("pub extern \"C\" fn dup3(")
-           .nth(1)
-           .expect("dup3 hook must exist");
-       let accept_block = src
-           .split("pub unsafe extern \"C\" fn accept(")
-           .nth(1)
-           .expect("accept hook must exist");
-       let accept4_block = src
-           .split("pub unsafe extern \"C\" fn accept4(")
-           .nth(1)
-           .expect("accept4 hook must exist");
-       assert!(dup_block.contains("clone_fd_binding(oldfd, newfd)"));
-       assert!(dup2_block.contains("clone_fd_binding(oldfd, out)"));
-       assert!(dup3_block.contains("clone_fd_binding(oldfd, out)"));
-       assert!(accept_block.contains("clone_fd_binding(s, newfd)"));
-       assert!(accept4_block.contains("clone_fd_binding(s, newfd)"));
+        let src = include_str!("lib.rs");
+        let dup_block = src
+            .split("pub extern \"C\" fn dup(")
+            .nth(1)
+            .expect("dup hook must exist");
+        let dup2_block = src
+            .split("pub extern \"C\" fn dup2(")
+            .nth(1)
+            .expect("dup2 hook must exist");
+        let dup3_block = src
+            .split("pub extern \"C\" fn dup3(")
+            .nth(1)
+            .expect("dup3 hook must exist");
+        let accept_block = src
+            .split("pub unsafe extern \"C\" fn accept(")
+            .nth(1)
+            .expect("accept hook must exist");
+        let accept4_block = src
+            .split("pub unsafe extern \"C\" fn accept4(")
+            .nth(1)
+            .expect("accept4 hook must exist");
+        assert!(dup_block.contains("clone_fd_binding(oldfd, newfd)"));
+        assert!(dup2_block.contains("clone_fd_binding(oldfd, out)"));
+        assert!(dup3_block.contains("clone_fd_binding(oldfd, out)"));
+        assert!(accept_block.contains("clone_fd_binding(s, newfd)"));
+        assert!(accept4_block.contains("clone_fd_binding(s, newfd)"));
     }
 
     #[test]
     fn tls_client_hello_sni_parser_extracts_normalized_host() {
-       let payload = build_client_hello_record("Api.Foo.com.");
-       let observed = tls_client_hello_sni(&payload);
-       assert_eq!(observed.as_deref(), Some("api.foo.com"));
+        let payload = build_client_hello_record("Api.Foo.com.");
+        let observed = tls_client_hello_sni(&payload);
+        assert_eq!(observed.as_deref(), Some("api.foo.com"));
     }
 
     #[test]
     fn tls_client_hello_sni_parser_returns_none_for_non_tls_payload() {
-       assert!(tls_client_hello_sni(b"plain-text").is_none());
+        assert!(tls_client_hello_sni(b"plain-text").is_none());
     }
 }

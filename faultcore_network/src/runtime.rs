@@ -450,12 +450,10 @@ impl InterceptorRuntime {
                     ret: -1,
                 }
             }
-            LayerDecision::Mutate(_) => {
-                ConnectDirective::ReturnErrno {
-                    errno: EIO,
-                    ret: -1,
-                }
-            }
+            LayerDecision::Mutate(_) => ConnectDirective::ReturnErrno {
+                errno: EIO,
+                ret: -1,
+            },
         }
     }
 
@@ -469,9 +467,7 @@ impl InterceptorRuntime {
             LayerDecision::Continue
             | LayerDecision::StageReorder
             | LayerDecision::Duplicate(_)
-            | LayerDecision::Mutate(_) => {
-                StreamDirective::Continue
-            }
+            | LayerDecision::Mutate(_) => StreamDirective::Continue,
             LayerDecision::Drop => StreamDirective::ReturnErrno {
                 errno: EIO,
                 ret: -1,

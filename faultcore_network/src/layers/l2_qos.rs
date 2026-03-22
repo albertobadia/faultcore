@@ -1,6 +1,6 @@
 use crate::{
-    layers::{Layer, LayerDecision, LayerStage, PacketContext},
     Config,
+    layers::{Layer, LayerDecision, LayerStage, PacketContext},
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;

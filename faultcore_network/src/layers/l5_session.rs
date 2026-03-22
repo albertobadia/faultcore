@@ -1,6 +1,6 @@
 use crate::{
-    layers::{Layer, LayerDecision, LayerStage, PacketContext},
     Config, Direction,
+    layers::{Layer, LayerDecision, LayerStage, PacketContext},
 };
 use parking_lot::Mutex;
 use std::collections::HashMap;
