@@ -67,7 +67,8 @@ impl L2QoS {
         }
     }
     fn process_with_bytes(&self, bytes: u64, config: &Config) -> LayerDecision {
-        let rate = if config.bandwidth_bps > 0 {
+        let has_override_rate = config.bandwidth_bps > 0;
+        let rate = if has_override_rate {
             config.bandwidth_bps
         } else {
             self.rate_bps
@@ -78,7 +79,7 @@ impl L2QoS {
         }
 
         let bits_needed = bytes.saturating_mul(8);
-        let capacity_tokens = if config.bandwidth_bps > 0 {
+        let capacity_tokens = if has_override_rate {
             (rate as f64) * 2.0
         } else {
             self.capacity_tokens

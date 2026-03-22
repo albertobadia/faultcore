@@ -7,6 +7,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+from contextlib import suppress
 from datetime import datetime
 
 import faultcore
@@ -43,10 +44,8 @@ def try_roundtrip(host: str, port: int, idx: int) -> str:
     except Exception as exc:  # noqa: BLE001
         return type(exc).__name__
     finally:
-        try:
+        with suppress(Exception):
             sock.close()
-        except Exception:  # noqa: BLE001
-            pass
 
 
 def run_probe(host: str, port: int, with_policy: bool) -> list[str]:

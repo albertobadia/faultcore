@@ -54,15 +54,17 @@ def test_temporary_policy_context_applies_with_fault_auto():
     mock_shm.write_latency = MagicMock()
     mock_shm.clear = MagicMock()
 
-    with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
-        with patch("faultcore.decorator.threading.get_native_id", return_value=5154):
+    with (
+        patch("faultcore.decorator.get_shm_writer", return_value=mock_shm),
+        patch("faultcore.decorator.threading.get_native_id", return_value=5154),
+    ):
 
-            @faultcore.fault()
-            def op():
-                return "ok"
+        @faultcore.fault()
+        def op():
+            return "ok"
 
-            with faultcore.policy_context(latency="25ms"):
-                assert op() == "ok"
+        with faultcore.policy_context(latency="25ms"):
+            assert op() == "ok"
 
     mock_shm.write_latency.assert_called_once_with(5154, 25)
     mock_shm.clear.assert_called_once_with(5154)
@@ -79,9 +81,8 @@ def test_policy_context_cleans_up_temp_policy_when_set_thread_policy_raises():
     with patch("faultcore.set_thread_policy", mock_set_thread_policy):
         initial_policies = set(list_policies())
 
-        with suppress(RuntimeError):
-            with faultcore.policy_context(latency="50ms"):
-                pass
+        with suppress(RuntimeError), faultcore.policy_context(latency="50ms"):
+            pass
 
         final_policies = set(list_policies())
 
@@ -94,9 +95,8 @@ def test_policy_context_cleans_up_temp_policy_when_set_thread_policy_raises():
 def test_policy_context_restores_previous_on_exception_in_body():
     faultcore.set_thread_policy("initial")
 
-    with pytest.raises(ValueError, match="Simulated error in context body"):
-        with faultcore.policy_context("new_policy"):
-            raise ValueError("Simulated error in context body")
+    with pytest.raises(ValueError, match="Simulated error in context body"), faultcore.policy_context("new_policy"):
+        raise ValueError("Simulated error in context body")
 
     assert get_thread_policy() == "initial", "Previous policy should be restored after exception"
 

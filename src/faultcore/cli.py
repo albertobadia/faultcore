@@ -4,6 +4,7 @@ import platform
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -49,25 +50,6 @@ REPORT_REVERSE_EVENTS_OPT = typer.Option(
     False,
     "--reverse-events",
     help="Render events in reverse chronological order.",
-)
-
-_SCENARIO_INT_METRICS = (
-    ("scenario_iterations", "scenario", "iterations"),
-    ("scenario_duration_ms", "scenario", "duration_ms"),
-    ("tcp_throughput_bps", "throughput_bps", "tcp"),
-    ("udp_throughput_bps", "throughput_bps", "udp"),
-    ("http_throughput_bps", "throughput_bps", "http"),
-    ("total_bytes", "bytes", "total"),
-    ("total_throughput_bps", "throughput_bps", "total"),
-)
-
-_SCENARIO_FLOAT_METRICS = (
-    ("tcp_latency_avg_ms", "latency_ms", "tcp_avg"),
-    ("udp_latency_avg_ms", "latency_ms", "udp_avg"),
-    ("http_latency_avg_ms", "latency_ms", "http_avg"),
-    ("tcp_jitter_ms", "jitter_ms", "tcp"),
-    ("udp_jitter_ms", "jitter_ms", "udp"),
-    ("http_jitter_ms", "jitter_ms", "http"),
 )
 
 _SCENARIO_SOURCE_KEYS = ("latency_ms", "jitter_ms", "bytes", "throughput_bps", "scenario")
@@ -140,6 +122,23 @@ def _coerce_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+_SCENARIO_METRICS = (
+    ("scenario_iterations", "scenario", "iterations", _coerce_int),
+    ("scenario_duration_ms", "scenario", "duration_ms", _coerce_int),
+    ("tcp_throughput_bps", "throughput_bps", "tcp", _coerce_int),
+    ("udp_throughput_bps", "throughput_bps", "udp", _coerce_int),
+    ("http_throughput_bps", "throughput_bps", "http", _coerce_int),
+    ("total_bytes", "bytes", "total", _coerce_int),
+    ("total_throughput_bps", "throughput_bps", "total", _coerce_int),
+    ("tcp_latency_avg_ms", "latency_ms", "tcp_avg", _coerce_float),
+    ("udp_latency_avg_ms", "latency_ms", "udp_avg", _coerce_float),
+    ("http_latency_avg_ms", "latency_ms", "http_avg", _coerce_float),
+    ("tcp_jitter_ms", "jitter_ms", "tcp", _coerce_float),
+    ("udp_jitter_ms", "jitter_ms", "udp", _coerce_float),
+    ("http_jitter_ms", "jitter_ms", "http", _coerce_float),
+)
+
+
 def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
@@ -164,7 +163,7 @@ _SCENARIO_SUMMARY_FIELDS = (
 
 def _metric_details(
     metric_sources: dict[str, dict[str, object]],
-    fields: tuple[tuple[str, str, str, object], ...],
+    fields: tuple[tuple[str, str, str, Callable[[Any], float | int]], ...],
 ) -> dict[str, object]:
     return {
         metric_name: coercer(metric_sources[source_name].get(source_key))
@@ -255,17 +254,17 @@ def _build_pytest_additional_events(
             "details": summary_override,
         }
     ]
-    for failure_name in parse_pytest_failures(combined_output):
-        events.append(
-            {
-                "ts": ended_at,
-                "severity": "error",
-                "type": "pytest.failure",
-                "source": "pytest",
-                "name": failure_name,
-                "details": {},
-            }
-        )
+    events.extend(
+        {
+            "ts": ended_at,
+            "severity": "error",
+            "type": "pytest.failure",
+            "source": "pytest",
+            "name": failure_name,
+            "details": {},
+        }
+        for failure_name in parse_pytest_failures(combined_output)
+    )
     return events
 
 
@@ -297,10 +296,8 @@ def _merge_scenario_metrics_into_run_record(
     sources = {key: _as_dict(scenario_metrics.get(key)) for key in _SCENARIO_SOURCE_KEYS}
 
     network_metrics = dict(_as_dict(record.get("network_metrics")))
-    for name, src, key in _SCENARIO_INT_METRICS:
-        network_metrics[name] = _coerce_int(sources[src].get(key))
-    for name, src, key in _SCENARIO_FLOAT_METRICS:
-        network_metrics[name] = _coerce_float(sources[src].get(key))
+    for name, source_name, source_key, coercer in _SCENARIO_METRICS:
+        network_metrics[name] = coercer(sources[source_name].get(source_key))
     record["network_metrics"] = network_metrics
 
     series_map = _as_dict(scenario_metrics.get("series"))

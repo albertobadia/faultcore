@@ -4,7 +4,7 @@ use crate::{
 };
 use parking_lot::Mutex;
 use rand::{Rng, SeedableRng, random, rngs::StdRng};
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map::Entry};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub struct L4Transport {
@@ -62,9 +62,16 @@ impl L4Transport {
         if bytes == 0 || fd < 0 {
             return;
         }
+
         let mut map = self.stream_bytes.lock();
-        let current = map.get(&fd).copied().unwrap_or(0);
-        map.insert(fd, current.saturating_add(bytes));
+        match map.entry(fd) {
+            Entry::Occupied(mut entry) => {
+                *entry.get_mut() = entry.get().saturating_add(bytes);
+            }
+            Entry::Vacant(entry) => {
+                entry.insert(bytes);
+            }
+        }
     }
 
     pub fn clear_fd_state(&self, fd: i32) {
@@ -78,11 +85,7 @@ impl L4Transport {
         if !is_connect && config.half_open_after_bytes > 0 {
             let seen = self.stream_bytes.lock().get(&fd).copied().unwrap_or(0);
             if seen >= config.half_open_after_bytes {
-                let kind = if config.half_open_err_kind == 0 {
-                    1
-                } else {
-                    config.half_open_err_kind
-                };
+                let kind = config.half_open_err_kind.max(1);
                 return Some(kind);
             }
         }

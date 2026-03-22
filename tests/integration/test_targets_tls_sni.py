@@ -189,11 +189,13 @@ def tls_echo(host: str, port: int, message: str, server_hostname: str) -> str:
     client_ctx = ssl.create_default_context()
     client_ctx.check_hostname = False
     client_ctx.verify_mode = ssl.CERT_NONE
-    with socket.create_connection((host, port), timeout=5) as raw:
-        with client_ctx.wrap_socket(raw, server_hostname=server_hostname) as tls_sock:
-            tls_sock.sendall(f"{message}\n".encode())
-            data = tls_sock.recv(4096)
-            return data.decode("utf-8").strip()
+    with (
+        socket.create_connection((host, port), timeout=5) as raw,
+        client_ctx.wrap_socket(raw, server_hostname=server_hostname) as tls_sock,
+    ):
+        tls_sock.sendall(f"{message}\n".encode())
+        data = tls_sock.recv(4096)
+        return data.decode("utf-8").strip()
 
 
 def measure_ms(callable_fn, count: int = MEASURE_COUNT) -> float:

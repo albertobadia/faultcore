@@ -14,6 +14,24 @@ _TARGET_PROTOCOL_MAP = {
     "udp": 2,
 }
 
+_MUTATION_TYPE_MAP = {
+    "none": 0,
+    "truncate": 1,
+    "corrupt_bytes": 2,
+    "inject_bytes": 3,
+    "replace_pattern": 4,
+    "corrupt_encoding": 5,
+    "swap_bytes": 6,
+}
+
+_MUTATION_TARGET_MAP = {
+    "both": 0,
+    "uplink": 1,
+    "uplink_only": 1,
+    "downlink": 2,
+    "downlink_only": 2,
+}
+
 _MS_PER_SECOND = 1000
 _NS_PER_MS = 1_000_000
 _PORT_MIN = 0
@@ -124,16 +142,25 @@ def _rate_to_bps(value: float | int, multiplier: int) -> int:
     return int(_as_non_negative_float(float(value), "rate must be >= 0") * multiplier)
 
 
-def _ppm_from_loss_value(value: float) -> int:
-    if value < 0:
-        raise ValueError("packet_loss must be >= 0")
-    if value <= 1:
-        return int(value * 1_000_000)
-    if value <= 100:
-        return int(value * 10_000)
-    if value <= 1_000_000:
+def _parse_int_value(value: str, error_message: str) -> int:
+    try:
         return int(value)
-    raise ValueError("packet_loss must be <= 100%, <=1.0 ratio, or <=1000000ppm")
+    except ValueError:
+        raise ValueError(error_message) from None
+
+
+def _parse_prefixed_int(value: str, *, base: int, error_message: str) -> int:
+    try:
+        return int(value, base)
+    except ValueError:
+        raise ValueError(error_message) from None
+
+
+def _parse_single_port(raw: str, error_message: str) -> int:
+    parsed = _parse_int_value(raw, error_message)
+    if not _PORT_MIN <= parsed <= _PORT_MAX:
+        raise ValueError("port must be between 0 and 65535")
+    return parsed
 
 
 def _validate_port_bounds(value: int, field_name: str) -> None:
@@ -243,10 +270,7 @@ def parse_packet_loss(loss: str) -> int:
 
 def parse_burst_loss(value: str) -> int:
     normalized = _non_empty_normalized(value, "burst_loss must be non-empty")
-    try:
-        parsed = int(normalized)
-    except ValueError:
-        raise ValueError("burst_loss must be a valid integer (e.g., '5', '10')") from None
+    parsed = _parse_int_value(normalized, "burst_loss must be a valid integer (e.g., '5', '10')")
     if parsed < 0:
         raise ValueError("burst_loss must be >= 0")
     return parsed
@@ -259,21 +283,15 @@ def parse_seed(value: str | int) -> int:
         return value
     if not isinstance(value, str):
         raise TypeError("seed must be a string or integer")
+
     normalized = value.strip()
-    if normalized.startswith("0x") or normalized.startswith("0X"):
-        try:
-            return int(normalized, 16)
-        except ValueError:
-            raise ValueError(f"invalid hex seed '{value}'") from None
-    if normalized.startswith("0b") or normalized.startswith("0B"):
-        try:
-            return int(normalized, 2)
-        except ValueError:
-            raise ValueError(f"invalid binary seed '{value}'") from None
-    try:
-        parsed = int(normalized)
-    except ValueError:
-        raise ValueError(f"invalid seed '{value}'") from None
+    if normalized.startswith(("0x", "0X")):
+        return _parse_prefixed_int(normalized, base=16, error_message=f"invalid hex seed '{value}'")
+
+    if normalized.startswith(("0b", "0B")):
+        return _parse_prefixed_int(normalized, base=2, error_message=f"invalid binary seed '{value}'")
+
+    parsed = _parse_int_value(normalized, f"invalid seed '{value}'")
     if parsed < 0:
         raise ValueError("seed must be >= 0")
     return parsed
@@ -289,31 +307,19 @@ def parse_port(value: str | int) -> tuple[int, int | None, int | None]:
     normalized = _non_empty_normalized(value, "port must be non-empty")
     if "-" in normalized:
         parts = normalized.split("-", 1)
-        try:
-            start = int(parts[0])
-            end = int(parts[1])
-        except ValueError:
-            raise ValueError("port range must contain valid integers") from None
-        if not (_PORT_MIN <= start <= _PORT_MAX and _PORT_MIN <= end <= _PORT_MAX):
-            raise ValueError("port must be between 0 and 65535")
+        start = _parse_single_port(parts[0], "port range must contain valid integers")
+        end = _parse_single_port(parts[1], "port range must contain valid integers")
         if start > end:
             raise ValueError("port range start must be <= end")
         return 0, start, end
     if "," in normalized:
         first_port, *_ = normalized.split(",")
-        try:
-            single_port = int(first_port)
-        except ValueError:
-            raise ValueError("port list must contain valid integers") from None
-        if not _PORT_MIN <= single_port <= _PORT_MAX:
-            raise ValueError("port must be between 0 and 65535")
+        single_port = _parse_single_port(first_port, "port list must contain valid integers")
         return single_port, None, None
-    try:
-        parsed = int(normalized)
-    except ValueError:
-        raise ValueError("port must be a valid integer, range (e.g., '80-90'), or list (e.g., '80,443')") from None
-    if not _PORT_MIN <= parsed <= _PORT_MAX:
-        raise ValueError("port must be between 0 and 65535")
+    parsed = _parse_single_port(
+        normalized,
+        "port must be a valid integer, range (e.g., '80-90'), or list (e.g., '80,443')",
+    )
     return parsed, None, None
 
 
@@ -399,36 +405,22 @@ def build_packet_reorder_profile(
 
 
 def _parse_mutation_type(value: str) -> int:
-    mapping = {
-        "none": 0,
-        "truncate": 1,
-        "corrupt_bytes": 2,
-        "inject_bytes": 3,
-        "replace_pattern": 4,
-        "corrupt_encoding": 5,
-        "swap_bytes": 6,
-    }
     normalized = _non_empty_normalized(value, "payload_mutation type must be non-empty")
-    if normalized not in mapping:
+    parsed = _MUTATION_TYPE_MAP.get(normalized)
+    if parsed is None:
         raise ValueError(
             "payload_mutation type must be one of: "
             "none, truncate, corrupt_bytes, inject_bytes, replace_pattern, corrupt_encoding, swap_bytes"
         )
-    return mapping[normalized]
+    return parsed
 
 
 def _parse_mutation_target(value: str) -> int:
-    mapping = {
-        "both": 0,
-        "uplink": 1,
-        "uplink_only": 1,
-        "downlink": 2,
-        "downlink_only": 2,
-    }
     normalized = _non_empty_normalized(value, "payload_mutation target must be non-empty")
-    if normalized not in mapping:
+    parsed = _MUTATION_TARGET_MAP.get(normalized)
+    if parsed is None:
         raise ValueError("payload_mutation target must be one of: both, uplink_only, downlink_only")
-    return mapping[normalized]
+    return parsed
 
 
 def _parse_mutation_bytes(value: str | bytes | None, max_len: int) -> tuple[bytes, int]:

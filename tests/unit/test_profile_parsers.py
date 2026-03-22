@@ -12,10 +12,7 @@ from faultcore.profile_parsers import (
 
 
 class TestConstantsConsistency:
-    """Tests to verify constants are properly defined without duplicates."""
-
     def test_size_suffix_multipliers_no_duplicates(self):
-        """Verify _SIZE_SUFFIX_MULTIPLIERS doesn't have duplicate keys (confusing)."""
         from faultcore.profile_parsers import _SIZE_SUFFIX_MULTIPLIERS
 
         keys = list(_SIZE_SUFFIX_MULTIPLIERS.keys())
@@ -24,7 +21,6 @@ class TestConstantsConsistency:
         assert len(duplicates) == 0, f"Found duplicate keys in _SIZE_SUFFIX_MULTIPLIERS: {duplicates}"
 
     def test_rate_suffix_multipliers_no_duplicates(self):
-        """Verify _RATE_SUFFIX_MULTIPLIERS doesn't have duplicate keys."""
         from faultcore.profile_parsers import _RATE_SUFFIX_MULTIPLIERS
 
         keys = list(_RATE_SUFFIX_MULTIPLIERS.keys())
@@ -33,7 +29,6 @@ class TestConstantsConsistency:
         assert len(duplicates) == 0, f"Found duplicate keys in _RATE_SUFFIX_MULTIPLIERS: {duplicates}"
 
     def test_size_and_rate_suffixes_are_separate(self):
-        """Verify that size and rate suffixes are properly separated."""
         from faultcore.profile_parsers import _RATE_SUFFIX_MULTIPLIERS, _SIZE_SUFFIX_MULTIPLIERS
 
         size_only_suffixes = {"kb", "mb", "gb", "bps"}
@@ -47,16 +42,12 @@ class TestConstantsConsistency:
 
 
 class TestParseSizeEdgeCases:
-    """Additional edge case tests for parse_size function."""
-
     def test_parse_size_case_insensitive(self):
-        """Verify parse_size handles case-insensitive input."""
         assert parse_size("1KB") == 1_000
         assert parse_size("1MB") == 1_000_000
         assert parse_size("1GB") == 1_000_000_000
 
     def test_parse_size_with_decimals(self):
-        """Verify parse_size handles decimal values."""
         assert parse_size("1.5kb") == 1500
         assert parse_size("2.5mb") == 2_500_000
 

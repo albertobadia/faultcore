@@ -31,15 +31,17 @@ class TestPolicyRegistry:
         mock_shm.write_latency = MagicMock()
         mock_shm.clear = MagicMock()
 
-        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
-            with patch("faultcore.decorator.threading.get_native_id", return_value=123):
+        with (
+            patch("faultcore.decorator.get_shm_writer", return_value=mock_shm),
+            patch("faultcore.decorator.threading.get_native_id", return_value=123),
+        ):
 
-                @faultcore.fault()
-                def op():
-                    return "ok"
+            @faultcore.fault()
+            def op():
+                return "ok"
 
-                result = op()
-                assert result == "ok"
+            result = op()
+            assert result == "ok"
 
         mock_shm.write_latency.assert_called_once_with(123, 100)
         mock_shm.clear.assert_called_once_with(123)
@@ -53,16 +55,18 @@ class TestPolicyRegistry:
         mock_shm.write_latency = MagicMock()
         mock_shm.clear = MagicMock()
 
-        with patch("faultcore.decorator.get_shm_writer", return_value=mock_shm):
-            with patch("faultcore.decorator.threading.get_native_id", return_value=456):
+        with (
+            patch("faultcore.decorator.get_shm_writer", return_value=mock_shm),
+            patch("faultcore.decorator.threading.get_native_id", return_value=456),
+        ):
 
-                @faultcore.fault()
-                def op():
-                    return "ok"
+            @faultcore.fault()
+            def op():
+                return "ok"
 
-                set_thread_policy("policy_b")
-                result = op()
-                assert result == "ok"
+            set_thread_policy("policy_b")
+            result = op()
+            assert result == "ok"
 
         mock_shm.write_latency.assert_called_once_with(456, 100)
 

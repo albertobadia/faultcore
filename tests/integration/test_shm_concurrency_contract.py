@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 from collections import Counter
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -82,13 +83,7 @@ def ensure_shm_ready() -> str:
 
 
 class TestTIDHashIntegration:
-    """Integration tests for TID hash collisions under concurrent load."""
-
     def test_concurrent_thread_policy_isolation(self):
-        """
-        Verify that concurrent threads with different policies don't interfere.
-        Bug verification: TID hash collisions could cause policy interference.
-        """
         ensure_shm_ready()
         from faultcore import get_thread_policy, set_thread_policy
 
@@ -116,10 +111,6 @@ class TestTIDHashIntegration:
         assert len(errors) == 0, f"Policy interference detected: {errors[:5]}"
 
     def test_high_thread_count_hash_distribution(self):
-        """
-        Verify hash distribution with many concurrent threads.
-        Bug verification: Poor hash distribution could cause collisions.
-        """
         ensure_shm_ready()
 
         slot_counts = Counter()
@@ -349,22 +340,14 @@ def main() -> int:
 
 
 class TestSHMErrorHandling:
-    """Integration tests for SHM error handling."""
-
     def test_shm_graceful_degradation_on_invalid_shm(self):
-        """
-        Verify graceful degradation when SHM is invalid.
-        Bug verification: SHM initialization errors should be handled gracefully.
-        """
         import os
         from unittest.mock import patch
 
         invalid_name = f"/dev/shm/test_invalid_shm_{os.getpid()}"
 
-        try:
+        with suppress(FileNotFoundError):
             os.unlink(invalid_name)
-        except FileNotFoundError:
-            pass
 
         with patch.dict(os.environ, {"FAULTCORE_CONFIG_SHM": invalid_name}):
             from faultcore.shm_writer import SHMWriter
@@ -374,10 +357,6 @@ class TestSHMErrorHandling:
             assert writer._mmap is None or writer._fd is None
 
     def test_shm_graceful_degradation_on_permission_denied(self):
-        """
-        Verify graceful degradation when SHM has wrong permissions.
-        Bug verification: Permission errors should be handled gracefully.
-        """
         import os
         from unittest.mock import patch
 
@@ -398,10 +377,8 @@ class TestSHMErrorHandling:
         except PermissionError:
             pytest.skip("Cannot test permission denied in this environment")
         finally:
-            try:
+            with suppress(FileNotFoundError):
                 os.unlink(protected_name)
-            except FileNotFoundError:
-                pass
 
 
 if __name__ == "__main__":

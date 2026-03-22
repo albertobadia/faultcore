@@ -16,6 +16,18 @@ _PYTEST_TOKEN_RE = re.compile(r"(?P<count>\d+)\s+(?P<label>passed|failed|error|e
 _PYTEST_NO_TESTS_RE = re.compile(r"no tests ran", re.IGNORECASE)
 _PYTEST_FAILED_LINE_RE = re.compile(r"^(FAILED|ERROR)\s+(.+)$")
 _CI_PROVIDER_KEYS = ("GITHUB_ACTIONS", "GITLAB_CI", "BUILDKITE", "CI")
+_DECISION_COUNT_FIELDS = (
+    ("continue_count", "continue"),
+    ("delay_count", "delay_ns"),
+    ("drop_count", "drop"),
+    ("timeout_count", "timeout_ms"),
+    ("error_count", "error"),
+    ("connection_error_count", "connection_error_kind"),
+    ("reorder_count", "stage_reorder"),
+    ("duplicate_count", "duplicate"),
+    ("nxdomain_count", "nxdomain"),
+    ("mutate_count", "mutate"),
+)
 
 
 def _errors_from_returncode(returncode: int) -> int:
@@ -51,13 +63,14 @@ def is_pytest_command(command: list[str]) -> bool:
     )
 
 
-def parse_pytest_summary(output_text: str, *, returncode: int) -> dict[str, int] | None:
-    def is_summary_line(line: str) -> bool:
-        return _PYTEST_NO_TESTS_RE.search(line) is not None or (
-            _PYTEST_SUMMARY_TIME_RE.search(line) is not None and _PYTEST_TOKEN_RE.search(line) is not None
-        )
+def _is_pytest_summary_line(line: str) -> bool:
+    return _PYTEST_NO_TESTS_RE.search(line) is not None or (
+        _PYTEST_SUMMARY_TIME_RE.search(line) is not None and _PYTEST_TOKEN_RE.search(line) is not None
+    )
 
-    summary_line = next((line for line in reversed(output_text.splitlines()) if is_summary_line(line)), None)
+
+def parse_pytest_summary(output_text: str, *, returncode: int) -> dict[str, int] | None:
+    summary_line = next((line for line in reversed(output_text.splitlines()) if _is_pytest_summary_line(line)), None)
     if summary_line is None:
         return None
 
@@ -175,21 +188,15 @@ def summarize_record_replay(events: list[dict[str, Any]]) -> dict[str, int]:
         "latency_p95_ns": _percentile(delay_values, 95),
         "latency_p99_ns": _percentile(delay_values, 99),
     }
-    result["continue_count"] = decision_counts.get("continue", 0)
-    result["delay_count"] = decision_counts.get("delay_ns", 0)
-    result["drop_count"] = decision_counts.get("drop", 0)
-    result["timeout_count"] = decision_counts.get("timeout_ms", 0)
-    result["error_count"] = decision_counts.get("error", 0)
-    result["connection_error_count"] = decision_counts.get("connection_error_kind", 0)
-    result["reorder_count"] = decision_counts.get("stage_reorder", 0)
-    result["duplicate_count"] = decision_counts.get("duplicate", 0)
-    result["nxdomain_count"] = decision_counts.get("nxdomain", 0)
-    result["mutate_count"] = decision_counts.get("mutate", 0)
+    for output_key, decision_key in _DECISION_COUNT_FIELDS:
+        result[output_key] = decision_counts.get(decision_key, 0)
     return result
 
 
 def extract_policy_sources(events: list[dict[str, Any]]) -> list[dict[str, str]]:
-    policy_names = {policy_name for event in events if (policy_name := event.get("policy_name"))}
+    policy_names = {event.get("policy_name") for event in events}
+    policy_names.discard(None)
+    policy_names.discard("")
     return [{"kind": "record_replay", "name": name} for name in sorted(policy_names)]
 
 

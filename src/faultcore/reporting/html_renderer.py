@@ -25,6 +25,10 @@ _SERIES_FALLBACK_COLORS = ["#9ac0ff", "#84d487", "#e9a96d", "#d98b8b"]
 _SINGLE_SERIES_COLORS = [*(_SERIES_COLOR_MAP[protocol] for protocol in _PROTOCOL_ORDER), "#9ac0ff", "#e9a96d"]
 
 
+def _render_no_data_message(message: str) -> str:
+    return _NETWORK_PARTS_TEMPLATE.get_def("no_data_message").render(msg=message)
+
+
 def _median(values: list[int]) -> int:
     sorted_values = sorted(values)
     return sorted_values[len(sorted_values) // 2]
@@ -242,13 +246,12 @@ def _rounded_int_or_zero(value: Any) -> int:
 
 def _split_protocol_series_name(series_name: str) -> tuple[str, str] | None:
     lowered = series_name.lower()
-    for candidate in (f"{protocol}_" for protocol in _PROTOCOL_ORDER):
-        if not lowered.startswith(candidate):
+    for protocol in _PROTOCOL_ORDER:
+        prefix = f"{protocol}_"
+        if not lowered.startswith(prefix):
             continue
-        base = series_name[len(candidate) :]
-        if base.endswith("_series"):
-            base = base[: -len("_series")]
-        return candidate[:-1], base
+        base = series_name[len(prefix) :].removesuffix("_series")
+        return protocol, base
     return None
 
 
@@ -285,10 +288,13 @@ def _safe(value: Any) -> str:
 def _sum_series_by_index(series_by_name: dict[str, list[int]]) -> list[int]:
     if not series_by_name:
         return []
+
     max_len = max(len(values) for values in series_by_name.values())
-    return [
-        sum(values[idx] if idx < len(values) else 0 for values in series_by_name.values()) for idx in range(max_len)
-    ]
+    totals = [0] * max_len
+    for values in series_by_name.values():
+        for idx, value in enumerate(values):
+            totals[idx] += value
+    return totals
 
 
 def _render_kpi_card(label: str, value: str) -> str:
@@ -330,14 +336,14 @@ def _render_network_metrics_panel(
     group_limits_override: dict[str, int] | None = None,
 ) -> str:
     if not isinstance(metrics, dict) or not metrics:
-        return _NETWORK_PARTS_TEMPLATE.get_def("no_data_message").render(msg="No network metrics captured")
+        return _render_no_data_message("No network metrics captured")
     numeric_items = [
         (str(key), float(value))
         for key, value in metrics.items()
         if not isinstance(value, bool) and isinstance(value, (int, float))
     ]
     if not numeric_items:
-        return _NETWORK_PARTS_TEMPLATE.get_def("no_data_message").render(msg="No numeric metrics captured")
+        return _render_no_data_message("No numeric metrics captured")
     metric_map = dict(numeric_items)
     kpi_order = [
         ("total_throughput_bps", "Throughput"),
@@ -424,7 +430,7 @@ def _render_network_metrics_panel(
                 left_blocks="".join(left_blocks), right_blocks="".join(right_blocks)
             )
 
-    kpi_html = "".join(kpi_cards) or _NETWORK_PARTS_TEMPLATE.get_def("no_data_message").render(msg="No KPI metrics")
+    kpi_html = "".join(kpi_cards) or _render_no_data_message("No KPI metrics")
     return _NETWORK_PARTS_TEMPLATE.get_def("network_metrics_panel").render(
         kpi_grid_html=kpi_html, groups_html=groups_html
     )
@@ -619,8 +625,7 @@ def _render_report_html_document(
             throughput_by_func[f"{func_name}_throughput_bps"] = normalized
         if throughput_by_func:
             throughput_by_func["total_throughput_bps_series"] = _sum_series_by_index(throughput_by_func)
-            for series_name, values in sorted(throughput_by_func.items()):
-                extra_series[series_name] = values
+            extra_series.update(dict(sorted(throughput_by_func.items())))
     extra_charts_html = _render_series_charts(extra_series)
     site_details_html = _render_site_details(site_metrics, run_duration_ms=int(run_data.get("duration_ms", 0) or 0))
     function_details_html = _render_function_metrics_details(function_metrics)

@@ -2,6 +2,7 @@ import os
 import struct
 import uuid
 from collections import Counter
+from contextlib import suppress
 
 import pytest
 
@@ -20,17 +21,12 @@ def create_test_shm(name: str) -> int:
 
 
 def cleanup_test_shm(name: str) -> None:
-    try:
+    with suppress(FileNotFoundError):
         os.unlink(f"/dev/shm/{name}")
-    except FileNotFoundError:
-        pass
 
 
 class TestTIDHashCollisions:
-    """Tests to verify the TID hash function behavior and detect collision issues."""
-
     def test_tid_hash_distribution(self):
-        """Verify that TID hash distributes reasonably across slots."""
         writer = SHMWriter()
 
         tid_slots = [writer._tid_slot(tid) for tid in range(100000)]
@@ -48,7 +44,6 @@ class TestTIDHashCollisions:
         assert min_ratio > 0.2, f"TID hash has poor distribution: min ratio {min_ratio:.2f}"
 
     def test_tid_hash_is_deterministic(self):
-        """Verify that the same TID always maps to the same slot."""
         writer = SHMWriter()
 
         test_tids = [1, 100, 1000, 10000, 100000, 1000000]
@@ -59,7 +54,6 @@ class TestTIDHashCollisions:
             assert slot1 == slot2, f"TID {tid} maps to different slots: {slot1} vs {slot2}"
 
     def test_tid_hash_bounds(self):
-        """Verify that TID hash always returns a valid slot."""
         writer = SHMWriter()
 
         for tid in range(0, 100000, 100):
@@ -67,7 +61,6 @@ class TestTIDHashCollisions:
             assert 0 <= slot < MAX_TIDS, f"TID {tid} maps to invalid slot: {slot}"
 
     def test_tid_hash_known_values(self):
-        """Test specific TID values for known behavior (regression test)."""
         writer = SHMWriter()
 
         assert writer._tid_slot(0) == writer._tid_slot(0)

@@ -289,7 +289,7 @@ def _build_optional_mapping_profiles(
     packet_reorder: dict[str, Any] | None,
     payload_mutation: dict[str, Any] | None,
 ) -> dict[str, dict[str, Any]]:
-    raw_values = {
+    mapping_values = {
         "correlated_loss": correlated_loss,
         "connection_error": connection_error,
         "half_open": half_open,
@@ -298,7 +298,8 @@ def _build_optional_mapping_profiles(
     }
     profiles: dict[str, dict[str, Any]] = {}
     for field_name, policy_key, builder, defaults in _OPTIONAL_MAPPING_PROFILE_SPECS:
-        config = _as_mapping(raw_values[field_name], field_name)
+        raw_value = mapping_values[field_name]
+        config = _as_mapping(raw_value, field_name)
         if config is None:
             continue
         profiles[policy_key] = builder(**{key: config.get(key, default) for key, default in defaults.items()})

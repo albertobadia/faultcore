@@ -16,6 +16,7 @@ pub fn socket_protocol_for_fd(fd: c_int) -> u64 {
     if rc < 0 {
         return 0;
     }
+
     match sock_type {
         libc::SOCK_STREAM => 1,
         libc::SOCK_DGRAM => 2,
@@ -29,38 +30,42 @@ pub unsafe fn sockaddr_endpoint(addr: *const sockaddr, addr_len: socklen_t) -> O
     if addr.is_null() {
         return None;
     }
+
     let family = unsafe { (*addr).sa_family as c_int };
-    if family == libc::AF_INET {
-        if addr_len < core::mem::size_of::<libc::sockaddr_in>() as socklen_t {
-            return None;
+
+    match family {
+        libc::AF_INET => {
+            if addr_len < core::mem::size_of::<libc::sockaddr_in>() as socklen_t {
+                return None;
+            }
+            let in_addr = unsafe { &*(addr.cast::<libc::sockaddr_in>()) };
+            let ipv4 = u32::from_be(in_addr.sin_addr.s_addr);
+            let octets = ipv4.to_be_bytes();
+            let mut out_addr = [0u8; 16];
+            out_addr[..4].copy_from_slice(&octets);
+            Some(Endpoint {
+                address_family: 1,
+                addr: out_addr,
+                ipv4,
+                port: u16::from_be(in_addr.sin_port),
+                protocol: 0,
+            })
         }
-        let in_addr = unsafe { &*(addr.cast::<libc::sockaddr_in>()) };
-        let ipv4 = u32::from_be(in_addr.sin_addr.s_addr);
-        let octets = ipv4.to_be_bytes();
-        let mut out_addr = [0u8; 16];
-        out_addr[..4].copy_from_slice(&octets);
-        return Some(Endpoint {
-            address_family: 1,
-            addr: out_addr,
-            ipv4,
-            port: u16::from_be(in_addr.sin_port),
-            protocol: 0,
-        });
-    }
-    if family == libc::AF_INET6 {
-        if addr_len < core::mem::size_of::<libc::sockaddr_in6>() as socklen_t {
-            return None;
+        libc::AF_INET6 => {
+            if addr_len < core::mem::size_of::<libc::sockaddr_in6>() as socklen_t {
+                return None;
+            }
+            let in6_addr = unsafe { &*(addr.cast::<libc::sockaddr_in6>()) };
+            Some(Endpoint {
+                address_family: 2,
+                addr: in6_addr.sin6_addr.s6_addr,
+                ipv4: 0,
+                port: u16::from_be(in6_addr.sin6_port),
+                protocol: 0,
+            })
         }
-        let in6_addr = unsafe { &*(addr.cast::<libc::sockaddr_in6>()) };
-        return Some(Endpoint {
-            address_family: 2,
-            addr: in6_addr.sin6_addr.s6_addr,
-            ipv4: 0,
-            port: u16::from_be(in6_addr.sin6_port),
-            protocol: 0,
-        });
+        _ => None,
     }
-    None
 }
 
 pub fn peer_endpoint_for_fd(fd: c_int) -> Option<Endpoint> {

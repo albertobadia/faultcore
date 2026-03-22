@@ -36,7 +36,10 @@ from faultcore.shm_writer import get_shm_writer
 
 
 def _with_wrapper(**kwargs: Any) -> Callable[[Callable[..., Any]], "FaultWrapper"]:
-    return lambda func: FaultWrapper(func, **kwargs)
+    def decorator(func: Callable[..., Any]) -> FaultWrapper:
+        return FaultWrapper(func, **kwargs)
+
+    return decorator
 
 
 _DIRECTIONAL_PROFILE_PARSERS = {
