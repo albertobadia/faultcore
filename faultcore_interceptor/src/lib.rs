@@ -104,10 +104,7 @@ unsafe fn get_original_fn<T>(name: &str) -> T {
 }
 
 fn is_excluded_symbol(symbol: *mut c_void, exclude: Option<*const c_void>) -> bool {
-    match exclude {
-        Some(excluded) => std::ptr::eq(symbol.cast_const(), excluded),
-        None => false,
-    }
+    exclude.is_some_and(|excluded| std::ptr::eq(symbol.cast_const(), excluded))
 }
 
 unsafe fn get_optional_ssl_original_fn<T>(
@@ -129,6 +126,9 @@ unsafe fn get_optional_ssl_original_fn<T>(
         let ptr = unsafe { libc::dlsym(handle, symbol_name.as_ptr()) };
         if !ptr.is_null() && !is_excluded_symbol(ptr, exclude_symbol) {
             return Some(unsafe { std::mem::transmute_copy(&ptr) });
+        }
+        unsafe {
+            libc::dlclose(handle);
         }
     }
 
@@ -390,6 +390,28 @@ fn bind_ssl_sni_if_possible(ssl: *mut c_void, sni: &str) {
     }
 }
 
+fn call_ssl_ctrl_orig(ssl: *mut c_void, cmd: c_int, larg: libc::c_long, parg: *mut c_void) -> libc::c_long {
+    if let Some(orig) = *ORIG_SSL_CTRL {
+        unsafe { orig(ssl, cmd, larg, parg) }
+    } else {
+        0
+    }
+}
+
+fn call_ssl_set_fd_orig(ssl: *mut c_void, fd: c_int) -> c_int {
+    if let Some(orig) = *ORIG_SSL_SET_FD {
+        unsafe { orig(ssl, fd) }
+    } else {
+        0
+    }
+}
+
+fn call_ssl_free_orig(ssl: *mut c_void) {
+    if let Some(orig) = *ORIG_SSL_FREE {
+        unsafe { orig(ssl) };
+    }
+}
+
 fn tls_client_hello_sni(payload: &[u8]) -> Option<String> {
     if payload.len() < 5 || payload[0] != 22 {
         return None;
@@ -520,8 +542,7 @@ where
 {
     let mut staged_reorder = false;
     let mut faults_applied = false;
-    let original_payload = payload.map(|bytes| bytes.to_vec());
-    let mut effective_payload: Vec<u8> = original_payload.clone().unwrap_or_default();
+    let mut effective_payload = payload.map_or_else(Vec::new, ToOwned::to_owned);
     let result = if let Some(network_cfg) = config_lookup() {
         faults_applied = true;
         for pkt in global_interceptor_runtime()
@@ -537,7 +558,7 @@ where
                 Direction::Uplink,
             )
         });
-        let mutation_result = original_payload.as_deref().map(|raw_payload| {
+        let mutation_result = payload.map(|raw_payload| {
             let (l6_decision, maybe_mutated) = global_fault_osi_engine().evaluate_l6_with_buffer(
                 s,
                 &network_cfg,
@@ -1224,29 +1245,21 @@ pub unsafe extern "C" fn SSL_ctrl(
     parg: *mut c_void,
 ) -> libc::c_long {
     if !enter_hook() {
-        return if let Some(orig) = *ORIG_SSL_CTRL {
-            unsafe { orig(ssl, cmd, larg, parg) }
-        } else {
-            0
-        };
+        return call_ssl_ctrl_orig(ssl, cmd, larg, parg);
     }
 
     initialize();
     if cmd == SSL_CTRL_SET_TLSEXT_HOSTNAME && larg == TLSEXT_NAMETYPE_HOST_NAME {
         let observed = unsafe { normalized_name_from_cstr(parg.cast::<c_char>().cast_const()) };
         if let Some(sni) = observed {
-            remember_ssl_sni(ssl, sni.clone());
             bind_ssl_sni_if_possible(ssl, &sni);
+            remember_ssl_sni(ssl, sni);
         } else {
             forget_ssl_state(ssl);
         }
     }
 
-    let result = if let Some(orig) = *ORIG_SSL_CTRL {
-        unsafe { orig(ssl, cmd, larg, parg) }
-    } else {
-        0
-    };
+    let result = call_ssl_ctrl_orig(ssl, cmd, larg, parg);
     exit_hook();
     result
 }
@@ -1256,19 +1269,11 @@ pub unsafe extern "C" fn SSL_ctrl(
 /// `ssl` must be a valid OpenSSL handle when required by the original call.
 pub unsafe extern "C" fn SSL_set_fd(ssl: *mut c_void, fd: c_int) -> c_int {
     if !enter_hook() {
-        return if let Some(orig) = *ORIG_SSL_SET_FD {
-            unsafe { orig(ssl, fd) }
-        } else {
-            0
-        };
+        return call_ssl_set_fd_orig(ssl, fd);
     }
 
     initialize();
-    let out = if let Some(orig) = *ORIG_SSL_SET_FD {
-        unsafe { orig(ssl, fd) }
-    } else {
-        0
-    };
+    let out = call_ssl_set_fd_orig(ssl, fd);
     if out == 1 {
         remember_ssl_fd(ssl, fd);
     }
@@ -1281,17 +1286,13 @@ pub unsafe extern "C" fn SSL_set_fd(ssl: *mut c_void, fd: c_int) -> c_int {
 /// `ssl` must be a valid OpenSSL handle when required by the original call.
 pub unsafe extern "C" fn SSL_free(ssl: *mut c_void) {
     if !enter_hook() {
-        if let Some(orig) = *ORIG_SSL_FREE {
-            unsafe { orig(ssl) };
-        }
+        call_ssl_free_orig(ssl);
         return;
     }
 
     initialize();
     forget_ssl_state(ssl);
-    if let Some(orig) = *ORIG_SSL_FREE {
-        unsafe { orig(ssl) };
-    }
+    call_ssl_free_orig(ssl);
     exit_hook();
 }
 
@@ -1611,6 +1612,16 @@ mod tests {
         assert!(dup3_block.contains("clone_fd_binding(oldfd, out)"));
         assert!(accept_block.contains("clone_fd_binding(s, newfd)"));
         assert!(accept4_block.contains("clone_fd_binding(s, newfd)"));
+    }
+
+    #[test]
+    fn ssl_optional_loader_closes_unused_dlopen_handles() {
+        let src = include_str!("lib.rs");
+        let ssl_loader_block = src
+            .split("unsafe fn get_optional_ssl_original_fn")
+            .nth(1)
+            .expect("get_optional_ssl_original_fn must exist");
+        assert!(ssl_loader_block.contains("libc::dlclose(handle)"));
     }
 
     #[test]

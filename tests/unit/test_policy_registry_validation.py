@@ -66,3 +66,11 @@ def test_register_policy_accepts_mixed_rules_covering_dns_and_transport():
     assert "dns_profile" in policy
     assert "latency" in policy
     assert len(policy["target_profiles"]) == 2
+
+
+def test_register_policy_rejects_dns_non_mapping():
+    with pytest.raises(ValueError, match=r"dns must be a mapping"):
+        faultcore.register_policy(
+            "dns_invalid_type",
+            dns="invalid",  # type: ignore[arg-type]
+        )

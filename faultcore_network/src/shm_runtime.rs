@@ -5,7 +5,8 @@ use crate::{
 
 const POLICY_STATE_NAME_OFFSET: usize = 4;
 use libc::{
-    MAP_SHARED, O_RDWR, PROT_READ, PROT_WRITE, c_int, fstat, ftruncate, mmap, shm_open, stat,
+    MAP_SHARED, O_CREAT, O_RDWR, PROT_READ, PROT_WRITE, c_int, fstat, ftruncate, mmap, shm_open,
+    stat,
 };
 use parking_lot::{Mutex, RwLock};
 use std::ptr;
@@ -77,7 +78,17 @@ pub fn try_open_shm() -> bool {
     let open_mode = shm_open_mode();
 
     unsafe {
-        let fd = shm_open(name_cstr.as_ptr(), O_RDWR, 0);
+        let open_flags = match open_mode {
+            ShmOpenMode::Creator => O_RDWR | O_CREAT,
+            ShmOpenMode::Consumer => O_RDWR,
+        };
+        let open_mode_bits = if matches!(open_mode, ShmOpenMode::Creator) {
+            0o600
+        } else {
+            0
+        };
+
+        let fd = shm_open(name_cstr.as_ptr(), open_flags, open_mode_bits);
         if fd < 0 {
             return false;
         }

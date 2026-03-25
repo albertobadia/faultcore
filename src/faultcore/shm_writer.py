@@ -614,6 +614,7 @@ class SHMWriter:
         self._write_with_generation_publish(tid, writer)
 
     def write_targets(self, tid: int, rules: list[dict[str, Any]]) -> None:
+        self._ensure_open()
         if not self._is_available():
             return
         rule_count = len(rules)
@@ -792,10 +793,14 @@ class SHMWriter:
         self._write_with_generation_publish(tid, writer)
 
     def write_policy_name(self, name: str | None) -> None:
+        self._ensure_open()
+        if not self._is_available():
+            return
         name_bytes = name.encode("utf-8")[:32] if name else b"\x00" * 32
         name_bytes = name_bytes.ljust(32, b"\x00")
         offset = _POLICY_REGION_OFFSET
-        self._mmap[offset + _POLICY_STATE_NAME_OFFSET : offset + _POLICY_STATE_NAME_OFFSET + 32] = name_bytes
+        with self._lock:
+            self._mmap[offset + _POLICY_STATE_NAME_OFFSET : offset + _POLICY_STATE_NAME_OFFSET + 32] = name_bytes
 
     def clear(self, tid: int) -> None:
         tid_slot = self._tid_slot(tid)

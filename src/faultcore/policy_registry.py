@@ -398,11 +398,12 @@ def register_policy(
         )
     )
 
-    if dns is not None:
+    dns_config = _as_mapping(dns, "dns")
+    if dns_config is not None:
         dns_profile = build_dns_profile(
-            delay=dns.get("delay"),
-            timeout=dns.get("timeout"),
-            nxdomain=dns.get("nxdomain"),
+            delay=dns_config.get("delay"),
+            timeout=dns_config.get("timeout"),
+            nxdomain=dns_config.get("nxdomain"),
         )
         if dns_profile:
             policy["dns_profile"] = dns_profile

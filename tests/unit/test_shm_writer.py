@@ -84,6 +84,38 @@ class TestSHMWriterGracefulDegradation:
         writer.write_latency(1234, 100)
         assert writer._mmap is None
 
+    def test_write_policy_name_no_shm_no_error(self, monkeypatch):
+        monkeypatch.setenv("FAULTCORE_CONFIG_SHM", "nonexistent_shm_12345")
+        writer = SHMWriter()
+        writer.write_policy_name("policy-a")
+        assert writer._mmap is None
+
+    def test_write_targets_attempts_reopen_when_shm_appears_later(self):
+        name = f"faultcore_test_{uuid.uuid4().hex}"
+        writer = SHMWriter(name)
+        assert writer._mmap is None
+
+        fd = create_test_shm(name)
+        os.close(fd)
+        try:
+            writer.write_targets(
+                4242,
+                [
+                    {
+                        "enabled": 1,
+                        "kind": 1,
+                        "ipv4": 0x7F000001,
+                        "prefix_len": 32,
+                        "port": 80,
+                        "protocol": 1,
+                    }
+                ],
+            )
+            assert writer._mmap is not None
+        finally:
+            writer.close()
+            cleanup_test_shm(name)
+
     def test_clear_resets_previous_fields_before_next_write(self):
         name = f"faultcore_test_{uuid.uuid4().hex}"
         fd = create_test_shm(name)
