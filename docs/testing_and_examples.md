@@ -6,12 +6,15 @@ For tuning guidance in longer operational runs, see `docs/operations_tuning.md`.
 ## Build
 
 ```bash
-uv sync
+uv sync --group dev
 ./build.sh
 ```
 
 This builds and stages platform-native artifacts in `src/faultcore/_native/<platform-tag>/`
 before producing `dist/*.whl`.
+
+`tests.sh` and `tests_long.sh` invoke `.venv/bin/python` directly, so run the sync command in repository root first.
+Supported native test platforms are Linux `x86_64` and Linux `aarch64`.
 
 `build.sh` enforces version alignment between:
 - `pyproject.toml` (`project.version`)
@@ -71,22 +74,21 @@ It starts local servers and runs:
 tests/integration/test_stress.py --mode long
 ```
 
+`tests_long.sh` requires Linux with a built interceptor artifact and exits on unsupported platforms.
+
 Tune with environment variables:
 - `STRESS_DURATION` (default `20`)
 - `STRESS_WORKERS` (default `24`)
 - `STRESS_MAX_ERROR_RATE` (default `0.02`)
 - `STRESS_MAX_RSS_DELTA_KB` (default `131072`)
 
-Reference run on **2026-03-11**:
-- `stress integration: PASS`
-- `baseline`: `206676 ops`, `avg_ms=2.36`
-- `policy_latency`: `3420 ops`, `avg_ms=140.75`
-- `rss_delta_kb=49936`
+Capture run-specific baselines in CI artifacts or local logs instead of relying on fixed historical numbers in docs.
 
 ## Integration CLI Scripts
 
-Current files in `tests/integration/` are CLI-oriented network probes (not pytest fixture-based tests).
-They are invoked with explicit args from `tests.sh`, for example:
+Current files in `tests/integration/` are executable CLI-oriented network probes.
+`tests.sh` discovers `tests/integration/test_*.py` and executes each script with `--host` and `--port` arguments.
+You can also run selected scripts manually with explicit args, for example:
 
 ```bash
 uv run python tests/integration/test_latency.py --host 127.0.0.1 --port 9000 --mode latency --count 3
@@ -99,12 +101,17 @@ uv run python tests/integration/test_bandwidth.py --host 127.0.0.1 --port 9000 -
 CLI-first:
 
 ```bash
-faultcore run -- python examples/1_http_requests.py
+uv run faultcore doctor
+uv run faultcore run -- python examples/1_http_requests.py
+uv run faultcore run --run-json artifacts/example_run.json -- python examples/6_multi_protocol.py
+uv run faultcore report --input artifacts/example_run.json --output artifacts/example_report.html
 ```
+
+`faultcore run` uses strict probing on Linux by default. Use `--no-strict` only when debugging preload issues.
 
 Some examples expect local servers:
 - TCP echo server: `uv run python tests/integration/servers/tcp_echo_server.py --host 127.0.0.1 --port 9000`
-- UDP echo server: `uv run python tests/integration/servers/udp_echo_server.py --host 127.0.0.1 --port 9001`
+- UDP echo server: `uv run python docker/servers/udp_echo_server.py --host 127.0.0.1 --port 9001`
 - HTTP test server: `uv run python -m uvicorn tests.integration.servers.http_server:app --host 127.0.0.1 --port 8000`
 
 Advanced/manual path (debugging only):
@@ -131,11 +138,11 @@ examples/run_with_preload.sh 1_http_requests.py
 
 ## Notes on Rate Semantics
 
-`rate(rate=...)` configures bandwidth in bps (string units or numeric conversion), not request-per-second quotas.
+`@faultcore.rate("...")` configures bandwidth in bps units (`bps`, `kbps`, `mbps`, `gbps`), not request-per-second quotas.
 Example output text may refer to "rate setting" or throughput effects.
 
 ## Lint Modes
 
 `lint.sh` has two modes:
 - `sh lint.sh` (or `sh lint.sh check`): verification only, runs `cargo clippy` then `ruff check` + `ruff format --check`.
-- `sh lint.sh fix`: applies fixes with `cargo clippy`, `ruff check --fix` + `ruff format`.
+- `sh lint.sh fix`: keeps `cargo clippy` in deny-warnings mode, then applies Python fixes with `ruff check --fix` + `ruff format`.

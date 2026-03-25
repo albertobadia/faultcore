@@ -41,22 +41,33 @@ Diagram focus: end-to-end lifecycle from decorator write to hook behavior.
 Build:
 
 ```bash
-uv sync
+uv sync --group dev
 ./build.sh
 ```
+
+`build.sh` expects the project virtual environment at `.venv` and builds the Rust interceptor before packaging Python artifacts.
 
 Recommended run path:
 
 ```bash
-faultcore doctor
-faultcore run -- python your_script.py
+uv run faultcore doctor
+uv run faultcore run -- python your_script.py
 ```
+
+`faultcore doctor` exits with code `0` only when interceptor probing succeeds on Linux.
+
+CLI command behavior:
+- `faultcore run [--strict/--no-strict] [--run-json PATH] -- <command ...>`
+  - Linux default is `--strict`; probe failures exit with code `2`.
+  - Runtime environment is initialized with `FAULTCORE_SHM_OPEN_MODE=creator`.
+  - When `--run-json` is present, CLI writes run metadata and augments it with record/replay and scenario metrics when available.
+- `faultcore report --input <run.json> --output <report.html> [--max-events N] [--reverse-events]`
 
 Run tests/reports through CLI:
 
 ```bash
-faultcore run --run-json artifacts/run.json -- pytest -q
-faultcore report --input artifacts/run.json --output artifacts/report.html
+uv run faultcore run --run-json artifacts/run.json -- pytest -q
+uv run faultcore report --input artifacts/run.json --output artifacts/report.html
 ```
 
 ## Advanced Manual `LD_PRELOAD` Usage
@@ -65,7 +76,7 @@ For low-level debugging, manual preload is still supported:
 
 ```bash
 LD_PRELOAD=./src/faultcore/_native/<platform-tag>/libfaultcore_interceptor.so \
-python your_script.py
+uv run python your_script.py
 ```
 
 Replace `<platform-tag>` with `linux-x86_64` or `linux-aarch64` as appropriate.
@@ -76,7 +87,11 @@ Replace `<platform-tag>` with `linux-x86_64` or `linux-aarch64` as appropriate.
 
 Environment variables:
 - `FAULTCORE_RECORD_REPLAY_MODE`: `off` (default), `record`, or `replay`.
-- `FAULTCORE_RECORD_REPLAY_PATH`: gzip JSONL path (default `/tmp/faultcore_record_replay.jsonl.gz`).
+- `FAULTCORE_RECORD_REPLAY_PATH`: gzip JSONL path.
+  - Engine runtime default (when unset): `/tmp/faultcore_record_replay.jsonl.gz`.
+  - CLI behavior with `faultcore run --run-json <path>`:
+    - if mode is unset or `off`, CLI switches to `record` automatically;
+    - if mode is `record` or `replay` and path is unset, CLI sets `<path>.rr.jsonl.gz` automatically.
 
 Typical workflow:
 
@@ -84,17 +99,22 @@ Typical workflow:
 # 1) Record a run
 FAULTCORE_RECORD_REPLAY_MODE=record \
 FAULTCORE_RECORD_REPLAY_PATH=/tmp/faultcore_rr.jsonl.gz \
-faultcore run -- python your_script.py
+uv run faultcore run -- python your_script.py
 
 # 2) Replay with the same policy/routing shape
 FAULTCORE_RECORD_REPLAY_MODE=replay \
 FAULTCORE_RECORD_REPLAY_PATH=/tmp/faultcore_rr.jsonl.gz \
-faultcore run -- python your_script.py
+uv run faultcore run -- python your_script.py
 ```
 
 Notes:
 - Replay is fail-fast if event sequence diverges (`site` mismatch or missing events).
 - Record ownership lives in `faultcore_network`; interceptor stays a thin syscall adapter.
+
+Related runtime variables:
+- `FAULTCORE_SHM_OPEN_MODE`: `consumer` or `creator` for SHM ownership behavior.
+- `FAULTCORE_INTERCEPTOR_PATH`: optional absolute/relative override used by CLI probe/run path.
+- `FAULTCORE_EXTENSION_PATH`: optional absolute/relative override for extension discovery.
 
 ## Platform Notes
 

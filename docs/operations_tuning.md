@@ -30,7 +30,7 @@ Recommended scripts:
 
 ### Latency and Jitter
 
-- Start with small values (`latency_ms=20..50`, `jitter_ms=2..10`).
+- Start with small values (`latency="20ms".."50ms"`, `jitter="2ms".."10ms"`).
 - Increase gradually and track `p95/p99` response time impact.
 - Use directional config when needed:
   - `uplink={...}` to affect client-to-server path.
@@ -46,15 +46,19 @@ Recommended scripts:
 
 - Combine carefully:
   - `packet_duplicate` magnifies traffic volume.
-  - `packet_loss` and `burst_loss_len` reduce delivery ratio.
+  - `packet_loss` and `burst_loss` reduce delivery ratio.
 - Validate expected side effects with protocol-specific tests (TCP vs UDP).
 
 ### DNS Faults
 
-- `dns_delay` to simulate slow resolver behavior.
-- `dns_timeout` to simulate timeout (`EAI_AGAIN` style behavior).
-- `dns_nxdomain` to simulate name-not-found responses.
-- Prefer isolated DNS scenarios first, then combine with transport-level faults.
+When using the `@dns()` decorator:
+- `delay` to simulate slow resolver behavior.
+- `timeout` to simulate timeout (`EAI_AGAIN` style behavior).
+- `nxdomain` to simulate name-not-found responses.
+
+When using `register_policy()`, pass a `dns` dict with the same keys (`delay`, `timeout`, `nxdomain`).
+
+Prefer isolated DNS scenarios first, then combine with transport-level faults.
 
 ### Target Rules
 

@@ -20,23 +20,52 @@ Requirements:
 - Rust toolchain
 - Linux for network interception
 
-Install dependencies and build:
+Install development dependencies and build native artifacts:
 
 ```bash
-uv sync
+uv sync --group dev
 ./build.sh
+```
+
+`build.sh` expects `.venv/bin/python` to exist, validates version alignment across
+`pyproject.toml`, `faultcore_interceptor/Cargo.toml`, and `faultcore_network/Cargo.toml`,
+then stages Linux interceptor artifacts into `src/faultcore/_native/<platform-tag>/` before building wheels.
+
+Fast validation path:
+
+```bash
+sh lint.sh
+sh build.sh
+sh tests.sh
+```
+
+Long stress path (optional):
+
+```bash
+sh tests_long.sh
 ```
 
 CLI-first execution:
 
 ```bash
-faultcore doctor
-faultcore run -- python -c "import socket; print('ok')"
-faultcore run --run-json artifacts/run.json -- pytest -q
-faultcore report --input artifacts/run.json --output artifacts/report.html
+uv run faultcore doctor
+uv run faultcore run -- python -c "import socket; print('ok')"
+uv run faultcore run --run-json artifacts/run.json -- pytest -q
+uv run faultcore report --input artifacts/run.json --output artifacts/report.html
+uv run faultcore report --input artifacts/run.json --output artifacts/report.latest.html --max-events 200 --reverse-events
 ```
 
+Notes:
+- `faultcore run` defaults to strict mode on Linux and exits with code `2` when interceptor probing fails.
+- Use `--no-strict` only for debugging environments where preload activation is intentionally unavailable.
+- With `--run-json`, CLI enables record/replay capture mode automatically when mode is unset/off and writes `<run-json>.rr.jsonl.gz` when `FAULTCORE_RECORD_REPLAY_PATH` is unset.
+- `faultcore report` supports optional event rendering controls: `--max-events` and `--reverse-events`.
+
 Manual `LD_PRELOAD` execution is still available for advanced debugging.
+
+Platform behavior:
+- Linux: `faultcore run` configures `LD_PRELOAD` automatically and probes interceptor activation in strict mode.
+- Non-Linux: decorators and policy APIs are still callable, but interceptor-level network effects are not active.
 
 Minimal usage:
 

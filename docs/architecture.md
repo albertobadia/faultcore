@@ -14,7 +14,8 @@ This document describes the current `faultcore` architecture after the FaultOSI 
 - `src/faultcore/`: Python API, decorators, policy registry, SHM writer.
 - `faultcore_network/`: FaultOSI engine, SHM contract/runtime, socket metadata helpers, interceptor bridge.
 - `faultcore_interceptor/`: syscall hooks and original libc dispatch (`dlsym`/`RTLD_NEXT`).
-- `tests/`: Python unit/integration + Rust unit tests.
+- `tests/`: Python unit/integration test suites.
+- Rust tests live in each Rust crate and are executed with `cargo test --manifest-path ...`.
 
 ### Module Layout Diagram
 

@@ -26,7 +26,7 @@ flowchart TD
 
 Set socket connect and/or receive timeout.
 
-- Both parameters accept duration strings (e.g., `"200ms"`, `"1s"`, `"500us"`).
+- Both parameters accept duration strings in `ms` or `s` (e.g., `"200ms"`, `"1s"`, `"0.5s"`).
 - Setting `connect` configures connection timeout.
 - Setting `recv` configures receive timeout.
 
@@ -36,7 +36,7 @@ Set fixed latency. Parameter accepts duration string (e.g., `"50ms"`, `"1s"`).
 
 ### `jitter(t: str)`
 
-Set jitter. Parameter accepts duration string (e.g., `"10ms"`, `"500us"`).
+Set jitter. Parameter accepts duration string in `ms` or `s` (e.g., `"10ms"`, `"0.5s"`).
 
 ### `packet_loss(p: str, /)`
 
@@ -85,7 +85,7 @@ Force stream failure after a byte threshold.
 Inject duplicated sends.
 
 - `prob`: probability of duplication (e.g., `"100%"`, `"10%"`)
-- `max_extra`: maximum number of extra copies to send (default 1)
+- `max_extra`: maximum number of extra copies to send (default 1, must be `> 0`)
 
 ### `packet_reorder(*, prob: str = "100%", max_delay: str = "0ms", window: int = 1)`
 
@@ -93,7 +93,7 @@ Inject packet reordering on stream paths.
 
 - `prob`: probability of reordering (e.g., `"100%"`, `"5%"`)
 - `max_delay`: maximum delay for reordered packets (duration string like `"50ms"`)
-- `window`: number of packets to hold before releasing reordered ones
+- `window`: number of packets to hold before releasing reordered ones (must be `> 0`)
 
 ### `payload_mutation(...)`
 
@@ -127,8 +127,8 @@ Key fields:
 - `enabled`: enable/disable the mutation profile.
 - `prob`: probability of mutation (`"10%"`, `"1000ppm"`, etc.).
 - `type`: one of `none`, `truncate`, `corrupt_bytes`, `inject_bytes`, `replace_pattern`, `corrupt_encoding`, `swap_bytes`.
-- `target`: `both`, `uplink_only`, or `downlink_only`.
-- `every_n_packets`: apply cadence gate (`1` means every packet).
+- `target`: `both`, `uplink_only`/`uplink`, or `downlink_only`/`downlink`.
+- `every_n_packets`: apply cadence gate (`0`/`1` means no cadence filtering, values `> 1` apply periodic filtering).
 - `dry_run`: evaluate and report mutation without changing bytes.
 - `max_buffer_size`: hard cap for mutation output.
 
@@ -201,20 +201,32 @@ Notes:
 - `latency` and `jitter` accept duration strings (e.g., `"50ms"`, `"1s"`).
 - `rate` accepts bandwidth string (e.g., `"10mbps"`, `"1gbps"`).
 - `seed` provides deterministic random behavior when set.
-- `session_budget` supports `max_tx`, `max_rx` (size strings like "1kb"), `max_ops`, `max_duration` with required `action` (`drop`/`timeout`/`connection_error`). For `action=timeout`, also specify `budget_timeout`. For `action=connection_error`, optionally specify `error` (`reset`/`refused`/`unreachable`).
+- `session_budget` supports `max_tx`/`max_bytes_tx`, `max_rx`/`max_bytes_rx` (size strings like `"1kb"`), `max_ops`, `max_duration` with required `action` (`drop`/`timeout`/`connection_error`). For `action=timeout`, also specify `budget_timeout`. For `action=connection_error`, optionally specify `error` (`reset`/`refused`/`unreachable`).
 - `payload_mutation` accepts the same schema as `payload_mutation(...)` and is normalized into SHM fields.
 
 ### `targets: list[str | dict[str, Any]] | None`
 
 Apply fault policies to specific network targets only.
 
+When provided, `targets` must be a non-empty list.
+
 Each target entry can be a string or dict:
 
 **String format:**
-- `"tcp://10.0.0.0/8:9000"` - CIDR with port
-- `"tcp://127.0.0.1:9000"` - host IP with port
-- `"udp://hostname:9001"` - UDP with hostname
-- `"http://example.com:443"` - HTTP/HTTPS with hostname
+- `"tcp://10.0.0.0/8"` - CIDR selector
+- `"tcp://127.0.0.1:9000"` - IPv4 host with port
+- `"tcp://[2001:db8::10]:443"` - bracketed IPv6 host with port
+- `"any://10.0.0.1:443"` - any transport protocol with host and port
+
+Notes for target strings:
+- Supported protocol prefixes are `any://`, `tcp://`, and `udp://`.
+- Host tokens inside `target` strings must be IP addresses (IPv4 or bracketed IPv6) or CIDR ranges.
+- Unbracketed IPv6 literals in `target` strings are rejected; use bracket notation.
+- For DNS hostname/SNI matching, use dict rules with `hostname` or `sni` fields.
+
+Port matching notes:
+- `port` accepts single values (for example `443`) and ranges (for example `"8000-9000"`).
+- Comma-separated lists are accepted but only the first value is used.
 
 **Dict format:**
 ```python
@@ -233,6 +245,11 @@ Each target entry can be a string or dict:
 Selection semantics:
 - First matching rule by highest priority wins
 - Ties resolved by registration order
+
+Validation constraints:
+- DNS effects (`dns`) require at least one hostname-only selector (`hostname` with no `port` and no `protocol`).
+- Transport effects require at least one transport-observable selector (`host`, `cidr`, `hostname`, or `sni`).
+- Violations raise `ValueError` during `register_policy(...)`.
 
 ### `schedule: dict[str, Any] | None`
 
@@ -269,11 +286,19 @@ schedule={"kind": "ramp", "ramp": "60s"}
 - `unregister_policy(name: str) -> bool`
 - `load_policies(path: str | Path) -> int`
 
+`load_policies(...)` supports `.json`, `.yaml`, and `.yml` files. YAML parsing requires `PyYAML` installed.
+`PyYAML` is optional and not part of the default project dependencies.
+
 ## Context API
 
 ### `policy_context(policy_name: str | None = None, **policy_kwargs)`
 
 Context manager for thread-local policy application. Supports both named policies and inline policy definition. See [`docs/policies_and_context.md`](policies_and_context.md) for detailed usage.
+
+Rules and behavior:
+- Accepts either `policy_name` or inline `policy_kwargs`, but not both.
+- Supports synchronous and asynchronous context-manager usage.
+- Inline kwargs create a temporary policy name internally and automatically unregister it on context exit.
 
 ```python
 # Using named policy

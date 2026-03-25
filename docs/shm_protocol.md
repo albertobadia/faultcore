@@ -118,7 +118,7 @@ Diagram focus: top-level SHM memory regions consumed by writer/runtime.
 | `payload_mutation_swap_pos2` | 768 | 8 | `u64` |
 | `payload_mutation_min_size` | 776 | 8 | `u64` |
 | `payload_mutation_max_size` | 784 | 8 | `u64` |
-| `payload_mutation_every_n_packets` | 792 | 8 | `u64` |
+| `payload_mutation_every_n_packets` | 792 | 8 | `u64` (`0`/`1` = no cadence filter, `>1` = periodic gate) |
 | `payload_mutation_dry_run` | 800 | 8 | `u64` (`0/1`) |
 | `payload_mutation_max_buffer_size` | 808 | 8 | `u64` |
 | `payload_mutation_reserved` | 816 | 64 | `[u64;8]` |
@@ -147,7 +147,7 @@ Constants:
 |---|---|---|
 | `enabled` | `u64` | `0/1` |
 | `priority` | `u64` | Higher wins |
-| `kind` | `u64` | `1=host`, `2=cidr` |
+| `kind` | `u64` | `0=semantic(hostname/sni)`, `1=host`, `2=cidr` |
 | `ipv4` | `u64` | IPv4 address (lower 32 bits) |
 | `prefix_len` | `u64` | CIDR prefix (`0..32`) |
 | `port` | `u64` | `0` means any |
