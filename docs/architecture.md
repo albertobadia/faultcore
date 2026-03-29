@@ -11,6 +11,8 @@ This document describes the current `faultcore` architecture using a runtime-sta
 
 ## High-Level Layout
 
+![Faultcore interceptor flow](assets/faultcore-flow.svg)
+
 - `src/faultcore/`: Python API, decorators, policy registry, SHM writer.
 - `faultcore_network/`: runtime-stage engine, SHM contract/runtime, socket metadata helpers, interceptor bridge.
 - `faultcore_interceptor/`: syscall hooks and original libc dispatch (`dlsym`/`RTLD_NEXT`).

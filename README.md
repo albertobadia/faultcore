@@ -2,6 +2,15 @@
   <img src="docs/assets/faultcore-logo.svg" alt="faultcore logo" width="560" />
 </p>
 
+<p align="center">
+  <a href="https://www.python.org/downloads/"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10+-blue.svg?style=flat-square&logo=python"></a>
+  <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green.svg?style=flat-square"></a>
+  <a href="https://pypi.org/project/faultcore/"><img alt="PyPI" src="https://img.shields.io/pypi/v/faultcore?style=flat-square&logo=pypi&logoColor=white"></a>
+  <a href="https://pypi.org/project/faultcore/"><img alt="Downloads" src="https://img.shields.io/pepy/dt/faultcore?style=flat-square&color=blue"></a>
+  <a href="https://github.com/albertobadia/faultcore/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/albertobadia/faultcore/ci.yml?branch=main&style=flat-square&logo=github"></a>
+  <a href="https://faultcore.readthedocs.io/en/latest/"><img alt="ReadTheDocs" src="https://img.shields.io/readthedocs/faultcore?style=flat-square&logo=readthedocs"></a>
+</p>
+
 Helps you test how your application behaves under realistic network failures without rewriting application code or introducing an in-app proxy layer.
 
 Core value:
@@ -10,7 +19,11 @@ Core value:
 - deterministic and reproducible fault decisions for CI validation;
 - broad fault model coverage across connection, transport, DNS, and payload behavior.
 
-Detailed documentation lives in `docs/`.
+Detailed documentation lives in `docs/` and is published at:
+- https://faultcore.readthedocs.io/en/latest/
+
+Package distribution (PyPI):
+- https://pypi.org/project/faultcore/
 
 ## High-level architecture
 
@@ -23,6 +36,12 @@ Execution model:
 4. Runtime applies directives (delay, drop, timeout, error, mutate, reorder, duplicate) and then calls original libc functions when needed.
 
 ## Quick Start
+
+Install from PyPI:
+
+```bash
+pip install faultcore
+```
 
 Requirements:
 - Python 3.10+
@@ -122,6 +141,7 @@ These can be combined in one run to validate retries, idempotency, fallbacks, pa
 
 Primary docs entrypoint:
 - [`docs/index.md`](docs/index.md)
+- Read the Docs: https://faultcore.readthedocs.io/en/latest/
 
 Core documentation paths:
 

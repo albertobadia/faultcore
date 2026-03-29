@@ -1,8 +1,11 @@
-# faultcore documentation
+![faultcore logo](assets/faultcore-logo.svg)
 
 faultcore provides fault injection and network behavior simulation for Python applications.
 
 This site is organized to teach usage first, with direct entries for every public decorator and policy/context API.
+
+- Read the Docs URL: https://faultcore.readthedocs.io/en/latest/
+- PyPI package: https://pypi.org/project/faultcore/
 
 ```{toctree}
 :maxdepth: 2

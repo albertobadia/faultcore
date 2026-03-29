@@ -10,6 +10,16 @@ This tutorial gets you from zero to a working fault-injection scenario.
 
 ## 2) Install and build
 
+If you want to install the published package directly:
+
+```bash
+pip install faultcore
+```
+
+PyPI: https://pypi.org/project/faultcore/
+
+If you are developing faultcore from source:
+
 ```bash
 uv sync --group dev
 ./build.sh
