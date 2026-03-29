@@ -15,18 +15,17 @@ Reorders stream packets to test protocol ordering assumptions.
 - `window` must be `> 0`.
 - `max_delay` is parsed as duration and converted to nanoseconds internally.
 
-## Conceptual example (quick behavior sketch)
+## Unit test example (pytest)
 
 ```python
 import faultcore
 
 
-@faultcore.packet_reorder(prob="20%", max_delay="30ms", window=4)
-def exchange_messages() -> list[int]:
-    return [1, 3, 2, 4]
-
-
 def test_protocol_handles_out_of_order_frames() -> None:
+    @faultcore.packet_reorder(prob="20%", max_delay="30ms", window=4)
+    def exchange_messages() -> list[int]:
+        return [1, 3, 2, 4]
+
     frames = exchange_messages()
     assert frames != sorted(frames)
 ```

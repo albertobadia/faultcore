@@ -15,23 +15,20 @@ Injects explicit transport connection errors.
 - `kind` must be one of `reset`, `refused`, `unreachable`.
 - `prob` uses packet loss parser (`%` or `ppm`).
 
-## Conceptual example (quick behavior sketch)
+## Unit test example (pytest)
 
 ```python
 import faultcore
-
-
-@faultcore.connection_error(kind="refused", prob="40%")
-def open_connection() -> None:
-    raise ConnectionRefusedError("simulated")
+import pytest
 
 
 def test_client_handles_refused_connection() -> None:
-    try:
-        open_connection()
-        assert False, "expected connection failure"
-    except ConnectionRefusedError:
-        assert True
+    @faultcore.connection_error(kind="refused", prob="40%")
+    def connect() -> None:
+        raise ConnectionRefusedError("simulated")
+
+    with pytest.raises(ConnectionRefusedError):
+        connect()
 ```
 
 ## Integration example (real network path)

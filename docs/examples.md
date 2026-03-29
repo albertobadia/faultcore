@@ -19,9 +19,12 @@ Start with fixed latency or timeout before adding randomness:
 import faultcore
 
 
-@faultcore.latency("50ms")
-def baseline() -> str:
-    return "ok"
+def test_deterministic_latency_baseline() -> None:
+    @faultcore.latency("50ms")
+    def baseline() -> str:
+        return "ok"
+
+    assert baseline() == "ok"
 ```
 
 Then add jitter/loss in a second scenario to isolate the source of failures.
@@ -41,7 +44,9 @@ Avoid mixing many fault types in a single test initially. Build confidence in la
 import faultcore
 
 
-faultcore.register_policy(name="mobile_3g", latency="150ms", jitter="40ms", packet_loss="1%", rate="2mbps")
+def test_reusable_mobile_3g_profile_registration() -> None:
+    faultcore.register_policy(name="mobile_3g", latency="150ms", jitter="40ms", packet_loss="1%", rate="2mbps")
+    assert "mobile_3g" in faultcore.list_policies()
 ```
 
 Use `faultcore.fault("mobile_3g")` in multiple tests to maintain consistency.
@@ -61,10 +66,13 @@ For each testing scenario, assert one primary behavior:
 import faultcore
 
 
-@faultcore.timeout(connect="250ms", recv="800ms")
-@faultcore.packet_loss("1%")
-def call_http_api() -> dict[str, str]:
-    return {"status": "ok"}
+def test_http_client_profile_stack() -> None:
+    @faultcore.timeout(connect="250ms", recv="800ms")
+    @faultcore.packet_loss("1%")
+    def call_http_api() -> dict[str, str]:
+        return {"status": "ok"}
+
+    assert call_http_api()["status"] == "ok"
 ```
 
 ## Example: TCP protocol client test
@@ -73,10 +81,13 @@ def call_http_api() -> dict[str, str]:
 import faultcore
 
 
-@faultcore.packet_reorder(prob="20%", max_delay="25ms", window=3)
-@faultcore.half_open(after="16kb", error="reset")
-def exchange_tcp_frames() -> str:
-    return "ok"
+def test_tcp_ordering_and_partial_transfer_profile() -> None:
+    @faultcore.packet_reorder(prob="20%", max_delay="25ms", window=3)
+    @faultcore.half_open(after="16kb", error="reset")
+    def exchange_tcp_frames() -> str:
+        return "ok"
+
+    assert exchange_tcp_frames() == "ok"
 ```
 
 ## Example: UDP protocol client test
@@ -85,8 +96,11 @@ def exchange_tcp_frames() -> str:
 import faultcore
 
 
-@faultcore.packet_loss("3%")
-@faultcore.burst_loss("4")
-def send_udp_datagrams() -> str:
-    return "ok"
+def test_udp_loss_and_burst_profile() -> None:
+    @faultcore.packet_loss("3%")
+    @faultcore.burst_loss("4")
+    def send_udp_datagrams() -> str:
+        return "ok"
+
+    assert send_udp_datagrams() == "ok"
 ```

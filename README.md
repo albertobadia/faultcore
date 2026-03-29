@@ -91,6 +91,7 @@ Core documentation paths:
 | Document | Scope |
 |---|---|
 | [`docs/getting_started.md`](docs/getting_started.md) | Installation, first run, first decorator |
+| [`docs/cli_usage.md`](docs/cli_usage.md) | CLI commands (`doctor`, `run`, `report`) and recommended workflows |
 | [`docs/api_reference.md`](docs/api_reference.md) | Feature-by-feature reference (timeout, rate, latency, jitter, loss, DNS, policy APIs) |
 | [`docs/examples.md`](docs/examples.md) | Scenario map and recommended testing patterns |
 | [`docs/troubleshooting.md`](docs/troubleshooting.md) | Symptom-based troubleshooting and quality gate |

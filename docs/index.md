@@ -23,6 +23,7 @@ api_reference
 :maxdepth: 2
 :caption: Guides
 
+cli_usage
 examples
 troubleshooting
 ```

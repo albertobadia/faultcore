@@ -20,23 +20,20 @@ Sets connect and/or receive timeout behavior for operations executed inside the 
 - Both parameters are optional.
 - Duration must be non-negative and use suffix (`ms` or `s`).
 
-## Conceptual example (quick behavior sketch)
+## Unit test example (pytest)
 
 ```python
 import faultcore
-
-
-@faultcore.timeout(connect="250ms", recv="900ms")
-def flaky_http_call() -> str:
-    raise TimeoutError("simulated")
+import pytest
 
 
 def test_http_client_timeout_path() -> None:
-    try:
-        flaky_http_call()
-        assert False, "expected timeout path"
-    except TimeoutError:
-        assert True
+    @faultcore.timeout(connect="250ms", recv="900ms")
+    def call() -> str:
+        raise TimeoutError("simulated")
+
+    with pytest.raises(TimeoutError):
+        call()
 ```
 
 ## Integration example (real network path)
