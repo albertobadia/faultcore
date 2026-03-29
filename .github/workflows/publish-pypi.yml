@@ -1,19 +1,16 @@
 name: Publish PyPI
 
 on:
-  push:
-    tags:
-      - "v*"
+  release:
+    types:
+      - published
   workflow_dispatch:
     inputs:
-      repository:
-        description: "Target repository"
+      ref:
+        description: "Branch or tag to build"
         required: true
-        default: "pypi"
-        type: choice
-        options:
-          - pypi
-          - testpypi
+        default: "main"
+        type: string
 
 permissions:
   contents: read
@@ -24,6 +21,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -44,6 +43,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -64,6 +65,7 @@ jobs:
   publish:
     name: Publish distribution
     needs: [build_wheels, build_sdist]
+    if: ${{ github.event_name == 'release' }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -81,16 +83,7 @@ jobs:
           path: dist
 
       - name: Publish to PyPI
-        if: ${{ github.event_name == 'push' || github.event.inputs.repository == 'pypi' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          skip-existing: true
-          verbose: true
-
-      - name: Publish to TestPyPI
-        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.repository == 'testpypi' }}
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          repository-url: https://test.pypi.org/legacy/
           skip-existing: true
           verbose: true
