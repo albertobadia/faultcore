@@ -93,16 +93,24 @@ pub fn try_open_shm() -> bool {
             return false;
         }
 
+        let shm_size_off_t = match libc::off_t::try_from(FAULTCORE_SHM_SIZE) {
+            Ok(value) => value,
+            Err(_) => {
+                libc::close(fd);
+                return false;
+            }
+        };
+
         match open_mode {
             ShmOpenMode::Creator => {
-                if ftruncate(fd, FAULTCORE_SHM_SIZE as i64) < 0 {
+                if ftruncate(fd, shm_size_off_t) < 0 {
                     libc::close(fd);
                     return false;
                 }
             }
             ShmOpenMode::Consumer => {
                 let mut st: stat = std::mem::zeroed();
-                if fstat(fd, &mut st) < 0 || st.st_size < FAULTCORE_SHM_SIZE as i64 {
+                if fstat(fd, &mut st) < 0 || st.st_size < shm_size_off_t {
                     libc::close(fd);
                     return false;
                 }
