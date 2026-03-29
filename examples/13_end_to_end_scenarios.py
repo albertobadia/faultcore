@@ -12,25 +12,19 @@ except ImportError:
 
 
 def tcp_echo(host: str, port: int, payload: str) -> str:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(5)
-    try:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(5)
         sock.connect((host, port))
         sock.sendall(f"{payload}\n".encode())
         return sock.recv(4096).decode().strip()
-    finally:
-        sock.close()
 
 
 def udp_echo(host: str, port: int, payload: str) -> str:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.settimeout(5)
-    try:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.settimeout(5)
         sock.sendto(payload.encode(), (host, port))
         data, _ = sock.recvfrom(4096)
         return data.decode().strip()
-    finally:
-        sock.close()
 
 
 def http_echo(base_url: str, payload: str) -> int:

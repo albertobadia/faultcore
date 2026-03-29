@@ -28,6 +28,7 @@ _DECISION_COUNT_FIELDS = (
     ("nxdomain_count", "nxdomain"),
     ("mutate_count", "mutate"),
 )
+_TIMELINE_SEVERITY_BY_DECISION = {"error": "error", "continue": "info"}
 
 
 def _errors_from_returncode(returncode: int) -> int:
@@ -352,13 +353,12 @@ def build_record_replay_timeline_events(
     events: list[dict[str, Any]], *, ts: str, max_items: int = 0
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    severity_by_decision = {"error": "error", "continue": "info"}
     limited_events = events if max_items <= 0 else events[:max_items]
     for item in limited_events:
         decision = str(item.get("decision", ""))
         site = str(item.get("site", ""))
         value = item.get("value", 0)
-        severity = severity_by_decision.get(decision, "warning")
+        severity = _TIMELINE_SEVERITY_BY_DECISION.get(decision, "warning")
         out.append(
             {
                 "ts": ts,

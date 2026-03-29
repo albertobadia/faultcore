@@ -7,13 +7,13 @@ use rand::{Rng, SeedableRng, random, rngs::StdRng};
 use std::collections::{HashMap, hash_map::Entry};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-pub struct L4Transport {
+pub struct R5TransportFaults {
     seeded_rng: Option<Mutex<StdRng>>,
     policy_counter: AtomicU64,
     stream_bytes: Mutex<HashMap<i32, u64>>,
 }
 
-impl L4Transport {
+impl R5TransportFaults {
     pub fn new() -> Self {
         let seeded_rng = std::env::var("FAULTCORE_SEED")
             .ok()
@@ -96,9 +96,9 @@ impl L4Transport {
     }
 }
 
-impl Layer for L4Transport {
+impl Layer for R5TransportFaults {
     fn stage(&self) -> LayerStage {
-        LayerStage::L4
+        LayerStage::R5
     }
 
     fn applies_to(&self, ctx: &PacketContext<'_>) -> bool {
@@ -126,11 +126,11 @@ impl Layer for L4Transport {
     }
 
     fn name(&self) -> &str {
-        "L4_Transport"
+        "R5_TransportFaults"
     }
 }
 
-impl Default for L4Transport {
+impl Default for R5TransportFaults {
     fn default() -> Self {
         Self::new()
     }

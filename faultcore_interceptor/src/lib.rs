@@ -559,7 +559,7 @@ where
             )
         });
         let mutation_result = payload.map(|raw_payload| {
-            let (l6_decision, maybe_mutated) = global_fault_osi_engine().evaluate_l6_with_buffer(
+            let (l6_decision, maybe_mutated) = global_fault_osi_engine().evaluate_r7_with_buffer(
                 s,
                 &network_cfg,
                 Direction::Uplink,
@@ -687,7 +687,7 @@ where
         if out > 0
             && let Some(pkt) = snapshot(out)
         {
-            let (l6_decision, maybe_mutated) = global_fault_osi_engine().evaluate_l6_with_buffer(
+            let (l6_decision, maybe_mutated) = global_fault_osi_engine().evaluate_r7_with_buffer(
                 s,
                 &network_cfg,
                 Direction::Downlink,

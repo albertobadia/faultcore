@@ -8,19 +8,19 @@ from faultcore import cli
 runner = CliRunner()
 
 
-def test_compose_preload_without_existing_value(monkeypatch):
+def test_compose_preload_without_existing_value(monkeypatch) -> None:
     monkeypatch.delenv("LD_PRELOAD", raising=False)
     assert cli._compose_preload("/faultcore/libfaultcore_interceptor.so") == "/faultcore/libfaultcore_interceptor.so"
 
 
-def test_compose_preload_appends_existing_value(monkeypatch):
+def test_compose_preload_appends_existing_value(monkeypatch) -> None:
     monkeypatch.setenv("LD_PRELOAD", "/already.so")
     assert cli._compose_preload("/faultcore/libfaultcore_interceptor.so") == (
         "/faultcore/libfaultcore_interceptor.so /already.so"
     )
 
 
-def test_run_command_linux_strict_fails_when_probe_fails(monkeypatch):
+def test_run_command_linux_strict_fails_when_probe_fails(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_is_linux", lambda: True)
     monkeypatch.setattr(cli.native, "get_interceptor_path", lambda: "/faultcore/interceptor.so")
     monkeypatch.setattr(cli, "_probe_interceptor_active", lambda _env: False)
@@ -39,7 +39,7 @@ def test_run_command_linux_strict_fails_when_probe_fails(monkeypatch):
     assert calls == []
 
 
-def test_run_command_linux_strict_success_executes_with_ld_preload(monkeypatch):
+def test_run_command_linux_strict_success_executes_with_ld_preload(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_is_linux", lambda: True)
     monkeypatch.setattr(cli.native, "get_interceptor_path", lambda: "/faultcore/interceptor.so")
     monkeypatch.setattr(cli, "_probe_interceptor_active", lambda _env: True)
@@ -65,7 +65,7 @@ def test_run_command_linux_strict_success_executes_with_ld_preload(monkeypatch):
     assert env["FAULTCORE_SHM_OPEN_MODE"] == "creator"
 
 
-def test_run_command_writes_run_json(tmp_path, monkeypatch):
+def test_run_command_writes_run_json(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(cli, "_is_linux", lambda: False)
     monkeypatch.setattr(
         cli,
@@ -77,11 +77,7 @@ def test_run_command_writes_run_json(tmp_path, monkeypatch):
         },
     )
 
-    def fake_run(args, *, env, check, capture_output, text):
-        _ = env
-        _ = check
-        _ = capture_output
-        _ = text
+    def fake_run(args, **_kwargs):
         assert args == ["python", "-V"]
         return SimpleNamespace(returncode=0)
 
@@ -96,7 +92,7 @@ def test_run_command_writes_run_json(tmp_path, monkeypatch):
     assert data["process"]["exit_code"] == 0
 
 
-def test_run_command_python_script_uses_current_interpreter(monkeypatch):
+def test_run_command_python_script_uses_current_interpreter(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_is_linux", lambda: False)
 
     calls = []
@@ -118,7 +114,7 @@ def test_run_command_python_script_uses_current_interpreter(monkeypatch):
     assert text is False
 
 
-def test_run_command_strict_failure_writes_run_json(tmp_path, monkeypatch):
+def test_run_command_strict_failure_writes_run_json(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(cli, "_is_linux", lambda: True)
     monkeypatch.setattr(cli.native, "get_interceptor_path", lambda: "/faultcore/interceptor.so")
     monkeypatch.setattr(cli, "_probe_interceptor_active", lambda _env: False)
@@ -140,7 +136,7 @@ def test_run_command_strict_failure_writes_run_json(tmp_path, monkeypatch):
     assert data["process"]["exit_code"] == 2
 
 
-def test_run_command_pytest_populates_summary(tmp_path, monkeypatch):
+def test_run_command_pytest_populates_summary(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(cli, "_is_linux", lambda: False)
 
     def fake_run(args, **kwargs):
@@ -168,16 +164,14 @@ def test_run_command_pytest_populates_summary(tmp_path, monkeypatch):
     assert data["logs"]["stdout_tail"]
 
 
-def test_run_command_replay_mode_populates_metrics_from_record_replay(tmp_path, monkeypatch):
+def test_run_command_replay_mode_populates_metrics_from_record_replay(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(cli, "_is_linux", lambda: False)
     rr_path = tmp_path / "shared.rr.jsonl.gz"
     rr_path.write_bytes(b"placeholder")
     monkeypatch.setenv("FAULTCORE_RECORD_REPLAY_MODE", "replay")
     monkeypatch.setenv("FAULTCORE_RECORD_REPLAY_PATH", str(rr_path))
 
-    def fake_run(args, **kwargs):
-        _ = args
-        _ = kwargs
+    def fake_run(*_args, **_kwargs):
         return SimpleNamespace(returncode=1)
 
     monkeypatch.setattr(cli.subprocess, "run", fake_run)
@@ -235,7 +229,7 @@ def test_run_command_replay_mode_populates_metrics_from_record_replay(tmp_path, 
     assert any(event["type"] == "network.delay_ns" for event in data["events"])
 
 
-def test_run_command_merges_metrics_out_json_into_run_record(tmp_path, monkeypatch):
+def test_run_command_merges_metrics_out_json_into_run_record(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(cli, "_is_linux", lambda: False)
 
     metrics_path = tmp_path / "network_metrics.json"
@@ -254,9 +248,7 @@ def test_run_command_merges_metrics_out_json_into_run_record(tmp_path, monkeypat
         encoding="utf-8",
     )
 
-    def fake_run(args, **kwargs):
-        _ = args
-        _ = kwargs
+    def fake_run(*_args, **_kwargs):
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(cli.subprocess, "run", fake_run)
@@ -286,7 +278,7 @@ def test_run_command_merges_metrics_out_json_into_run_record(tmp_path, monkeypat
     assert {"kind": "scenario_metrics", "path": str(metrics_path.resolve())} in data["artifacts"]
 
 
-def test_doctor_non_linux_fails(monkeypatch):
+def test_doctor_non_linux_fails(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_is_linux", lambda: False)
 
     result = runner.invoke(cli.app, ["doctor"])
@@ -294,7 +286,7 @@ def test_doctor_non_linux_fails(monkeypatch):
     assert "unsupported platform" in result.stdout
 
 
-def test_doctor_linux_probe_ok(monkeypatch):
+def test_doctor_linux_probe_ok(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_is_linux", lambda: True)
     monkeypatch.setattr(cli.native, "get_interceptor_path", lambda: "/faultcore/interceptor.so")
     monkeypatch.setattr(cli, "_probe_interceptor_active", lambda _env: True)
@@ -304,7 +296,7 @@ def test_doctor_linux_probe_ok(monkeypatch):
     assert "interceptor_active_probe: ok" in result.stdout
 
 
-def test_doctor_linux_probe_ok_without_extension_lookup(monkeypatch):
+def test_doctor_linux_probe_ok_without_extension_lookup(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_is_linux", lambda: True)
     monkeypatch.setattr(cli.native, "get_interceptor_path", lambda: "/faultcore/interceptor.so")
 
@@ -319,7 +311,7 @@ def test_doctor_linux_probe_ok_without_extension_lookup(monkeypatch):
     assert "interceptor_active_probe: ok" in result.stdout
 
 
-def test_report_command_generates_html(tmp_path):
+def test_report_command_generates_html(tmp_path) -> None:
     input_path = tmp_path / "run.json"
     input_path.write_text(
         json.dumps(

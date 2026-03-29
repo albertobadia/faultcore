@@ -4,32 +4,27 @@ import json
 import socket
 import time
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 
 import faultcore
 
 
 def _tcp_roundtrip_raw(host: str, port: int, payload: str) -> int:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(5)
-    try:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(5)
         sock.connect((host, port))
         sock.sendall(payload.encode("utf-8"))
         data = sock.recv(4096)
         return len(data)
-    finally:
-        sock.close()
 
 
 def _udp_roundtrip_raw(host: str, port: int, payload: str) -> int:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.settimeout(3)
-    try:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.settimeout(3)
         sock.sendto(payload.encode("utf-8"), (host, port))
         data, _ = sock.recvfrom(4096)
         return len(data)
-    finally:
-        sock.close()
 
 
 def _http_roundtrip_raw(base_url: str, path: str) -> int:
@@ -124,10 +119,10 @@ def test_fault_policy_tcp(host: str, port: int, idx: int) -> int:
     return _tcp_roundtrip_raw(host, port, f"fault-policy-{idx}\n")
 
 
-def _run_case_once(name: str, call) -> tuple[str, dict[str, object]]:
+def _run_case_once(name: str, operation: Callable[[], int]) -> tuple[str, dict[str, object]]:
     start = time.perf_counter()
     try:
-        payload_bytes = int(call())
+        payload_bytes = int(operation())
     except OSError:
         payload_bytes = 0
     elapsed_ms = (time.perf_counter() - start) * 1000

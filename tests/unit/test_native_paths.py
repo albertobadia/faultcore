@@ -14,16 +14,16 @@ from faultcore import native
         ("arm64", "linux-aarch64"),
     ],
 )
-def test_get_platform_tag_accepts_linux_arch_aliases(machine, expected):
+def test_get_platform_tag_accepts_linux_arch_aliases(machine: str, expected: str) -> None:
     assert native.get_platform_tag(system="Linux", machine=machine) == expected
 
 
-def test_get_platform_tag_rejects_non_linux():
+def test_get_platform_tag_rejects_non_linux() -> None:
     with pytest.raises(RuntimeError, match="Unsupported operating system"):
         native.get_platform_tag(system="Darwin", machine="arm64")
 
 
-def test_get_interceptor_path_resolves_native_layout(monkeypatch, tmp_path):
+def test_get_interceptor_path_resolves_native_layout(monkeypatch, tmp_path) -> None:
     native_dir = tmp_path / "_native" / "linux-aarch64"
     native_dir.mkdir(parents=True)
     interceptor = native_dir / "libfaultcore_interceptor.so"
@@ -35,7 +35,7 @@ def test_get_interceptor_path_resolves_native_layout(monkeypatch, tmp_path):
     assert native.get_interceptor_path() == str(interceptor)
 
 
-def test_get_interceptor_path_raises_when_missing(monkeypatch, tmp_path):
+def test_get_interceptor_path_raises_when_missing(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(native, "_package_dir", lambda: tmp_path)
     monkeypatch.setattr(native, "get_platform_tag", lambda: "linux-aarch64")
 
@@ -43,7 +43,7 @@ def test_get_interceptor_path_raises_when_missing(monkeypatch, tmp_path):
         native.get_interceptor_path()
 
 
-def test_get_extension_path_prefers_package_level_binary(monkeypatch, tmp_path):
+def test_get_extension_path_prefers_package_level_binary(monkeypatch, tmp_path) -> None:
     package_level = tmp_path / "_faultcore.abi3.so"
     package_level.write_bytes(b"top-level")
 
@@ -57,7 +57,7 @@ def test_get_extension_path_prefers_package_level_binary(monkeypatch, tmp_path):
     assert native.get_extension_path() == str(package_level)
 
 
-def test_get_extension_path_falls_back_to_native_layout(monkeypatch, tmp_path):
+def test_get_extension_path_falls_back_to_native_layout(monkeypatch, tmp_path) -> None:
     native_dir = tmp_path / "_native" / "linux-aarch64"
     native_dir.mkdir(parents=True)
     native_ext = native_dir / "_faultcore.abi3.so"

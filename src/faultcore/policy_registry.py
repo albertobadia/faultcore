@@ -150,29 +150,22 @@ def _require_mapping(value: Any, field_name: str) -> dict[str, Any]:
     return value
 
 
-def _build_target_rule_from_mapping(target: dict[str, Any]) -> dict[str, Any]:
-    return build_target_profile(
-        target=target.get("target"),
-        host=target.get("host"),
-        cidr=target.get("cidr"),
-        hostname=target.get("hostname"),
-        sni=target.get("sni"),
-        port=target.get("port"),
-        protocol=target.get("protocol"),
-        priority=target.get("priority"),
-    )
-
-
-def _build_target_rule(target: str | dict[str, Any], *, include_priority: bool) -> dict[str, Any]:
+def _build_target_rule(target: str | dict[str, Any]) -> dict[str, Any]:
     if isinstance(target, str):
         rule = build_target_profile(target=target)
     elif isinstance(target, dict):
-        rule = _build_target_rule_from_mapping(target)
+        rule = build_target_profile(
+            target=target.get("target"),
+            host=target.get("host"),
+            cidr=target.get("cidr"),
+            hostname=target.get("hostname"),
+            sni=target.get("sni"),
+            port=target.get("port"),
+            protocol=target.get("protocol"),
+            priority=target.get("priority"),
+        )
     else:
         raise ValueError("target must be a string or mapping when provided")
-
-    if not include_priority:
-        rule.pop("priority", None)
     return rule
 
 
@@ -184,7 +177,7 @@ def _build_target_profiles(targets: list[str | dict[str, Any]]) -> list[dict[str
         raise ValueError("each targets entry must be a string or mapping")
 
     return sorted(
-        (_build_target_rule(entry, include_priority=True) for entry in targets),
+        (_build_target_rule(entry) for entry in targets),
         key=lambda profile: profile.get("priority", 100),
         reverse=True,
     )

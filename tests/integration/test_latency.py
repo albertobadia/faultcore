@@ -93,19 +93,19 @@ def _run_recv_timeout(host: str, port: int, timeout_sec: float) -> float | None:
         return None
 
 
-def test_latency(host: str, port: int, message: str, probe_count: int):
+def test_latency(host: str, port: int, message: str, probe_count: int) -> None:
     avg_ms = _run_latency(host, port, message, probe_count)
     assert avg_ms is not None
     assert avg_ms >= 0
 
 
-def test_connect_timeout(host: str, port: int, probe_timeout_sec: float):
+def test_connect_timeout(host: str, port: int, probe_timeout_sec: float) -> None:
     elapsed = _run_connect_timeout(host, port, probe_timeout_sec)
     assert elapsed is not None
     assert elapsed >= 0
 
 
-def test_recv_timeout(host: str, port: int, probe_timeout_sec: float):
+def test_recv_timeout(host: str, port: int, probe_timeout_sec: float) -> None:
     elapsed = _run_recv_timeout(host, port, probe_timeout_sec)
     assert elapsed is not None
     assert elapsed >= 0

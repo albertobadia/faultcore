@@ -1,18 +1,18 @@
-pub mod l1_chaos;
-pub mod l2_qos;
-pub mod l3_routing;
-pub mod l4_transport;
-pub mod l5_session;
-pub mod l6_presentation;
-pub mod l7_resolver;
+pub mod r1_session_guard;
+pub mod r2_chaos_base;
+pub mod r3_flow_control;
+pub mod r4_timing_variation;
+pub mod r5_transport_faults;
+pub mod r6_resolver_faults;
+pub mod r7_payload_transform;
 
-pub use l1_chaos::L1Chaos;
-pub use l2_qos::L2QoS;
-pub use l3_routing::L3Routing;
-pub use l4_transport::L4Transport;
-pub use l5_session::L5Session;
-pub use l6_presentation::L6Presentation;
-pub use l7_resolver::L7Resolver;
+pub use r1_session_guard::R1SessionGuard;
+pub use r2_chaos_base::R2ChaosBase;
+pub use r3_flow_control::R3FlowControl;
+pub use r4_timing_variation::R4TimingVariation;
+pub use r5_transport_faults::R5TransportFaults;
+pub use r6_resolver_faults::R6ResolverFaults;
+pub use r7_payload_transform::R7PayloadTransform;
 
 use std::sync::Arc;
 
@@ -32,13 +32,15 @@ pub enum Operation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LayerStage {
-    L1,
-    L2,
-    L3,
-    L4,
-    L5,
-    L6,
-    L7,
+    R0,
+    R1,
+    R2,
+    R3,
+    R4,
+    R5,
+    R6,
+    R7,
+    R8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

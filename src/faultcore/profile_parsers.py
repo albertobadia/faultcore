@@ -167,15 +167,6 @@ def _validate_port_bounds(value: int, field_name: str) -> None:
     _ensure_range(value, _PORT_MIN, _PORT_MAX, f"target {field_name} must be between 0 and 65535")
 
 
-def _as_positive_int(value: int | None, error_message: str) -> int | None:
-    if value is None:
-        return None
-    parsed = int(value)
-    if parsed <= 0:
-        raise ValueError(error_message)
-    return parsed
-
-
 def _target_profile_base(
     *,
     kind: int,
@@ -229,17 +220,6 @@ def _parse_priority(priority: str | int | None) -> int:
     return parsed_priority
 
 
-def _add_positive_limit(
-    profile: dict[str, int],
-    key: str,
-    value: int | None,
-    error_message: str,
-) -> None:
-    parsed = _as_positive_int(value, error_message)
-    if parsed is not None:
-        profile[key] = parsed
-
-
 def parse_rate(rate: str) -> int:
     if not isinstance(rate, str):
         raise TypeError("rate must be a string with suffix (e.g., '100mbps', '1gbps', '500kbps', '1000bps')")
@@ -278,9 +258,7 @@ def parse_burst_loss(value: str) -> int:
 
 def parse_seed(value: str | int) -> int:
     if isinstance(value, int):
-        if value < 0:
-            raise ValueError("seed must be >= 0")
-        return value
+        return _as_non_negative_int(value, "seed must be >= 0")
     if not isinstance(value, str):
         raise TypeError("seed must be a string or integer")
 
@@ -291,10 +269,7 @@ def parse_seed(value: str | int) -> int:
     if normalized.startswith(("0b", "0B")):
         return _parse_prefixed_int(normalized, base=2, error_message=f"invalid binary seed '{value}'")
 
-    parsed = _parse_int_value(normalized, f"invalid seed '{value}'")
-    if parsed < 0:
-        raise ValueError("seed must be >= 0")
-    return parsed
+    return _as_non_negative_int(_parse_int_value(normalized, f"invalid seed '{value}'"), "seed must be >= 0")
 
 
 def parse_port(value: str | int) -> tuple[int, int | None, int | None]:
@@ -313,7 +288,7 @@ def parse_port(value: str | int) -> tuple[int, int | None, int | None]:
             raise ValueError("port range start must be <= end")
         return 0, start, end
     if "," in normalized:
-        first_port, *_ = normalized.split(",")
+        first_port = normalized.split(",", 1)[0]
         single_port = _parse_single_port(first_port, "port list must contain valid integers")
         return single_port, None, None
     parsed = _parse_single_port(

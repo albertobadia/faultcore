@@ -3,23 +3,23 @@ use crate::layers::{
     PacketContext,
 };
 
-pub struct L6Presentation;
+pub struct R7PayloadTransform;
 
-impl L6Presentation {
+impl R7PayloadTransform {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl Default for L6Presentation {
+impl Default for R7PayloadTransform {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Layer for L6Presentation {
+impl Layer for R7PayloadTransform {
     fn stage(&self) -> LayerStage {
-        LayerStage::L6
+        LayerStage::R7
     }
 
     fn process(&self, _ctx: &PacketContext<'_>) -> LayerDecision {
@@ -114,7 +114,7 @@ impl Layer for L6Presentation {
     }
 
     fn name(&self) -> &str {
-        "L6_Presentation"
+        "R7_PayloadTransform"
     }
 }
 

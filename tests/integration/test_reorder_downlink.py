@@ -101,15 +101,12 @@ def recv_many_udp(sock: socket.socket, count: int) -> list[bytes]:
 
 def run_tcp_case(host: str) -> None:
     port, _, sent_ready = start_tcp_push_server(host)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(None)
-    try:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(None)
         sock.connect((host, port))
         if not sent_ready.wait(timeout=1):
             raise RuntimeError("tcp push server did not send packets in time")
         out1, out2 = recv_two_tcp(sock)
-    finally:
-        sock.close()
 
     print(f"tcp recv order: {out1!r} then {out2!r}")
     if out1 != b"pkt00002" or out2 != b"pkt00001":
@@ -117,15 +114,12 @@ def run_tcp_case(host: str) -> None:
 
 
 def run_udp_case(host: str) -> None:
-    client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    client.bind((host, 0))
-    client.settimeout(None)
-    try:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
+        client.bind((host, 0))
+        client.settimeout(None)
         client_port = client.getsockname()[1]
-        _ = start_udp_push_sender(host, client_port)
+        start_udp_push_sender(host, client_port)
         out1, out2 = recv_two_udp(client)
-    finally:
-        client.close()
 
     print(f"udp recvfrom order: {out1!r} then {out2!r}")
     if out1 != b"dat00002" or out2 != b"dat00001":
@@ -135,15 +129,12 @@ def run_udp_case(host: str) -> None:
 def run_udp_stress_case(host: str, count: int) -> None:
     if count < 2 or (count % 2) != 0:
         raise ValueError("count must be an even integer >= 2")
-    client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    client.bind((host, 0))
-    client.settimeout(None)
-    try:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
+        client.bind((host, 0))
+        client.settimeout(None)
         client_port = client.getsockname()[1]
-        _ = start_udp_sequence_sender(host, client_port, count)
+        start_udp_sequence_sender(host, client_port, count)
         out = recv_many_udp(client, count)
-    finally:
-        client.close()
 
     if len(out) != count:
         raise RuntimeError(f"udp stress recv mismatch: expected {count}, got {len(out)}")

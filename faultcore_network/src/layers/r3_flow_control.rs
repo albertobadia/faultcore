@@ -7,14 +7,14 @@ use std::time::Instant;
 
 use parking_lot::Mutex;
 
-pub struct L2QoS {
+pub struct R3FlowControl {
     rate_bps: u64,
     capacity_tokens: f64,
     tokens: AtomicU64,
     last_refill: Mutex<Instant>,
 }
 
-impl L2QoS {
+impl R3FlowControl {
     pub fn new(rate_bps: u64, capacity_tokens: f64) -> Self {
         Self {
             rate_bps,
@@ -102,9 +102,9 @@ impl L2QoS {
     }
 }
 
-impl Layer for L2QoS {
+impl Layer for R3FlowControl {
     fn stage(&self) -> LayerStage {
-        LayerStage::L2
+        LayerStage::R3
     }
 
     fn applies_to(&self, ctx: &PacketContext<'_>) -> bool {
@@ -116,7 +116,7 @@ impl Layer for L2QoS {
     }
 
     fn name(&self) -> &str {
-        "L2_QoS"
+        "R3_FlowControl"
     }
 }
 
@@ -129,7 +129,7 @@ mod tests {
 
     #[test]
     fn test_qos_refill_concurrency() {
-        let qos = Arc::new(L2QoS::new(1000, 2000.0));
+        let qos = Arc::new(R3FlowControl::new(1000, 2000.0));
         let handles: Vec<_> = (0..10)
             .map(|_| {
                 let qos_clone = Arc::clone(&qos);
@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn test_process_with_dynamic_rate_refills_tokens() {
-        let qos = L2QoS::new(0, 0.0);
+        let qos = R3FlowControl::new(0, 0.0);
         let config = Config {
             bandwidth_bps: 80,
             ..Default::default()
@@ -172,7 +172,7 @@ mod tests {
 
     #[test]
     fn test_bandwidth_bps_uses_bit_units_for_delay() {
-        let qos = L2QoS::new(0, 0.0);
+        let qos = R3FlowControl::new(0, 0.0);
         let config = Config {
             bandwidth_bps: 8,
             ..Default::default()

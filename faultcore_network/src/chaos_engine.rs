@@ -1,8 +1,9 @@
 use crate::{
     Config, Layer,
     layers::{
-        Direction, L1Chaos, L2QoS, L3Routing, L4Transport, L5Session, L6Presentation, L7Resolver,
-        LayerDecision, LayerStage, Operation, PacketContext,
+        Direction, LayerDecision, LayerStage, Operation, PacketContext, R1SessionGuard,
+        R2ChaosBase, R3FlowControl, R4TimingVariation, R5TransportFaults, R6ResolverFaults,
+        R7PayloadTransform,
     },
     record_fault_observability_decision,
 };
@@ -112,26 +113,26 @@ impl Default for ChaosEngineBuilder {
 }
 
 pub struct ChaosEngine {
-    l1: L1Chaos,
-    l2: L2QoS,
-    l3: L3Routing,
-    l4: L4Transport,
-    l5: L5Session,
-    l6: L6Presentation,
-    l7: L7Resolver,
-    metrics: [LayerMetrics; 7],
+    r2: R2ChaosBase,
+    r3: R3FlowControl,
+    r4: R4TimingVariation,
+    r5: R5TransportFaults,
+    r1: R1SessionGuard,
+    r7: R7PayloadTransform,
+    r6: R6ResolverFaults,
+    metrics: [LayerMetrics; 9],
 }
 
 impl ChaosEngine {
     pub fn new() -> Self {
         Self {
-            l1: L1Chaos::new(),
-            l2: L2QoS::with_rate(0),
-            l3: L3Routing::new(),
-            l4: L4Transport::new(),
-            l5: L5Session::new(),
-            l6: L6Presentation::new(),
-            l7: L7Resolver::new(),
+            r2: R2ChaosBase::new(),
+            r3: R3FlowControl::with_rate(0),
+            r4: R4TimingVariation::new(),
+            r5: R5TransportFaults::new(),
+            r1: R1SessionGuard::new(),
+            r7: R7PayloadTransform::new(),
+            r6: R6ResolverFaults::new(),
             metrics: std::array::from_fn(|_| LayerMetrics::new()),
         }
     }
@@ -146,31 +147,39 @@ impl ChaosEngine {
 
     fn stage_index(stage: LayerStage) -> usize {
         match stage {
-            LayerStage::L1 => 0,
-            LayerStage::L2 => 1,
-            LayerStage::L3 => 2,
-            LayerStage::L4 => 3,
-            LayerStage::L5 => 4,
-            LayerStage::L6 => 5,
-            LayerStage::L7 => 6,
+            LayerStage::R0 => 0,
+            LayerStage::R1 => 1,
+            LayerStage::R2 => 2,
+            LayerStage::R3 => 3,
+            LayerStage::R4 => 4,
+            LayerStage::R5 => 5,
+            LayerStage::R6 => 6,
+            LayerStage::R7 => 7,
+            LayerStage::R8 => 8,
         }
     }
 
-    pub fn stage_order(&self) -> [LayerStage; 7] {
+    pub fn stage_order(&self) -> [LayerStage; 9] {
         [
-            self.l1.stage(),
-            self.l2.stage(),
-            self.l3.stage(),
-            self.l4.stage(),
-            self.l5.stage(),
-            self.l6.stage(),
-            self.l7.stage(),
+            LayerStage::R0,
+            LayerStage::R1,
+            LayerStage::R2,
+            LayerStage::R3,
+            LayerStage::R4,
+            LayerStage::R5,
+            LayerStage::R6,
+            LayerStage::R7,
+            LayerStage::R8,
         ]
     }
 
-    pub fn metrics_snapshot(&self) -> [(LayerStage, DecisionCounters); 7] {
+    pub fn metrics_snapshot(&self) -> [(LayerStage, DecisionCounters); 9] {
         let stage_order = self.stage_order();
         std::array::from_fn(|idx| (stage_order[idx], self.metrics[idx].snapshot()))
+    }
+
+    fn record_config_resolve(&self) {
+        self.metrics[Self::stage_index(LayerStage::R0)].record_decision(&LayerDecision::Continue);
     }
 
     pub fn reset_metrics(&self) {
@@ -181,7 +190,7 @@ impl ChaosEngine {
 
     fn process_pipeline(&self, ctx: &PacketContext<'_>) -> LayerDecision {
         let mut delay_ns: u64 = 0;
-        let stages: [&dyn Layer; 6] = [&self.l1, &self.l2, &self.l3, &self.l4, &self.l6, &self.l7];
+        let stages: [&dyn Layer; 5] = [&self.r2, &self.r3, &self.r4, &self.r5, &self.r6];
 
         for layer in stages {
             let stage_idx = Self::stage_index(layer.stage());
@@ -207,10 +216,7 @@ impl ChaosEngine {
                     ));
                 }
                 LayerDecision::Mutate(_) => {
-                    return LayerDecision::Error(format!(
-                        "{} returned a payload decision in main pipeline",
-                        layer.name()
-                    ));
+                    return LayerDecision::Error(format!("{} returned an unsupported decision in main pipeline", layer.name()));
                 }
             }
         }
@@ -223,6 +229,7 @@ impl ChaosEngine {
     }
 
     pub fn evaluate_connect(&self, fd: i32, config: &Config) -> LayerDecision {
+        self.record_config_resolve();
         let effective = config.effective_for_send();
         let now_ns = crate::monotonic_now_ns();
         let ctx = PacketContext {
@@ -245,6 +252,7 @@ impl ChaosEngine {
         bytes: u64,
         direction: Direction,
     ) -> LayerDecision {
+        self.record_config_resolve();
         let effective = match direction {
             Direction::Uplink => config.effective_for_send(),
             Direction::Downlink => config.effective_for_recv(),
@@ -263,12 +271,13 @@ impl ChaosEngine {
             now_ns,
         };
 
-        let session_decision = self.l5.process(&ctx);
+        let session_decision = self.r1.process(&ctx);
         if !matches!(session_decision, LayerDecision::Continue) {
-            self.metrics[Self::stage_index(LayerStage::L5)].record_decision(&session_decision);
+            self.metrics[Self::stage_index(LayerStage::R1)].record_decision(&session_decision);
             record_fault_observability_decision(&session_decision);
             return session_decision;
         }
+        self.metrics[Self::stage_index(LayerStage::R1)].record_decision(&LayerDecision::Continue);
 
         let decision = self.process_pipeline(&ctx);
         if !matches!(decision, LayerDecision::Continue) {
@@ -276,8 +285,8 @@ impl ChaosEngine {
             return decision;
         }
 
-        let decision = self.l1.reorder_decision(&effective);
-        self.metrics[Self::stage_index(LayerStage::L1)].record_decision(&decision);
+        let decision = self.r2.reorder_decision(&effective);
+        self.metrics[Self::stage_index(LayerStage::R8)].record_decision(&decision);
         record_fault_observability_decision(&decision);
         decision
     }
@@ -289,8 +298,8 @@ impl ChaosEngine {
         };
         match direction {
             Direction::Uplink => {
-                let decision = self.l1.duplicate_decision(&effective);
-                self.metrics[Self::stage_index(LayerStage::L1)].record_decision(&decision);
+                let decision = self.r2.duplicate_decision(&effective);
+                self.metrics[Self::stage_index(LayerStage::R8)].record_decision(&decision);
                 record_fault_observability_decision(&decision);
                 decision
             }
@@ -299,6 +308,7 @@ impl ChaosEngine {
     }
 
     pub fn evaluate_dns_lookup(&self, config: &Config) -> LayerDecision {
+        self.record_config_resolve();
         let now_ns = crate::monotonic_now_ns();
         let ctx = PacketContext {
             fd: -1,
@@ -313,7 +323,7 @@ impl ChaosEngine {
         decision
     }
 
-    pub fn evaluate_l6_with_buffer(
+    pub fn evaluate_r7_with_buffer(
         &self,
         fd: i32,
         config: &Config,
@@ -337,12 +347,12 @@ impl ChaosEngine {
             config: &effective,
             now_ns: crate::monotonic_now_ns(),
         };
-        let stage_idx = Self::stage_index(LayerStage::L6);
-        if !self.l6.applies_to(&ctx) {
+        let stage_idx = Self::stage_index(LayerStage::R7);
+        if !self.r7.applies_to(&ctx) {
             self.metrics[stage_idx].record_skipped();
             return (LayerDecision::Continue, None);
         }
-        let (decision, maybe_buffer) = self.l6.process_with_buffer(&ctx, buffer);
+        let (decision, maybe_buffer) = self.r7.process_with_buffer(&ctx, buffer);
         self.metrics[stage_idx].record_decision(&decision);
         if !matches!(decision, LayerDecision::Continue) {
             record_fault_observability_decision(&decision);
@@ -351,12 +361,12 @@ impl ChaosEngine {
     }
 
     pub fn record_stream_bytes(&self, fd: i32, bytes: u64) {
-        self.l4.record_stream_bytes(fd, bytes);
+        self.r5.record_stream_bytes(fd, bytes);
     }
 
     pub fn clear_fd_state(&self, fd: i32) {
-        self.l4.clear_fd_state(fd);
-        self.l5.clear_fd_state(fd);
+        self.r5.clear_fd_state(fd);
+        self.r1.clear_fd_state(fd);
     }
 }
 
@@ -371,7 +381,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn combines_l1_latency_and_l3_jitter_delay() {
+    fn combines_r2_latency_and_r4_jitter_delay() {
         let engine = ChaosEngine::new();
         let cfg = Config {
             latency_ns: 1_000,
@@ -421,18 +431,20 @@ mod tests {
     }
 
     #[test]
-    fn stage_order_is_strict_osi_l1_to_l7() {
+    fn stage_order_follows_runtime_r0_to_r8() {
         let engine = ChaosEngine::new();
         assert_eq!(
             engine.stage_order(),
             [
-                LayerStage::L1,
-                LayerStage::L2,
-                LayerStage::L3,
-                LayerStage::L4,
-                LayerStage::L5,
-                LayerStage::L6,
-                LayerStage::L7,
+                LayerStage::R0,
+                LayerStage::R1,
+                LayerStage::R2,
+                LayerStage::R3,
+                LayerStage::R4,
+                LayerStage::R5,
+                LayerStage::R6,
+                LayerStage::R7,
+                LayerStage::R8,
             ]
         );
     }
@@ -452,15 +464,16 @@ mod tests {
         ));
 
         let metrics = engine.metrics_snapshot();
-        assert!(metrics[0].1.skipped_count > 0);
-        assert!(metrics[1].1.skipped_count > 0);
+        assert!(metrics[0].1.continue_count > 0);
         assert!(metrics[2].1.skipped_count > 0);
         assert!(metrics[3].1.skipped_count > 0);
+        assert!(metrics[4].1.skipped_count > 0);
+        assert!(metrics[5].1.skipped_count > 0);
         assert!(metrics[6].1.continue_count > 0);
     }
 
     #[test]
-    fn stream_path_skips_l7_dns_layer() {
+    fn stream_path_skips_r6_resolver_stage() {
         let engine = ChaosEngine::new();
         engine.reset_metrics();
         let cfg = Config {

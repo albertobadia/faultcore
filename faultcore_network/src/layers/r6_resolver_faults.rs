@@ -3,12 +3,12 @@ use parking_lot::Mutex;
 use rand::{Rng, SeedableRng, random, rngs::StdRng};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-pub struct L7Resolver {
+pub struct R6ResolverFaults {
     seeded_rng: Option<Mutex<StdRng>>,
     policy_counter: AtomicU64,
 }
 
-impl L7Resolver {
+impl R6ResolverFaults {
     pub fn new() -> Self {
         let seeded_rng = std::env::var("FAULTCORE_SEED")
             .ok()
@@ -53,9 +53,9 @@ impl L7Resolver {
     }
 }
 
-impl Layer for L7Resolver {
+impl Layer for R6ResolverFaults {
     fn stage(&self) -> LayerStage {
-        LayerStage::L7
+        LayerStage::R6
     }
 
     fn applies_to(&self, ctx: &PacketContext<'_>) -> bool {
@@ -76,11 +76,11 @@ impl Layer for L7Resolver {
     }
 
     fn name(&self) -> &str {
-        "L7_Resolver"
+        "R6_ResolverFaults"
     }
 }
 
-impl Default for L7Resolver {
+impl Default for R6ResolverFaults {
     fn default() -> Self {
         Self::new()
     }

@@ -18,6 +18,10 @@ fn sleep_if_needed(ns: u64) {
     }
 }
 
+unsafe fn copy_bytes_from_ptr(ptr: *const u8, len: usize) -> Vec<u8> {
+    unsafe { std::slice::from_raw_parts(ptr, len).to_vec() }
+}
+
 #[derive(Clone)]
 pub struct PendingDatagram {
     pub data: Arc<[u8]>,
@@ -87,7 +91,7 @@ pub unsafe fn stage_reorder_send(
     if l == 0 || b.is_null() {
         return None;
     }
-    let data = unsafe { std::slice::from_raw_parts(b.cast::<u8>(), l).to_vec() };
+    let data = unsafe { copy_bytes_from_ptr(b.cast::<u8>(), l) };
     pending.push_back(PendingDatagram::new(data, flags, Vec::new(), 0));
     Some(l as ssize_t)
 }
@@ -106,9 +110,9 @@ pub unsafe fn stage_reorder_sendto(
     if l == 0 || b.is_null() {
         return None;
     }
-    let data = unsafe { std::slice::from_raw_parts(b.cast::<u8>(), l).to_vec() };
+    let data = unsafe { copy_bytes_from_ptr(b.cast::<u8>(), l) };
     let addr_bytes = if !addr.is_null() && addr_len > 0 {
-        unsafe { std::slice::from_raw_parts(addr.cast::<u8>(), addr_len as usize).to_vec() }
+        unsafe { copy_bytes_from_ptr(addr.cast::<u8>(), addr_len as usize) }
     } else {
         Vec::new()
     };
@@ -176,7 +180,7 @@ pub unsafe fn snapshot_recv_datagram(
     if recv_len <= 0 || b.is_null() {
         return None;
     }
-    let data = unsafe { std::slice::from_raw_parts(b.cast::<u8>(), recv_len as usize).to_vec() };
+    let data = unsafe { copy_bytes_from_ptr(b.cast::<u8>(), recv_len as usize) };
     Some(PendingDatagram::new(data, flags, Vec::new(), 0))
 }
 
@@ -193,13 +197,13 @@ pub unsafe fn snapshot_recvfrom_datagram(
     if recv_len <= 0 || b.is_null() {
         return None;
     }
-    let data = unsafe { std::slice::from_raw_parts(b.cast::<u8>(), recv_len as usize).to_vec() };
+    let data = unsafe { copy_bytes_from_ptr(b.cast::<u8>(), recv_len as usize) };
     let (addr_bytes, len_u32) = if !addr.is_null() && !addr_len.is_null() {
         let len = unsafe { *addr_len as usize };
         if len == 0 {
             (Vec::new(), 0)
         } else {
-            let bytes = unsafe { std::slice::from_raw_parts(addr.cast::<u8>(), len).to_vec() };
+            let bytes = unsafe { copy_bytes_from_ptr(addr.cast::<u8>(), len) };
             (bytes, len as u32)
         }
     } else {

@@ -6,24 +6,21 @@ from faultcore import rate, timeout
 
 
 def start_echo_client(host: str, port: int, message: str) -> str:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(5)
-    try:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(5)
         sock.connect((host, port))
         sock.sendall(message.encode())
         response = sock.recv(1024)
         return response.decode().strip()
-    finally:
-        sock.close()
 
 
 @rate("5mbps")
-def rate_limited_echo(host: str, port: int, message: str):
+def rate_limited_echo(host: str, port: int, message: str) -> str:
     return start_echo_client(host, port, message)
 
 
 @timeout(connect="200ms")
-def slow_echo(host: str, port: int, message: str):
+def slow_echo(host: str, port: int, message: str) -> str:
     return start_echo_client(host, port, message)
 
 

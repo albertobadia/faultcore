@@ -104,22 +104,21 @@ def _extract_scenario_metrics_path(command: list[str], env: dict[str, str]) -> P
     return None
 
 
-def _coerce_int(value: Any, default: int = 0) -> int:
+def _coerce_numeric(value: Any, convert: Callable[[Any], int | float], default: int | float) -> int | float:
     if isinstance(value, bool):
         return default
     try:
-        return int(float(value))
+        return convert(value)
     except (TypeError, ValueError):
         return default
+
+
+def _coerce_int(value: Any, default: int = 0) -> int:
+    return int(_coerce_numeric(value, lambda raw: int(float(raw)), default))
 
 
 def _coerce_float(value: Any, default: float = 0.0) -> float:
-    if isinstance(value, bool):
-        return default
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
+    return float(_coerce_numeric(value, float, default))
 
 
 _SCENARIO_METRICS = (

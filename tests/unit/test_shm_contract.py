@@ -24,11 +24,11 @@ _CONFIG_FORMAT = (
 )
 
 
-def test_faultcore_config_binary_layout_is_stable():
+def test_faultcore_config_binary_layout_is_stable() -> None:
     assert CONFIG_SIZE == 880
 
 
-def test_faultcore_config_offsets_are_stable():
+def test_faultcore_config_offsets_are_stable() -> None:
     blob = bytearray(CONFIG_SIZE)
 
     struct.pack_into("<I", blob, 0, 0xFACC0DE)

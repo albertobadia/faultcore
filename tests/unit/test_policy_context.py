@@ -8,7 +8,7 @@ from faultcore.decorator import clear_policies, get_thread_policy, list_policies
 
 
 @pytest.fixture(autouse=True)
-def _cleanup_policies_and_context():
+def _cleanup_policies_and_context() -> None:
     clear_policies()
     faultcore.set_thread_policy(None)
     yield
@@ -16,24 +16,24 @@ def _cleanup_policies_and_context():
     faultcore.set_thread_policy(None)
 
 
-def test_get_thread_policy_exported_from_main_module():
+def test_get_thread_policy_exported_from_main_module() -> None:
     assert hasattr(faultcore, "get_thread_policy"), "get_thread_policy not exported from faultcore module"
     assert callable(faultcore.get_thread_policy), "faultcore.get_thread_policy is not callable"
 
 
-def test_set_thread_policy_exported_from_main_module():
+def test_set_thread_policy_exported_from_main_module() -> None:
     assert hasattr(faultcore, "set_thread_policy"), "set_thread_policy not exported from faultcore module"
     assert callable(faultcore.set_thread_policy), "faultcore.set_thread_policy is not callable"
 
 
-def test_policy_context_sets_and_restores_thread_policy():
+def test_policy_context_sets_and_restores_thread_policy() -> None:
     faultcore.set_thread_policy("outer")
     with faultcore.policy_context("inner"):
         assert get_thread_policy() == "inner"
     assert get_thread_policy() == "outer"
 
 
-def test_policy_context_can_create_temporary_policy_from_kwargs():
+def test_policy_context_can_create_temporary_policy_from_kwargs() -> None:
     before = set(list_policies())
     with faultcore.policy_context(latency="20ms"):
         active = get_thread_policy()
@@ -44,12 +44,12 @@ def test_policy_context_can_create_temporary_policy_from_kwargs():
     assert before == after
 
 
-def test_policy_context_rejects_name_and_kwargs_together():
+def test_policy_context_rejects_name_and_kwargs_together() -> None:
     with pytest.raises(ValueError, match="either policy_name or policy kwargs"):
         faultcore.policy_context("slow_link", latency="20ms")
 
 
-def test_temporary_policy_context_applies_with_fault_auto():
+def test_temporary_policy_context_applies_with_fault_auto() -> None:
     mock_shm = MagicMock()
     mock_shm.write_latency = MagicMock()
     mock_shm.clear = MagicMock()
@@ -60,7 +60,7 @@ def test_temporary_policy_context_applies_with_fault_auto():
     ):
 
         @faultcore.fault()
-        def op():
+        def op() -> str:
             return "ok"
 
         with faultcore.policy_context(latency="25ms"):
@@ -70,10 +70,10 @@ def test_temporary_policy_context_applies_with_fault_auto():
     mock_shm.clear.assert_called_once_with(5154)
 
 
-def test_policy_context_cleans_up_temp_policy_when_set_thread_policy_raises():
+def test_policy_context_cleans_up_temp_policy_when_set_thread_policy_raises() -> None:
     call_count = [0]
 
-    def mock_set_thread_policy(policy_name):
+    def mock_set_thread_policy(policy_name: str | None) -> None:
         call_count[0] += 1
         if call_count[0] == 1:
             raise RuntimeError("Simulated failure in set_thread_policy")
@@ -92,7 +92,7 @@ def test_policy_context_cleans_up_temp_policy_when_set_thread_policy_raises():
         assert not temp_policy_leaked, f"Temporary policy was leaked: {leaked_policies}"
 
 
-def test_policy_context_restores_previous_on_exception_in_body():
+def test_policy_context_restores_previous_on_exception_in_body() -> None:
     faultcore.set_thread_policy("initial")
 
     with pytest.raises(ValueError, match="Simulated error in context body"), faultcore.policy_context("new_policy"):
@@ -101,7 +101,7 @@ def test_policy_context_restores_previous_on_exception_in_body():
     assert get_thread_policy() == "initial", "Previous policy should be restored after exception"
 
 
-def test_policy_context_can_be_nested():
+def test_policy_context_can_be_nested() -> None:
     faultcore.set_thread_policy("outer")
 
     with faultcore.policy_context("middle"):

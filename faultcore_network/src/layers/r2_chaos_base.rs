@@ -7,14 +7,14 @@ use rand::{Rng, SeedableRng, random, rngs::StdRng};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-pub struct L1Chaos {
+pub struct R2ChaosBase {
     seeded_rng: Option<Mutex<StdRng>>,
     policy_counter: AtomicU64,
     burst_remaining_by_fd: Mutex<HashMap<i32, u64>>,
     ge_state_by_fd: Mutex<HashMap<i32, u8>>,
 }
 
-impl L1Chaos {
+impl R2ChaosBase {
     pub fn new() -> Self {
         let seeded_rng = std::env::var("FAULTCORE_SEED")
             .ok()
@@ -138,15 +138,15 @@ impl L1Chaos {
     }
 }
 
-impl Default for L1Chaos {
+impl Default for R2ChaosBase {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Layer for L1Chaos {
+impl Layer for R2ChaosBase {
     fn stage(&self) -> LayerStage {
-        LayerStage::L1
+        LayerStage::R2
     }
 
     fn applies_to(&self, ctx: &PacketContext<'_>) -> bool {
@@ -188,7 +188,7 @@ impl Layer for L1Chaos {
     }
 
     fn name(&self) -> &str {
-        "L1_Chaos"
+        "R2_ChaosBase"
     }
 }
 
@@ -198,7 +198,7 @@ mod tests {
     use crate::layers::Operation;
 
     fn drop_sequence(seed: u64, packet_loss_ppm: u64, n: usize) -> Vec<bool> {
-        let layer = L1Chaos::with_seed(seed);
+        let layer = R2ChaosBase::with_seed(seed);
         let cfg = Config {
             packet_loss_ppm,
             ..Default::default()
@@ -240,8 +240,8 @@ mod tests {
             packet_loss_ppm: 250_000,
             ..Default::default()
         };
-        let first = L1Chaos::new();
-        let second = L1Chaos::new();
+        let first = R2ChaosBase::new();
+        let second = R2ChaosBase::new();
         let ctx = PacketContext {
             fd: 1,
             bytes: 1,
@@ -272,8 +272,8 @@ mod tests {
             policy_seed: 1337,
             ..Default::default()
         };
-        let first = L1Chaos::new();
-        let second = L1Chaos::new();
+        let first = R2ChaosBase::new();
+        let second = R2ChaosBase::new();
         let ctx = PacketContext {
             fd: 1,
             bytes: 1,
@@ -295,7 +295,7 @@ mod tests {
 
     #[test]
     fn burst_loss_drops_remaining_packets() {
-        let layer = L1Chaos::with_seed(1);
+        let layer = R2ChaosBase::with_seed(1);
         layer.burst_remaining_by_fd.lock().insert(1, 2);
         let cfg = Config::default();
         let ctx = PacketContext {
@@ -314,7 +314,7 @@ mod tests {
 
     #[test]
     fn packet_loss_starts_burst_sequence() {
-        let layer = L1Chaos::with_seed(1);
+        let layer = R2ChaosBase::with_seed(1);
         let cfg = Config {
             packet_loss_ppm: 1_000_000,
             burst_loss_len: 4,
@@ -341,7 +341,7 @@ mod tests {
 
     #[test]
     fn correlated_loss_can_force_bad_state_and_drop() {
-        let layer = L1Chaos::with_seed(5);
+        let layer = R2ChaosBase::with_seed(5);
         let cfg = Config {
             ge_enabled: 1,
             ge_p_good_to_bad_ppm: 1_000_000,
@@ -364,7 +364,7 @@ mod tests {
 
     #[test]
     fn correlated_loss_in_good_state_can_avoid_drop() {
-        let layer = L1Chaos::with_seed(5);
+        let layer = R2ChaosBase::with_seed(5);
         let cfg = Config {
             ge_enabled: 1,
             ge_p_good_to_bad_ppm: 0,
@@ -387,7 +387,7 @@ mod tests {
 
     #[test]
     fn burst_state_must_not_leak_between_fds() {
-        let layer = L1Chaos::with_seed(1);
+        let layer = R2ChaosBase::with_seed(1);
         let cfg_trigger = Config {
             packet_loss_ppm: 1_000_000,
             burst_loss_len: 2,
@@ -418,7 +418,7 @@ mod tests {
 
     #[test]
     fn correlated_loss_state_must_not_leak_between_fds() {
-        let layer = L1Chaos::with_seed(1);
+        let layer = R2ChaosBase::with_seed(1);
         let cfg_fd1 = Config {
             ge_enabled: 1,
             ge_p_good_to_bad_ppm: 1_000_000,

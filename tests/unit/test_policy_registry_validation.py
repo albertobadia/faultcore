@@ -5,13 +5,13 @@ from faultcore.decorator import clear_policies
 
 
 @pytest.fixture(autouse=True)
-def clear_policy_registry():
+def clear_policy_registry() -> None:
     clear_policies()
     yield
     clear_policies()
 
 
-def test_register_policy_accepts_hostname_target_for_transport_effects():
+def test_register_policy_accepts_hostname_target_for_transport_effects() -> None:
     faultcore.register_policy(
         "hostname_transport_match",
         latency="50ms",
@@ -46,7 +46,9 @@ def test_register_policy_accepts_hostname_target_for_transport_effects():
         ),
     ],
 )
-def test_register_policy_rejects_non_dns_observable_target_rules(policy_name, dns_profile, targets, error_match):
+def test_register_policy_rejects_non_dns_observable_target_rules(
+    policy_name, dns_profile, targets, error_match
+) -> None:
     with pytest.raises(ValueError, match=error_match):
         faultcore.register_policy(
             policy_name,
@@ -55,7 +57,7 @@ def test_register_policy_rejects_non_dns_observable_target_rules(policy_name, dn
         )
 
 
-def test_register_policy_accepts_mixed_rules_covering_dns_and_transport():
+def test_register_policy_accepts_mixed_rules_covering_dns_and_transport() -> None:
     faultcore.register_policy(
         "mixed_dns_transport",
         dns={"timeout": "300ms"},
@@ -73,7 +75,7 @@ def test_register_policy_accepts_mixed_rules_covering_dns_and_transport():
     assert len(policy["target_profiles"]) == 2
 
 
-def test_register_policy_rejects_dns_non_mapping():
+def test_register_policy_rejects_dns_non_mapping() -> None:
     with pytest.raises(ValueError, match=r"dns must be a mapping"):
         faultcore.register_policy(
             "dns_invalid_type",

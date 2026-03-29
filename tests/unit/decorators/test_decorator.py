@@ -7,7 +7,7 @@ import faultcore
 
 
 @pytest.fixture
-def mock_shm():
+def mock_shm() -> None:
     tid = 12345
     with (
         patch("faultcore.decorator.get_shm_writer") as mock_get_shm,

@@ -3,18 +3,20 @@ import argparse
 import socket
 import threading
 import time
+from collections.abc import Sequence
 from datetime import datetime
+from typing import Any
 
 
 class EchoServer:
     def __init__(self, host: str = "0.0.0.0", port: int = 9000):
         self.host = host
         self.port = port
-        self.server_socket = None
+        self.server_socket: socket.socket | None = None
         self.running = False
         self.client_count = 0
 
-    def start(self):
+    def start(self) -> None:
         family = socket.AF_INET6 if ":" in self.host else socket.AF_INET
         self.server_socket = socket.socket(family, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -38,14 +40,17 @@ class EchoServer:
                 client_id = self.client_count
                 print(f"[{datetime.now().isoformat()}] Client {client_id} connected from {address}")
 
-                thread = threading.Thread(target=self.handle_client, args=(client_socket, address, client_id))
-                thread.daemon = True
+                thread = threading.Thread(
+                    target=self.handle_client,
+                    args=(client_socket, address, client_id),
+                    daemon=True,
+                )
                 thread.start()
             except Exception as exc:
                 if self.running:
                     print(f"Error accepting connection: {exc}")
 
-    def handle_client(self, client_socket, address, client_id):
+    def handle_client(self, client_socket: socket.socket, address: Sequence[Any], client_id: int) -> None:
         try:
             while True:
                 data = client_socket.recv(4096)
@@ -68,7 +73,7 @@ class EchoServer:
             client_socket.close()
             print(f"[{datetime.now().isoformat()}] Client {client_id} disconnected")
 
-    def stream_to_client(self, client_socket, client_id):
+    def stream_to_client(self, client_socket: socket.socket, client_id: int) -> None:
         chunk = b"x" * 8192
         started = time.perf_counter()
         try:
@@ -78,7 +83,7 @@ class EchoServer:
             elapsed = time.perf_counter() - started
             print(f"[{datetime.now().isoformat()}] Client {client_id} stream ended after {elapsed:.2f}s: {exc}")
 
-    def stop(self):
+    def stop(self) -> None:
         self.running = False
         if self.server_socket:
             self.server_socket.close()

@@ -7,7 +7,6 @@ import socket
 import subprocess
 import sys
 import tempfile
-from contextlib import suppress
 from datetime import datetime
 
 import faultcore
@@ -32,20 +31,17 @@ def ensure_shm_ready() -> str:
 
 
 def try_roundtrip(host: str, port: int, idx: int) -> str:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(SOCKET_TIMEOUT_SEC)
     try:
-        sock.connect((host, port))
-        sock.sendall(PAYLOAD + str(idx).encode("ascii"))
-        data = sock.recv(64)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(SOCKET_TIMEOUT_SEC)
+            sock.connect((host, port))
+            sock.sendall(PAYLOAD + str(idx).encode("ascii"))
+            data = sock.recv(64)
         if not data:
             return "empty"
         return "ok"
     except Exception as exc:  # noqa: BLE001
         return type(exc).__name__
-    finally:
-        with suppress(Exception):
-            sock.close()
 
 
 def run_probe(host: str, port: int, with_policy: bool) -> list[str]:
@@ -111,8 +107,8 @@ def run_phase(
     return payload["outcomes"]
 
 
-def load_recorded_events(path: str) -> list[dict]:
-    events: list[dict] = []
+def load_recorded_events(path: str) -> list[dict[str, object]]:
+    events: list[dict[str, object]] = []
     with gzip.open(path, "rt", encoding="utf-8") as stream:
         for line in stream:
             line = line.strip()

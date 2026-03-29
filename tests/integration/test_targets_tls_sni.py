@@ -8,6 +8,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from contextlib import suppress
 from datetime import datetime
 
@@ -198,8 +199,8 @@ def tls_echo(host: str, port: int, message: str, server_hostname: str) -> str:
         return data.decode("utf-8").strip()
 
 
-def measure_ms(callable_fn, count: int = MEASURE_COUNT) -> float:
-    samples = []
+def measure_ms(callable_fn: Callable[[str], str], count: int = MEASURE_COUNT) -> float:
+    samples: list[float] = []
     for idx in range(count):
         started = time.perf_counter()
         response = callable_fn(f"target-tls-sni-{idx}")

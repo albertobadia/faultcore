@@ -11,24 +11,24 @@ from faultcore import rate, timeout
 
 
 @rate("10mbps")
-def fetch_github_api():
+def fetch_github_api() -> dict[str, object]:
     response = requests.get("https://api.github.com/repos/python/cpython", timeout=10)
     return response.json()
 
 
 @rate("5mbps")
-def fetch_health():
+def fetch_health() -> int:
     response = requests.get("https://httpbin.org/get", timeout=10)
     return response.status_code
 
 
 @timeout(connect="500ms")
-def fetch_with_latency():
+def fetch_with_latency() -> int:
     response = requests.get("https://httpbin.org/delay/1", timeout=10)
     return response.status_code
 
 
-def fetch_plain():
+def fetch_plain() -> int:
     response = requests.get("https://httpbin.org/get", timeout=10)
     return response.status_code
 

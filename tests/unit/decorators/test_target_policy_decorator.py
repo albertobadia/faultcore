@@ -14,7 +14,7 @@ from faultcore.decorator import (
 
 
 @pytest.fixture(autouse=True)
-def cleanup():
+def cleanup() -> None:
     clear_policies()
     set_thread_policy(None)
     yield

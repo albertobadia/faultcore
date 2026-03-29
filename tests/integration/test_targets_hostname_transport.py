@@ -4,6 +4,7 @@ import os
 import socket
 import sys
 import time
+from collections.abc import Callable
 from datetime import datetime
 
 import faultcore
@@ -31,7 +32,7 @@ def tcp_echo(hostname: str, port: int, message: str) -> str:
         return data.decode("utf-8").strip()
 
 
-def measure_ms(callable_fn, count: int = 4) -> float:
+def measure_ms(callable_fn: Callable[[str], str], count: int = 4) -> float:
     samples: list[float] = []
     for idx in range(count):
         started = time.perf_counter()

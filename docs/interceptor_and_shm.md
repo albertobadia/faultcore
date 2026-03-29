@@ -6,7 +6,7 @@ This document explains how `faultcore` interacts with the Linux network intercep
 
 1. Python decorators write policy fields into SHM keyed by native thread id.
 2. Interceptor (`libfaultcore_interceptor.so`) intercepts socket syscalls.
-3. Interceptor reads SHM config and delegates network effects to `faultcore_network` (FaultOSI pipeline).
+3. Interceptor reads SHM config and delegates network effects to `faultcore_network` (runtime-stage engine).
 4. Wrapped call clears SHM fields in `finally` paths.
 
 ### Runtime Sequence Diagram
@@ -23,7 +23,7 @@ sequenceDiagram
     App->>Decorator: call wrapped function
     Decorator->>SHM: write policy fields (tid slot)
     App->>Hook: socket syscall
-    Hook->>Net: read config + evaluate FaultOSI
+    Hook->>Net: read config + evaluate runtime stages
     Net-->>Hook: syscall directive
     alt continue
         Hook->>Libc: call original symbol
@@ -158,5 +158,5 @@ Any SHM layout change must update:
 
 - Python writer: `src/faultcore/shm_writer.py`
 - Interceptor: `faultcore_interceptor/`
-- Network engine (FaultOSI): `faultcore_network/`
+- Network engine (runtime stages): `faultcore_network/`
 - Architecture reference: `docs/architecture.md`

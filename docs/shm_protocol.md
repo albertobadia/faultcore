@@ -220,7 +220,7 @@ Diagram focus: mandatory synchronization path for SHM schema changes.
 The SHM layout is stable, and runtime consumption is consolidated:
 
 - The engine builds `PacketContext` by operation (`Connect`, `Send`, `Recv`, `DnsLookup`).
-- The FaultOSI pipeline applies layers in fixed OSI order `L1..L7`.
+- The runtime-stage engine applies operation-aware stages in canonical order `R0..R8` with applicability-based skips.
 - All fault decisions flow through a single `LayerDecision` enum.
 - The interceptor only maps `LayerDecision` to return values/errno (`syscalls` and `getaddrinfo`).
 
