@@ -118,6 +118,24 @@ uv run sphinx-build -M html docs docs/_build
 Open generated site entrypoint:
 - `docs/_build/html/index.html`
 
+## Publish to PyPI
+
+The project includes a release workflow at `.github/workflows/publish-pypi.yml` that builds:
+- Linux `x86_64` wheels
+- Linux `i686` wheels
+- Linux `aarch64` wheels
+- one source distribution (`sdist`)
+
+Release options:
+
+1. Push a tag like `v2026.3.8` to publish directly to PyPI.
+2. Run the workflow manually (`workflow_dispatch`) and choose:
+   - `pypi` for production publish
+   - `testpypi` for dry-run validation
+
+The wheel build uses `cibuildwheel` and stages architecture-specific native artifacts with
+`scripts/build_native_artifacts.sh` before each wheel build.
+
 ## Project Status
 
 - Python package metadata: `pyproject.toml`

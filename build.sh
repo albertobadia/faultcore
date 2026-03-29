@@ -37,6 +37,9 @@ platform_tag() {
     Linux:x86_64 | Linux:amd64)
         echo "linux-x86_64"
         ;;
+    Linux:i686 | Linux:x86)
+        echo "linux-i686"
+        ;;
     Linux:aarch64 | Linux:arm64)
         echo "linux-aarch64"
         ;;

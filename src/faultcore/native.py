@@ -5,6 +5,8 @@ from pathlib import Path
 _LINUX_ARCH_ALIASES = {
     "x86_64": "x86_64",
     "amd64": "x86_64",
+    "i686": "i686",
+    "x86": "i686",
     "aarch64": "aarch64",
     "arm64": "aarch64",
 }

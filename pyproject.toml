@@ -1,6 +1,6 @@
 [project]
 name = "faultcore"
-version = "2026.3.8"
+version = "2026.3.28"
 description = "Fault injection and testing core"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -33,10 +33,12 @@ faultcore = [
 [dependency-groups]
 dev = [
     "build>=1.0.0",
+    "cibuildwheel>=2.23.3",
     "pytest>=9.0.2",
     "pytest-asyncio>=0.23.5",
     "pytest-cov>=7.0.0",
     "ruff>=0.14.13",
+    "twine>=6.2.0",
     "aiohttp>=3.13.3",
     "fastapi>=0.109.0",
     "uvicorn>=0.27.0",
@@ -44,6 +46,21 @@ dev = [
     "myst-parser>=4.0.1",
     "sphinxcontrib-mermaid>=2.0.1",
 ]
+
+[tool.cibuildwheel]
+build = "cp310-* cp311-* cp312-* cp313-*"
+skip = "*-musllinux_*"
+test-skip = "*"
+before-all = [
+    "curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal",
+]
+before-build = [
+    "bash ./scripts/build_native_artifacts.sh",
+]
+
+[tool.cibuildwheel.linux]
+archs = ["x86_64", "i686", "aarch64"]
+environment = { PATH = "$HOME/.cargo/bin:$PATH" }
 
 [tool.ruff]
 line-length = 120

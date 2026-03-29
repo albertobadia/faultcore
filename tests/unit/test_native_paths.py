@@ -8,6 +8,8 @@ from faultcore import native
     [
         ("x86_64", "linux-x86_64"),
         ("amd64", "linux-x86_64"),
+        ("i686", "linux-i686"),
+        ("x86", "linux-i686"),
         ("aarch64", "linux-aarch64"),
         ("arm64", "linux-aarch64"),
     ],
