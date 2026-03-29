@@ -173,11 +173,14 @@ def _build_target_profiles(targets: list[str | dict[str, Any]]) -> list[dict[str
     if not targets:
         raise ValueError("targets must be a non-empty list when provided")
 
-    if not all(isinstance(entry, (str, dict)) for entry in targets):
-        raise ValueError("each targets entry must be a string or mapping")
+    rules: list[dict[str, Any]] = []
+    for entry in targets:
+        if not isinstance(entry, (str, dict)):
+            raise ValueError("each targets entry must be a string or mapping")
+        rules.append(_build_target_rule(entry))
 
     return sorted(
-        (_build_target_rule(entry) for entry in targets),
+        rules,
         key=lambda profile: profile.get("priority", 100),
         reverse=True,
     )
@@ -251,8 +254,7 @@ def _set_direction_profile(
     field_name: str,
     policy_key: str,
 ) -> None:
-    direction_config = _as_mapping(raw_value, field_name)
-    if direction_config is not None:
+    if (direction_config := _as_mapping(raw_value, field_name)) is not None:
         policy[policy_key] = _build_direction_policy(direction_config)
 
 

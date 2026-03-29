@@ -690,37 +690,39 @@ class SHMWriter:
             if error_kind is not None
             else 0
         )
-        normalized_max_bytes_tx = _require_optional_positive(
-            max_bytes_tx,
-            "session_budget max_bytes_tx must be > 0",
-        )
-        normalized_max_bytes_rx = _require_optional_positive(
-            max_bytes_rx,
-            "session_budget max_bytes_rx must be > 0",
-        )
-        normalized_max_ops = _require_optional_positive(
-            max_ops,
-            "session_budget max_ops must be > 0",
-        )
-        normalized_max_duration_ms = _require_optional_positive(
-            max_duration_ms,
-            "session_budget max_duration_ms must be > 0",
-        )
-        normalized_budget_timeout_ms = _require_optional_positive(
-            budget_timeout_ms,
-            "session_budget budget_timeout_ms must be > 0",
-        )
+        normalized_limits = {
+            "max_bytes_tx": _require_optional_positive(
+                max_bytes_tx,
+                "session_budget max_bytes_tx must be > 0",
+            ),
+            "max_bytes_rx": _require_optional_positive(
+                max_bytes_rx,
+                "session_budget max_bytes_rx must be > 0",
+            ),
+            "max_ops": _require_optional_positive(
+                max_ops,
+                "session_budget max_ops must be > 0",
+            ),
+            "max_duration_ms": _require_optional_positive(
+                max_duration_ms,
+                "session_budget max_duration_ms must be > 0",
+            ),
+            "budget_timeout_ms": _require_optional_positive(
+                budget_timeout_ms,
+                "session_budget budget_timeout_ms must be > 0",
+            ),
+        }
 
         self._write_fields(
             tid,
             (
                 (_OFFSET_SESSION_BUDGET_ENABLED, 1),
-                (_OFFSET_SESSION_MAX_BYTES_TX, normalized_max_bytes_tx),
-                (_OFFSET_SESSION_MAX_BYTES_RX, normalized_max_bytes_rx),
-                (_OFFSET_SESSION_MAX_OPS, normalized_max_ops),
-                (_OFFSET_SESSION_MAX_DURATION_MS, normalized_max_duration_ms),
+                (_OFFSET_SESSION_MAX_BYTES_TX, normalized_limits["max_bytes_tx"]),
+                (_OFFSET_SESSION_MAX_BYTES_RX, normalized_limits["max_bytes_rx"]),
+                (_OFFSET_SESSION_MAX_OPS, normalized_limits["max_ops"]),
+                (_OFFSET_SESSION_MAX_DURATION_MS, normalized_limits["max_duration_ms"]),
                 (_OFFSET_SESSION_ACTION, normalized_action),
-                (_OFFSET_SESSION_BUDGET_TIMEOUT_MS, normalized_budget_timeout_ms),
+                (_OFFSET_SESSION_BUDGET_TIMEOUT_MS, normalized_limits["budget_timeout_ms"]),
                 (_OFFSET_SESSION_ERROR_KIND, normalized_error_kind),
             ),
         )

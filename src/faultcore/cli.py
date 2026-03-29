@@ -94,12 +94,15 @@ def _extract_scenario_metrics_path(command: list[str], env: dict[str, str]) -> P
         return Path(explicit)
 
     for idx, token in enumerate(command):
-        if token == "--metrics-out" and idx + 1 < len(command):
-            return Path(command[idx + 1])
-        if token.startswith("--metrics-out="):
-            value = token[len("--metrics-out=") :]
-            if value:
-                return Path(value)
+        if token == "--metrics-out":
+            if idx + 1 < len(command):
+                return Path(command[idx + 1])
+            continue
+        if not token.startswith("--metrics-out="):
+            continue
+        value = token[len("--metrics-out=") :]
+        if value:
+            return Path(value)
 
     return None
 
@@ -220,7 +223,13 @@ def _configure_record_replay(env: dict[str, str], run_json: Path | None) -> str:
 def _run_subprocess(command: list[str], env: dict[str, str]) -> tuple[subprocess.CompletedProcess[str], str, str, str]:
     resolved_command = _resolve_command_for_subprocess(command)
     capture_output = is_pytest_command(command)
-    result = subprocess.run(resolved_command, env=env, check=False, capture_output=capture_output, text=capture_output)
+    result = subprocess.run(
+        resolved_command,
+        env=env,
+        check=False,
+        capture_output=capture_output,
+        text=capture_output,
+    )
     if not capture_output:
         return result, "", "", ""
 

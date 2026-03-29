@@ -165,13 +165,14 @@ where
         return;
     }
     let count = duplicate_count_from_decision(record_replay_evaluate_or_replay(site, || {
-        let count = count_lookup();
-        if count > 0 {
-            LayerDecision::Duplicate(count)
-        } else {
-            LayerDecision::Continue
+        match count_lookup() {
+            0 => LayerDecision::Continue,
+            count => LayerDecision::Duplicate(count),
         }
     }));
+    if count == 0 {
+        return;
+    }
     for _ in 0..count {
         send_fn();
     }

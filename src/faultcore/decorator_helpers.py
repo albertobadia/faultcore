@@ -63,6 +63,22 @@ _SCALAR_WRITERS = {
 _DIRECTIONAL_FIELDS = ("latency", "jitter", "packet_loss_ppm", "burst_loss", "rate")
 
 
+def _write_directional_profile(shm: Any, tid: int, writer: str, profile: dict[str, Any]) -> None:
+    values = {name: profile.get(name) for name in _DIRECTIONAL_FIELDS}
+    getattr(shm, writer)(tid, **values)
+
+
+def _write_profile_with_defaults(
+    shm: Any,
+    tid: int,
+    writer: str,
+    profile: dict[str, Any],
+    defaults: dict[str, Any],
+) -> None:
+    values = {name: profile.get(name, default) for name, default in defaults.items()}
+    getattr(shm, writer)(tid, **values)
+
+
 def apply_fault_profiles(shm: Any, tid: int, profiles: dict[str, Any], *, started_monotonic_ns: int) -> None:
     seed = profiles.get("seed")
     if seed is not None:
@@ -79,15 +95,13 @@ def apply_fault_profiles(shm: Any, tid: int, profiles: dict[str, Any], *, starte
         profile = profiles.get(field)
         if not profile:
             continue
-        values = {name: profile.get(name) for name in _DIRECTIONAL_FIELDS}
-        getattr(shm, writer)(tid, **values)
+        _write_directional_profile(shm, tid, writer, profile)
 
     for field, (writer, defaults) in _PROFILE_WRITERS.items():
         profile = profiles.get(field)
         if not profile:
             continue
-        values = {name: profile.get(name, default) for name, default in defaults.items()}
-        getattr(shm, writer)(tid, **values)
+        _write_profile_with_defaults(shm, tid, writer, profile, defaults)
 
     if target_profiles := profiles.get("target_profiles"):
         shm.write_targets(tid, target_profiles)
