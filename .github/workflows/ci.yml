@@ -50,4 +50,73 @@ jobs:
         run: bash build.sh
 
       - name: Tests
+        env:
+          SKIP_INTEGRATION_SCRIPTS: "1"
         run: bash tests.sh
+
+  integration_network_smoke:
+    name: Integration Network Smoke
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install dependencies
+        run: uv sync --locked --all-extras --dev
+
+      - name: Run integration network smoke
+        env:
+          FAULTCORE_IT_HOST: ${{ vars.FAULTCORE_IT_HOST || '127.0.0.1' }}
+          FAULTCORE_IT_PORT: ${{ vars.FAULTCORE_IT_PORT || '9000' }}
+        run: |
+          set -euo pipefail
+          .venv/bin/python tests/integration/servers/tcp_echo_server.py --host "$FAULTCORE_IT_HOST" --port "$FAULTCORE_IT_PORT" > /tmp/echo_server.log 2>&1 &
+          ECHO_PID=$!
+          trap 'kill "$ECHO_PID" 2>/dev/null || true' EXIT
+          sleep 1
+          .venv/bin/pytest tests/integration -m integration_network --it-profile smoke -q
+
+  integration_network_full:
+    name: Integration Network Full
+    runs-on: ubuntu-latest
+    needs: integration_network_smoke
+    if: github.event_name == 'workflow_dispatch' || github.ref_name == 'main' || github.ref_name == 'master'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install dependencies
+        run: uv sync --locked --all-extras --dev
+
+      - name: Run integration network full
+        env:
+          FAULTCORE_IT_HOST: ${{ vars.FAULTCORE_IT_HOST || '127.0.0.1' }}
+          FAULTCORE_IT_PORT: ${{ vars.FAULTCORE_IT_PORT || '9000' }}
+        run: |
+          set -euo pipefail
+          .venv/bin/python tests/integration/servers/tcp_echo_server.py --host "$FAULTCORE_IT_HOST" --port "$FAULTCORE_IT_PORT" > /tmp/echo_server.log 2>&1 &
+          ECHO_PID=$!
+          trap 'kill "$ECHO_PID" 2>/dev/null || true' EXIT
+          sleep 1
+          .venv/bin/pytest tests/integration -m integration_network --it-profile full -q

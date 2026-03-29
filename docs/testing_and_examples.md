@@ -96,6 +96,30 @@ uv run python tests/integration/test_timeout.py --host 127.0.0.1 --port 9000 --m
 uv run python tests/integration/test_bandwidth.py --host 127.0.0.1 --port 9000 --mode throughput --messages 20
 ```
 
+## Integration Pytest Profiles
+
+Network integration tests support shared pytest profiles via `tests/conftest.py`:
+- `smoke` (default): fast checks
+- `full`: wider scenario matrix
+
+Run only network integration tests:
+
+```bash
+uv run pytest tests/integration -m integration_network --it-profile smoke
+uv run pytest tests/integration -m integration_network --it-profile full
+```
+
+Target endpoint can be customized:
+
+```bash
+uv run pytest tests/integration -m integration_network --it-profile smoke --it-host 127.0.0.1 --it-port 9000
+```
+
+Equivalent env vars:
+- `FAULTCORE_IT_PROFILE`
+- `FAULTCORE_IT_HOST`
+- `FAULTCORE_IT_PORT`
+
 ## Running Examples
 
 CLI-first:

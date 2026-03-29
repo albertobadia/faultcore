@@ -1,7 +1,27 @@
 import os
+import socket
 from unittest.mock import MagicMock
 
 import pytest
+
+_IT_PROFILE_CASES: dict[str, dict[str, list[int | float]]] = {
+    "smoke": {
+        "probe_timeout_ms": [500],
+        "probe_timeout_sec": [1.0],
+        "probe_count": [3],
+        "probe_data_size": [512],
+        "probe_duration_sec": [1.0],
+        "probe_num_messages": [10],
+    },
+    "full": {
+        "probe_timeout_ms": [250, 1000],
+        "probe_timeout_sec": [1.0, 2.0],
+        "probe_count": [3, 5],
+        "probe_data_size": [512, 1024],
+        "probe_duration_sec": [1.0, 2.0],
+        "probe_num_messages": [10, 20],
+    },
+}
 
 
 @pytest.fixture
@@ -45,3 +65,75 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "slow: marks tests as slow")
     config.addinivalue_line("markers", "integration: marks tests as integration tests")
     config.addinivalue_line("markers", "unit: marks tests as unit tests")
+    config.addinivalue_line("markers", "integration_network: marks network integration tests")
+
+
+def pytest_addoption(parser):
+    group = parser.getgroup("faultcore-integration")
+    group.addoption(
+        "--it-host",
+        action="store",
+        default=os.getenv("FAULTCORE_IT_HOST", "127.0.0.1"),
+        help="Host for network integration probes",
+    )
+    group.addoption(
+        "--it-port",
+        action="store",
+        type=int,
+        default=int(os.getenv("FAULTCORE_IT_PORT", "9000")),
+        help="Port for network integration probes",
+    )
+    group.addoption(
+        "--it-connect-timeout",
+        action="store",
+        type=float,
+        default=float(os.getenv("FAULTCORE_IT_CONNECT_TIMEOUT", "0.35")),
+        help="Timeout (seconds) for test endpoint reachability check",
+    )
+    group.addoption(
+        "--it-profile",
+        action="store",
+        choices=tuple(_IT_PROFILE_CASES.keys()),
+        default=os.getenv("FAULTCORE_IT_PROFILE", "smoke"),
+        help="Network integration scenario profile",
+    )
+
+
+def pytest_generate_tests(metafunc):
+    profile = metafunc.config.getoption("--it-profile")
+    cases = _IT_PROFILE_CASES[profile]
+    for arg_name, values in cases.items():
+        if arg_name in metafunc.fixturenames:
+            ids = [f"{arg_name}={value}" for value in values]
+            metafunc.parametrize(arg_name, values, ids=ids)
+
+
+@pytest.fixture
+def host(pytestconfig):
+    return str(pytestconfig.getoption("--it-host"))
+
+
+@pytest.fixture
+def port(pytestconfig):
+    return int(pytestconfig.getoption("--it-port"))
+
+
+@pytest.fixture
+def message():
+    return "Hello FaultCore"
+
+
+@pytest.fixture
+def reachable_endpoint(host, port, pytestconfig):
+    timeout = float(pytestconfig.getoption("--it-connect-timeout"))
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout)
+            if sock.connect_ex((host, port)) != 0:
+                pytest.skip(
+                    f"integration endpoint {host}:{port} unreachable; "
+                    "set --it-host/--it-port (or FAULTCORE_IT_HOST/FAULTCORE_IT_PORT)"
+                )
+    except OSError as exc:
+        pytest.skip(f"socket setup not available in this environment: {exc}")
+    return host, port

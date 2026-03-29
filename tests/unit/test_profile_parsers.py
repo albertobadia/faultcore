@@ -42,14 +42,18 @@ class TestConstantsConsistency:
 
 
 class TestParseSizeEdgeCases:
-    def test_parse_size_case_insensitive(self):
-        assert parse_size("1KB") == 1_000
-        assert parse_size("1MB") == 1_000_000
-        assert parse_size("1GB") == 1_000_000_000
-
-    def test_parse_size_with_decimals(self):
-        assert parse_size("1.5kb") == 1500
-        assert parse_size("2.5mb") == 2_500_000
+    @pytest.mark.parametrize(
+        ("raw_value", "expected"),
+        [
+            ("1KB", 1_000),
+            ("1MB", 1_000_000),
+            ("1GB", 1_000_000_000),
+            ("1.5kb", 1500),
+            ("2.5mb", 2_500_000),
+        ],
+    )
+    def test_parse_size_normalizes_case_and_decimals(self, raw_value, expected):
+        assert parse_size(raw_value) == expected
 
 
 def test_build_target_profile_includes_unified_fields_for_ipv4_host():
@@ -194,53 +198,68 @@ def test_build_session_budget_profile_rejects_invalid_combinations():
         build_session_budget_profile(max_ops=1, action="drop", budget_timeout="5ms")
 
 
-def test_parse_rate_rejects_numeric_types():
+@pytest.mark.parametrize("value", [10, 10.5])
+def test_parse_rate_rejects_numeric_types(value):
     with pytest.raises(TypeError, match=r"must be a string"):
-        parse_rate(10)
-    with pytest.raises(TypeError, match=r"must be a string"):
-        parse_rate(10.5)
+        parse_rate(value)  # type: ignore[arg-type]
 
 
-def test_parse_rate_accepts_string_with_suffix():
-    assert parse_rate("10mbps") == 10_000_000
-    assert parse_rate("1gbps") == 1_000_000_000
-    assert parse_rate("500kbps") == 500_000
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        ("10mbps", 10_000_000),
+        ("1gbps", 1_000_000_000),
+        ("500kbps", 500_000),
+    ],
+)
+def test_parse_rate_accepts_string_with_suffix(raw_value, expected):
+    assert parse_rate(raw_value) == expected
 
 
-def test_parse_duration_parses_ms():
-    assert parse_duration("200ms") == 200
-    assert parse_duration("0ms") == 0
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        ("200ms", 200),
+        ("0ms", 0),
+        ("1s", 1000),
+        ("0.5s", 500),
+        ("5s", 5000),
+    ],
+)
+def test_parse_duration_parses_ms_and_seconds(raw_value, expected):
+    assert parse_duration(raw_value) == expected
 
 
-def test_parse_duration_parses_seconds():
-    assert parse_duration("1s") == 1000
-    assert parse_duration("0.5s") == 500
-    assert parse_duration("5s") == 5000
-
-
-def test_parse_duration_rejects_invalid_format():
+@pytest.mark.parametrize("invalid_value", ["200", "invalid"])
+def test_parse_duration_rejects_invalid_format(invalid_value):
     with pytest.raises(ValueError, match=r"duration must be"):
-        parse_duration("200")
-    with pytest.raises(ValueError, match=r"duration must be"):
-        parse_duration("invalid")
+        parse_duration(invalid_value)
 
 
-def test_parse_size_parses_kb_mb_gb():
-    assert parse_size("1kb") == 1_000
-    assert parse_size("5mb") == 5_000_000
-    assert parse_size("1gb") == 1_000_000_000
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        ("1kb", 1_000),
+        ("5mb", 5_000_000),
+        ("1gb", 1_000_000_000),
+        ("100mbps", 100_000_000),
+        ("1gbps", 1_000_000_000),
+    ],
+)
+def test_parse_size_parses_size_and_rate_suffixes(raw_value, expected):
+    assert parse_size(raw_value) == expected
 
 
-def test_parse_size_parses_rate_suffixes():
-    assert parse_size("100mbps") == 100_000_000
-    assert parse_size("1gbps") == 1_000_000_000
-
-
-def test_parse_size_rejects_invalid_format():
-    with pytest.raises(ValueError, match=r"size must be"):
-        parse_size("100")
-    with pytest.raises(ValueError, match=r"size value"):
-        parse_size("invalidkb")
+@pytest.mark.parametrize(
+    ("invalid_value", "error_match"),
+    [
+        ("100", r"size must be"),
+        ("invalidkb", r"size value"),
+    ],
+)
+def test_parse_size_rejects_invalid_format(invalid_value, error_match):
+    with pytest.raises(ValueError, match=error_match):
+        parse_size(invalid_value)
 
 
 def test_build_timeout_profile_parses_connect_and_recv():

@@ -3,11 +3,17 @@ import pytest
 from faultcore import native
 
 
-def test_get_platform_tag_accepts_linux_arch_aliases():
-    assert native.get_platform_tag(system="Linux", machine="x86_64") == "linux-x86_64"
-    assert native.get_platform_tag(system="Linux", machine="amd64") == "linux-x86_64"
-    assert native.get_platform_tag(system="Linux", machine="aarch64") == "linux-aarch64"
-    assert native.get_platform_tag(system="Linux", machine="arm64") == "linux-aarch64"
+@pytest.mark.parametrize(
+    ("machine", "expected"),
+    [
+        ("x86_64", "linux-x86_64"),
+        ("amd64", "linux-x86_64"),
+        ("aarch64", "linux-aarch64"),
+        ("arm64", "linux-aarch64"),
+    ],
+)
+def test_get_platform_tag_accepts_linux_arch_aliases(machine, expected):
+    assert native.get_platform_tag(system="Linux", machine=machine) == expected
 
 
 def test_get_platform_tag_rejects_non_linux():

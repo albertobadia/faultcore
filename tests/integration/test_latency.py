@@ -5,111 +5,110 @@ import sys
 import time
 from datetime import datetime
 
+import pytest
 
-def test_latency(host: str, port: int, message: str, count: int = 10):
+pytestmark = [pytest.mark.usefixtures("reachable_endpoint"), pytest.mark.integration_network]
+
+
+def _run_latency(host: str, port: int, message: str, count: int) -> float | None:
     print(f"[{datetime.now().isoformat()}] Testing latency to {host}:{port}")
     print(f"Message: '{message}', Count: {count}")
     print("-" * 60)
 
-    latencies = []
-
+    latencies: list[float] = []
     for i in range(count):
         try:
             start = time.perf_counter()
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(10.0)
+                sock.connect((host, port))
+                sock.sendall(f"{message}\\n".encode())
+                response = sock.recv(4096)
 
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(10.0)
-            sock.connect((host, port))
-
-            sock.sendall(f"{message}\n".encode())
-
-            response = sock.recv(4096)
-            sock.close()
-
-            end = time.perf_counter()
-            latency_ms = (end - start) * 1000
+            latency_ms = (time.perf_counter() - start) * 1000
             latencies.append(latency_ms)
-
             print(f"[{i + 1}/{count}] Latency: {latency_ms:.2f}ms - Response: {response.decode('utf-8').strip()}")
-
         except TimeoutError:
             print(f"[{i + 1}/{count}] TIMEOUT")
-        except Exception as e:
-            print(f"[{i + 1}/{count}] ERROR: {e}")
-
+        except Exception as exc:
+            print(f"[{i + 1}/{count}] ERROR: {exc}")
         time.sleep(0.1)
 
-    if latencies:
-        avg = sum(latencies) / len(latencies)
-        min_lat = min(latencies)
-        max_lat = max(latencies)
-        print("-" * 60)
-        print(f"Average latency: {avg:.2f}ms")
-        print(f"Min latency: {min_lat:.2f}ms")
-        print(f"Max latency: {max_lat:.2f}ms")
-        return avg
-    return None
+    if not latencies:
+        return None
+
+    avg = sum(latencies) / len(latencies)
+    print("-" * 60)
+    print(f"Average latency: {avg:.2f}ms")
+    print(f"Min latency: {min(latencies):.2f}ms")
+    print(f"Max latency: {max(latencies):.2f}ms")
+    return avg
 
 
-def test_connect_timeout(host: str, port: int, timeout_sec: float = 5.0):
+def _run_connect_timeout(host: str, port: int, timeout_sec: float) -> float | None:
     print(f"[{datetime.now().isoformat()}] Testing connect timeout to {host}:{port}")
     print(f"Expected timeout: {timeout_sec} seconds")
     print("-" * 60)
 
     start = time.perf_counter()
-
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(timeout_sec)
-        sock.connect((host, port))
-
-        end = time.perf_counter()
-        elapsed = end - start
-
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(timeout_sec)
+            sock.connect((host, port))
+        elapsed = time.perf_counter() - start
         print(f"Connected in {elapsed:.2f} seconds")
-        sock.close()
         return elapsed
-
     except TimeoutError:
-        end = time.perf_counter()
-        elapsed = end - start
+        elapsed = time.perf_counter() - start
         print(f"Connection timed out after {elapsed:.2f} seconds (expected: {timeout_sec}s)")
         return elapsed
-    except Exception as e:
-        print(f"ERROR: {e}")
+    except Exception as exc:
+        print(f"ERROR: {exc}")
         return None
 
 
-def test_recv_timeout(host: str, port: int, timeout_sec: float = 3.0):
+def _run_recv_timeout(host: str, port: int, timeout_sec: float) -> float | None:
     print(f"[{datetime.now().isoformat()}] Testing recv timeout to {host}:{port}")
     print(f"Expected timeout: {timeout_sec} seconds")
     print("-" * 60)
 
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(10.0)
-        sock.connect((host, port))
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(10.0)
+            sock.connect((host, port))
+            sock.sendall(b"WAIT\\n")
 
-        sock.sendall(b"WAIT\n")
-
-        start = time.perf_counter()
-        try:
-            response = sock.recv(4096)
-            end = time.perf_counter()
-            elapsed = end - start
-            print(f"Received response in {elapsed:.2f} seconds: {response}")
-            sock.close()
-            return elapsed
-        except TimeoutError:
-            end = time.perf_counter()
-            elapsed = end - start
-            print(f"Receive timed out after {elapsed:.2f} seconds")
-            sock.close()
-            return elapsed
-
-    except Exception as e:
-        print(f"ERROR: {e}")
+            start = time.perf_counter()
+            try:
+                response = sock.recv(4096)
+                elapsed = time.perf_counter() - start
+                print(f"Received response in {elapsed:.2f} seconds: {response}")
+                return elapsed
+            except TimeoutError:
+                elapsed = time.perf_counter() - start
+                print(f"Receive timed out after {elapsed:.2f} seconds")
+                return elapsed
+    except Exception as exc:
+        print(f"ERROR: {exc}")
         return None
+
+
+def test_latency(host: str, port: int, message: str, probe_count: int):
+    avg_ms = _run_latency(host, port, message, probe_count)
+    assert avg_ms is not None
+    assert avg_ms >= 0
+
+
+def test_connect_timeout(host: str, port: int, probe_timeout_sec: float):
+    elapsed = _run_connect_timeout(host, port, probe_timeout_sec)
+    assert elapsed is not None
+    assert elapsed >= 0
+
+
+def test_recv_timeout(host: str, port: int, probe_timeout_sec: float):
+    elapsed = _run_recv_timeout(host, port, probe_timeout_sec)
+    assert elapsed is not None
+    assert elapsed >= 0
 
 
 if __name__ == "__main__":
@@ -124,17 +123,17 @@ if __name__ == "__main__":
     parser.add_argument("--timeout", type=float, default=2.0, help="Timeout in seconds")
     args = parser.parse_args()
 
-    results = []
+    results: list[float | None] = []
     if args.mode == "latency":
-        results.append(test_latency(args.host, args.port, args.message, args.count))
+        results.append(_run_latency(args.host, args.port, args.message, args.count))
     elif args.mode == "connect-timeout":
-        results.append(test_connect_timeout(args.host, args.port, args.timeout))
+        results.append(_run_connect_timeout(args.host, args.port, args.timeout))
     elif args.mode == "recv-timeout":
-        results.append(test_recv_timeout(args.host, args.port, args.timeout))
+        results.append(_run_recv_timeout(args.host, args.port, args.timeout))
     else:
-        results.append(test_latency(args.host, args.port, args.message, args.count))
-        results.append(test_connect_timeout(args.host, args.port, args.timeout))
-        results.append(test_recv_timeout(args.host, args.port, args.timeout))
+        results.append(_run_latency(args.host, args.port, args.message, args.count))
+        results.append(_run_connect_timeout(args.host, args.port, args.timeout))
+        results.append(_run_recv_timeout(args.host, args.port, args.timeout))
 
     if any(result is None for result in results):
         sys.exit(1)

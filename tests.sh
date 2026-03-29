@@ -135,16 +135,20 @@ run_integration_script() {
         "$@"
 }
 
-shopt -s nullglob
-INTEGRATION_SCRIPTS=(tests/integration/test_*.py)
-shopt -u nullglob
-
-if [ "${#INTEGRATION_SCRIPTS[@]}" -eq 0 ]; then
-    echo "Warning: no integration scripts found in tests/integration/"
+if [ "${SKIP_INTEGRATION_SCRIPTS:-0}" = "1" ]; then
+    echo "Skipping integration CLI scripts (SKIP_INTEGRATION_SCRIPTS=1)"
 else
-    IFS=$'\n' SORTED_SCRIPTS=($(printf "%s\n" "${INTEGRATION_SCRIPTS[@]}" | sort))
-    unset IFS
-    for script in "${SORTED_SCRIPTS[@]}"; do
-        run_integration_script "$script"
-    done
+    shopt -s nullglob
+    INTEGRATION_SCRIPTS=(tests/integration/test_*.py)
+    shopt -u nullglob
+
+    if [ "${#INTEGRATION_SCRIPTS[@]}" -eq 0 ]; then
+        echo "Warning: no integration scripts found in tests/integration/"
+    else
+        IFS=$'\n' SORTED_SCRIPTS=($(printf "%s\n" "${INTEGRATION_SCRIPTS[@]}" | sort))
+        unset IFS
+        for script in "${SORTED_SCRIPTS[@]}"; do
+            run_integration_script "$script"
+        done
+    fi
 fi

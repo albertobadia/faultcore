@@ -2,6 +2,7 @@ import os
 import struct
 import uuid
 from collections import Counter
+from collections.abc import Iterator
 from contextlib import suppress
 
 import pytest
@@ -23,6 +24,19 @@ def create_test_shm(name: str) -> int:
 def cleanup_test_shm(name: str) -> None:
     with suppress(FileNotFoundError):
         os.unlink(f"/dev/shm/{name}")
+
+
+@pytest.fixture
+def shm_writer() -> Iterator[SHMWriter]:
+    name = f"faultcore_test_{uuid.uuid4().hex}"
+    fd = create_test_shm(name)
+    os.close(fd)
+    writer = SHMWriter(name)
+    try:
+        yield writer
+    finally:
+        writer.close()
+        cleanup_test_shm(name)
 
 
 class TestTIDHashCollisions:
@@ -78,16 +92,17 @@ class TestSHMWriterGracefulDegradation:
         assert writer._mmap is None
         assert writer._fd is None
 
-    def test_write_latency_no_shm_no_error(self, monkeypatch):
+    @pytest.mark.parametrize(
+        ("method_name", "args"),
+        [
+            ("write_latency", (1234, 100)),
+            ("write_policy_name", ("policy-a",)),
+        ],
+    )
+    def test_writes_no_shm_no_error(self, monkeypatch, method_name, args):
         monkeypatch.setenv("FAULTCORE_CONFIG_SHM", "nonexistent_shm_12345")
         writer = SHMWriter()
-        writer.write_latency(1234, 100)
-        assert writer._mmap is None
-
-    def test_write_policy_name_no_shm_no_error(self, monkeypatch):
-        monkeypatch.setenv("FAULTCORE_CONFIG_SHM", "nonexistent_shm_12345")
-        writer = SHMWriter()
-        writer.write_policy_name("policy-a")
+        getattr(writer, method_name)(*args)
         assert writer._mmap is None
 
     def test_write_targets_attempts_reopen_when_shm_appears_later(self):
@@ -116,28 +131,21 @@ class TestSHMWriterGracefulDegradation:
             writer.close()
             cleanup_test_shm(name)
 
-    def test_clear_resets_previous_fields_before_next_write(self):
-        name = f"faultcore_test_{uuid.uuid4().hex}"
-        fd = create_test_shm(name)
-        os.close(fd)
-        writer = SHMWriter(name)
+    def test_clear_resets_previous_fields_before_next_write(self, shm_writer):
+        writer = shm_writer
         tid = 4242
         packet_loss_offset = 28
 
-        try:
-            writer.write_packet_loss(tid, 123_456)
-            writer.clear(tid)
-            writer.write_latency(tid, 5)
+        writer.write_packet_loss(tid, 123_456)
+        writer.clear(tid)
+        writer.write_latency(tid, 5)
 
-            offset = writer._get_offset(tid)
-            magic = struct.unpack_from("<I", writer._mmap, offset)[0]
-            packet_loss_ppm = struct.unpack_from("<Q", writer._mmap, offset + packet_loss_offset)[0]
+        offset = writer._get_offset(tid)
+        magic = struct.unpack_from("<I", writer._mmap, offset)[0]
+        packet_loss_ppm = struct.unpack_from("<Q", writer._mmap, offset + packet_loss_offset)[0]
 
-            assert magic == FAULTCORE_MAGIC
-            assert packet_loss_ppm == 0
-        finally:
-            writer.close()
-            cleanup_test_shm(name)
+        assert magic == FAULTCORE_MAGIC
+        assert packet_loss_ppm == 0
 
 
 class TestDecoratorIntegration:
@@ -163,52 +171,38 @@ class TestDecoratorIntegration:
 
 
 class TestSessionBudgetSerialization:
-    def test_write_session_budget_serializes_all_fields(self):
-        name = f"faultcore_test_{uuid.uuid4().hex}"
-        fd = create_test_shm(name)
-        os.close(fd)
-        writer = SHMWriter(name)
+    def test_write_session_budget_serializes_all_fields(self, shm_writer):
+        writer = shm_writer
         tid = 4242
 
-        try:
-            writer.write_session_budget(
-                tid,
-                max_bytes_tx=1024,
-                max_bytes_rx=2048,
-                max_ops=12,
-                max_duration_ms=5000,
-                action=2,
-                budget_timeout_ms=150,
-                error_kind=None,
-            )
+        writer.write_session_budget(
+            tid,
+            max_bytes_tx=1024,
+            max_bytes_rx=2048,
+            max_ops=12,
+            max_duration_ms=5000,
+            action=2,
+            budget_timeout_ms=150,
+            error_kind=None,
+        )
 
-            offset = writer._get_offset(tid)
-            assert struct.unpack_from("<Q", writer._mmap, offset + 472)[0] == 1
-            assert struct.unpack_from("<Q", writer._mmap, offset + 480)[0] == 1024
-            assert struct.unpack_from("<Q", writer._mmap, offset + 488)[0] == 2048
-            assert struct.unpack_from("<Q", writer._mmap, offset + 496)[0] == 12
-            assert struct.unpack_from("<Q", writer._mmap, offset + 504)[0] == 5000
-            assert struct.unpack_from("<Q", writer._mmap, offset + 512)[0] == 2
-            assert struct.unpack_from("<Q", writer._mmap, offset + 520)[0] == 150
-            assert struct.unpack_from("<Q", writer._mmap, offset + 528)[0] == 0
-        finally:
-            writer.close()
-            cleanup_test_shm(name)
+        offset = writer._get_offset(tid)
+        assert struct.unpack_from("<Q", writer._mmap, offset + 472)[0] == 1
+        assert struct.unpack_from("<Q", writer._mmap, offset + 480)[0] == 1024
+        assert struct.unpack_from("<Q", writer._mmap, offset + 488)[0] == 2048
+        assert struct.unpack_from("<Q", writer._mmap, offset + 496)[0] == 12
+        assert struct.unpack_from("<Q", writer._mmap, offset + 504)[0] == 5000
+        assert struct.unpack_from("<Q", writer._mmap, offset + 512)[0] == 2
+        assert struct.unpack_from("<Q", writer._mmap, offset + 520)[0] == 150
+        assert struct.unpack_from("<Q", writer._mmap, offset + 528)[0] == 0
 
-    def test_write_policy_seed_serializes_field(self):
-        name = f"faultcore_test_{uuid.uuid4().hex}"
-        fd = create_test_shm(name)
-        os.close(fd)
-        writer = SHMWriter(name)
+    def test_write_policy_seed_serializes_field(self, shm_writer):
+        writer = shm_writer
         tid = 4242
 
-        try:
-            writer.write_policy_seed(tid, 987654321)
-            offset = writer._get_offset(tid)
-            assert struct.unpack_from("<Q", writer._mmap, offset + 536)[0] == 987654321
-        finally:
-            writer.close()
-            cleanup_test_shm(name)
+        writer.write_policy_seed(tid, 987654321)
+        offset = writer._get_offset(tid)
+        assert struct.unpack_from("<Q", writer._mmap, offset + 536)[0] == 987654321
 
 
 class TestTargetRulesValidation:
@@ -284,272 +278,161 @@ class TestTargetRulesValidation:
             ),
         ],
     )
-    def test_write_targets_rejects_invalid_rule_fields(self, rule, expected):
-        name = f"faultcore_test_{uuid.uuid4().hex}"
-        fd = create_test_shm(name)
-        os.close(fd)
-        writer = SHMWriter(name)
+    def test_write_targets_rejects_invalid_rule_fields(self, shm_writer, rule, expected):
+        writer = shm_writer
+        with pytest.raises(ValueError, match=expected):
+            writer.write_targets(4242, [rule])
 
-        try:
-            with pytest.raises(ValueError, match=expected):
-                writer.write_targets(4242, [rule])
-        finally:
-            writer.close()
-            cleanup_test_shm(name)
-
-    def test_write_targets_accepts_valid_single_rule(self):
-        name = f"faultcore_test_{uuid.uuid4().hex}"
-        fd = create_test_shm(name)
-        os.close(fd)
-        writer = SHMWriter(name)
+    def test_write_targets_accepts_valid_single_rule(self, shm_writer):
+        writer = shm_writer
         tid = 4242
 
-        try:
-            rule = {"enabled": 1, "kind": 1, "ipv4": 0x7F000001, "prefix_len": 32, "port": 9000, "protocol": 1}
-            writer.write_targets(tid, [rule])
+        rule = {"enabled": 1, "kind": 1, "ipv4": 0x7F000001, "prefix_len": 32, "port": 9000, "protocol": 1}
+        writer.write_targets(tid, [rule])
 
-            cfg_offset = writer._get_offset(tid)
-            target_addr_family = struct.unpack_from("<Q", writer._mmap, cfg_offset + 384)[0]
-            target_addr = bytes(writer._mmap[cfg_offset + 392 : cfg_offset + 408])
-            assert target_addr_family == 1
-            assert target_addr[:4] == bytes([127, 0, 0, 1])
-            assert target_addr[4:] == b"\x00" * 12
-        finally:
-            writer.close()
-            cleanup_test_shm(name)
+        cfg_offset = writer._get_offset(tid)
+        target_addr_family = struct.unpack_from("<Q", writer._mmap, cfg_offset + 384)[0]
+        target_addr = bytes(writer._mmap[cfg_offset + 392 : cfg_offset + 408])
+        assert target_addr_family == 1
+        assert target_addr[:4] == bytes([127, 0, 0, 1])
+        assert target_addr[4:] == b"\x00" * 12
 
-    def test_write_targets_serializes_address_family_and_addr(self):
-        name = f"faultcore_test_{uuid.uuid4().hex}"
-        fd = create_test_shm(name)
-        os.close(fd)
-        writer = SHMWriter(name)
+    def test_write_targets_serializes_address_family_and_addr(self, shm_writer):
+        writer = shm_writer
         tid = 4242
         addr = [0x20, 0x01, 0x0D, 0xB8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10]
 
-        try:
-            rule = {
-                "enabled": 1,
-                "kind": 1,
-                "ipv4": 0,
-                "prefix_len": 128,
-                "port": 443,
-                "protocol": 1,
-                "address_family": 2,
-                "addr": addr,
-            }
-            writer.write_targets(tid, [rule])
+        rule = {
+            "enabled": 1,
+            "kind": 1,
+            "ipv4": 0,
+            "prefix_len": 128,
+            "port": 443,
+            "protocol": 1,
+            "address_family": 2,
+            "addr": addr,
+        }
+        writer.write_targets(tid, [rule])
 
-            cfg_offset = writer._get_offset(tid)
-            target_addr_family = struct.unpack_from("<Q", writer._mmap, cfg_offset + 384)[0]
-            target_addr = bytes(writer._mmap[cfg_offset + 392 : cfg_offset + 408])
-            assert target_addr_family == 2
-            assert target_addr == bytes(addr)
+        cfg_offset = writer._get_offset(tid)
+        target_addr_family = struct.unpack_from("<Q", writer._mmap, cfg_offset + 384)[0]
+        target_addr = bytes(writer._mmap[cfg_offset + 392 : cfg_offset + 408])
+        assert target_addr_family == 2
+        assert target_addr == bytes(addr)
 
-            rules_offset = writer._target_rules_offset(tid)
-            rule_addr_family = struct.unpack_from("<Q", writer._mmap, rules_offset + 64)[0]
-            rule_addr = bytes(writer._mmap[rules_offset + 72 : rules_offset + 88])
-            assert rule_addr_family == 2
-            assert rule_addr == bytes(addr)
-        finally:
-            writer.close()
-            cleanup_test_shm(name)
+        rules_offset = writer._target_rules_offset(tid)
+        rule_addr_family = struct.unpack_from("<Q", writer._mmap, rules_offset + 64)[0]
+        rule_addr = bytes(writer._mmap[rules_offset + 72 : rules_offset + 88])
+        assert rule_addr_family == 2
+        assert rule_addr == bytes(addr)
 
-    def test_write_targets_serializes_port_range(self):
-        name = f"faultcore_test_{uuid.uuid4().hex}"
-        fd = create_test_shm(name)
-        os.close(fd)
-        writer = SHMWriter(name)
+    def test_write_targets_serializes_port_range(self, shm_writer):
+        writer = shm_writer
         tid = 4242
 
-        try:
-            rule = {
-                "enabled": 1,
-                "kind": 1,
-                "ipv4": 0x7F000001,
-                "prefix_len": 32,
-                "port_start": 8000,
-                "port_end": 9000,
-                "protocol": 1,
-            }
-            writer.write_targets(tid, [rule])
+        rule = {
+            "enabled": 1,
+            "kind": 1,
+            "ipv4": 0x7F000001,
+            "prefix_len": 32,
+            "port_start": 8000,
+            "port_end": 9000,
+            "protocol": 1,
+        }
+        writer.write_targets(tid, [rule])
 
-            rules_offset = writer._target_rules_offset(tid)
-            rule_port_start = struct.unpack_from("<Q", writer._mmap, rules_offset + 40)[0]
-            rule_port_end = struct.unpack_from("<Q", writer._mmap, rules_offset + 56)[0]
-            assert rule_port_start == 8000
-            assert rule_port_end == 9000
-        finally:
-            writer.close()
-            cleanup_test_shm(name)
+        rules_offset = writer._target_rules_offset(tid)
+        rule_port_start = struct.unpack_from("<Q", writer._mmap, rules_offset + 40)[0]
+        rule_port_end = struct.unpack_from("<Q", writer._mmap, rules_offset + 56)[0]
+        assert rule_port_start == 8000
+        assert rule_port_end == 9000
 
-    def test_write_targets_serializes_hostname_and_sni_buffers(self):
-        name = f"faultcore_test_{uuid.uuid4().hex}"
-        fd = create_test_shm(name)
-        os.close(fd)
-        writer = SHMWriter(name)
+    def test_write_targets_serializes_hostname_and_sni_buffers(self, shm_writer):
+        writer = shm_writer
         tid = 4242
 
-        try:
-            rule = {
-                "enabled": 1,
-                "kind": 0,
-                "hostname": "*.foo.com",
-                "protocol": 0,
-            }
-            writer.write_targets(tid, [rule])
+        rule = {
+            "enabled": 1,
+            "kind": 0,
+            "hostname": "*.foo.com",
+            "protocol": 0,
+        }
+        writer.write_targets(tid, [rule])
 
-            cfg_offset = writer._get_offset(tid)
-            hostname = bytes(writer._mmap[cfg_offset + 408 : cfg_offset + 440]).rstrip(b"\x00")
-            sni = bytes(writer._mmap[cfg_offset + 440 : cfg_offset + 472]).rstrip(b"\x00")
-            assert hostname == b"*.foo.com"
-            assert sni == b""
+        cfg_offset = writer._get_offset(tid)
+        hostname = bytes(writer._mmap[cfg_offset + 408 : cfg_offset + 440]).rstrip(b"\x00")
+        sni = bytes(writer._mmap[cfg_offset + 440 : cfg_offset + 472]).rstrip(b"\x00")
+        assert hostname == b"*.foo.com"
+        assert sni == b""
 
-            rules_offset = writer._target_rules_offset(tid)
-            row_hostname = bytes(writer._mmap[rules_offset + 88 : rules_offset + 120]).rstrip(b"\x00")
-            row_sni = bytes(writer._mmap[rules_offset + 120 : rules_offset + 152]).rstrip(b"\x00")
-            assert row_hostname == b"*.foo.com"
-            assert row_sni == b""
-        finally:
-            writer.close()
-            cleanup_test_shm(name)
+        rules_offset = writer._target_rules_offset(tid)
+        row_hostname = bytes(writer._mmap[rules_offset + 88 : rules_offset + 120]).rstrip(b"\x00")
+        row_sni = bytes(writer._mmap[rules_offset + 120 : rules_offset + 152]).rstrip(b"\x00")
+        assert row_hostname == b"*.foo.com"
+        assert row_sni == b""
 
-    def test_write_targets_rejects_non_mapping_rule(self):
-        name = f"faultcore_test_{uuid.uuid4().hex}"
-        fd = create_test_shm(name)
-        os.close(fd)
-        writer = SHMWriter(name)
-
-        try:
-            with pytest.raises(ValueError, match="must be a mapping"):
-                writer.write_targets(4242, [123])  # type: ignore[list-item]
-        finally:
-            writer.close()
-            cleanup_test_shm(name)
-
-    def test_write_targets_rejects_non_integer_fields(self):
-        name = f"faultcore_test_{uuid.uuid4().hex}"
-        fd = create_test_shm(name)
-        os.close(fd)
-        writer = SHMWriter(name)
-
-        try:
-            bad_rule = {
-                "enabled": 1,
-                "kind": "tcp",
-                "ipv4": 0x7F000001,
-                "prefix_len": 32,
-                "port": 9000,
-                "protocol": 1,
-            }
-            with pytest.raises(ValueError, match="kind must be an integer"):
-                writer.write_targets(4242, [bad_rule])  # type: ignore[list-item]
-        finally:
-            writer.close()
-            cleanup_test_shm(name)
+    @pytest.mark.parametrize(
+        ("rule", "error_match"),
+        [
+            (123, "must be a mapping"),
+            (
+                {
+                    "enabled": 1,
+                    "kind": "tcp",
+                    "ipv4": 0x7F000001,
+                    "prefix_len": 32,
+                    "port": 9000,
+                    "protocol": 1,
+                },
+                "kind must be an integer",
+            ),
+        ],
+    )
+    def test_write_targets_rejects_invalid_rule_types(self, shm_writer, rule, error_match):
+        writer = shm_writer
+        with pytest.raises(ValueError, match=error_match):
+            writer.write_targets(4242, [rule])  # type: ignore[list-item]
 
 
 class TestExports:
-    def test_timeout_is_exported(self):
-        from faultcore import timeout
+    @pytest.mark.parametrize(
+        "symbol",
+        [
+            "timeout",
+            "latency",
+            "jitter",
+            "rate",
+            "packet_loss",
+            "burst_loss",
+            "uplink",
+            "downlink",
+            "correlated_loss",
+            "connection_error",
+            "half_open",
+            "packet_duplicate",
+            "packet_reorder",
+            "payload_mutation",
+            "dns",
+            "session_budget",
+            "register_policy",
+            "list_policies",
+            "get_policy",
+            "get_thread_policy",
+            "set_thread_policy",
+            "unregister_policy",
+            "load_policies",
+            "fault",
+        ],
+    )
+    def test_callable_symbols_are_exported(self, symbol):
+        import faultcore
 
-        assert callable(timeout)
-
-    def test_jitter_is_exported(self):
-        from faultcore import jitter
-
-        assert callable(jitter)
-
-    def test_rate_is_exported(self):
-        from faultcore import rate
-
-        assert callable(rate)
-
-    def test_packet_loss_is_exported(self):
-        from faultcore import packet_loss
-
-        assert callable(packet_loss)
-
-    def test_burst_loss_is_exported(self):
-        from faultcore import burst_loss
-
-        assert callable(burst_loss)
-
-    def test_uplink_is_exported(self):
-        from faultcore import uplink
-
-        assert callable(uplink)
-
-    def test_downlink_is_exported(self):
-        from faultcore import downlink
-
-        assert callable(downlink)
-
-    def test_correlated_loss_is_exported(self):
-        from faultcore import correlated_loss
-
-        assert callable(correlated_loss)
-
-    def test_connection_error_is_exported(self):
-        from faultcore import connection_error
-
-        assert callable(connection_error)
-
-    def test_half_open_is_exported(self):
-        from faultcore import half_open
-
-        assert callable(half_open)
-
-    def test_packet_duplicate_is_exported(self):
-        from faultcore import packet_duplicate
-
-        assert callable(packet_duplicate)
-
-    def test_packet_reorder_is_exported(self):
-        from faultcore import packet_reorder
-
-        assert callable(packet_reorder)
-
-    def test_dns_is_exported(self):
-        from faultcore import dns
-
-        assert callable(dns)
-
-    def test_session_budget_is_exported(self):
-        from faultcore import session_budget
-
-        assert callable(session_budget)
-
-    def test_register_policy_is_exported(self):
-        from faultcore import register_policy
-
-        assert callable(register_policy)
-
-    def test_list_policies_is_exported(self):
-        from faultcore import list_policies
-
-        assert callable(list_policies)
-
-    def test_get_policy_is_exported(self):
-        from faultcore import get_policy
-
-        assert callable(get_policy)
-
-    def test_unregister_policy_is_exported(self):
-        from faultcore import unregister_policy
-
-        assert callable(unregister_policy)
-
-    def test_load_policies_is_exported(self):
-        from faultcore import load_policies
-
-        assert callable(load_policies)
-
-    def test_fault_is_exported(self):
-        from faultcore import fault
-
-        assert callable(fault)
+        assert symbol in faultcore.__all__
+        assert callable(getattr(faultcore, symbol))
 
     def test_policy_context_is_exported(self):
+        import faultcore
         from faultcore import policy_context
 
+        assert "policy_context" in faultcore.__all__
         assert policy_context is not None
