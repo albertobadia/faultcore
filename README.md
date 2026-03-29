@@ -83,15 +83,39 @@ def network_operation():
 
 ## Documentation Index
 
+Primary docs entrypoint:
+- [`docs/index.md`](docs/index.md)
+
+Core documentation paths:
+
 | Document | Scope |
 |---|---|
-| [`docs/api_reference.md`](docs/api_reference.md) | Public Python API and decorator families |
+| [`docs/getting_started.md`](docs/getting_started.md) | Installation, first run, first decorator |
+| [`docs/api_reference.md`](docs/api_reference.md) | Feature-by-feature reference (timeout, rate, latency, jitter, loss, DNS, policy APIs) |
+| [`docs/examples.md`](docs/examples.md) | Scenario map and recommended testing patterns |
+| [`docs/troubleshooting.md`](docs/troubleshooting.md) | Symptom-based troubleshooting and quality gate |
+
+Deep-dive references:
+
+| Document | Scope |
+|---|---|
 | [`docs/architecture.md`](docs/architecture.md) | System architecture with module layout and FaultOSI |
 | [`docs/policies_and_context.md`](docs/policies_and_context.md) | Policy lifecycle and application patterns |
 | [`docs/interceptor_and_shm.md`](docs/interceptor_and_shm.md) | CLI runtime and SHM/interceptor details |
-| [`docs/testing_and_examples.md`](docs/testing_and_examples.md) | Build, test commands and examples |
+| [`docs/testing_and_examples.md`](docs/testing_and_examples.md) | Build/test command details and legacy examples |
 | [`docs/shm_protocol.md`](docs/shm_protocol.md) | SHM binary layout and consistency protocol |
 | [`docs/operations_tuning.md`](docs/operations_tuning.md) | Baseline/tuning/stress operational guidance |
+
+## Build Documentation (Sphinx + MyST)
+
+Generate HTML docs locally:
+
+```bash
+uv run sphinx-build -M html docs docs/_build
+```
+
+Open generated site entrypoint:
+- `docs/_build/html/index.html`
 
 ## Project Status
 
