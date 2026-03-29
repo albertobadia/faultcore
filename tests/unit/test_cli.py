@@ -96,6 +96,28 @@ def test_run_command_writes_run_json(tmp_path, monkeypatch):
     assert data["process"]["exit_code"] == 0
 
 
+def test_run_command_python_script_uses_current_interpreter(monkeypatch):
+    monkeypatch.setattr(cli, "_is_linux", lambda: False)
+
+    calls = []
+
+    def fake_run(args, *, env, check, capture_output, text):
+        calls.append((args, env, check, capture_output, text))
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+
+    result = runner.invoke(cli.app, ["run", "main.py"])
+    assert result.exit_code == 0
+    assert len(calls) == 1
+    args, env, check, capture_output, text = calls[0]
+    assert args == [cli.sys.executable, "main.py"]
+    assert env["FAULTCORE_SHM_OPEN_MODE"] == "creator"
+    assert check is False
+    assert capture_output is False
+    assert text is False
+
+
 def test_run_command_strict_failure_writes_run_json(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_is_linux", lambda: True)
     monkeypatch.setattr(cli.native, "get_interceptor_path", lambda: "/faultcore/interceptor.so")
@@ -275,7 +297,21 @@ def test_doctor_non_linux_fails(monkeypatch):
 def test_doctor_linux_probe_ok(monkeypatch):
     monkeypatch.setattr(cli, "_is_linux", lambda: True)
     monkeypatch.setattr(cli.native, "get_interceptor_path", lambda: "/faultcore/interceptor.so")
-    monkeypatch.setattr(cli.native, "get_extension_path", lambda: "/faultcore/_faultcore.abi3.so")
+    monkeypatch.setattr(cli, "_probe_interceptor_active", lambda _env: True)
+
+    result = runner.invoke(cli.app, ["doctor"])
+    assert result.exit_code == 0
+    assert "interceptor_active_probe: ok" in result.stdout
+
+
+def test_doctor_linux_probe_ok_without_extension_lookup(monkeypatch):
+    monkeypatch.setattr(cli, "_is_linux", lambda: True)
+    monkeypatch.setattr(cli.native, "get_interceptor_path", lambda: "/faultcore/interceptor.so")
+
+    def _fail_if_called() -> str:
+        raise AssertionError("get_extension_path should not be called by doctor")
+
+    monkeypatch.setattr(cli.native, "get_extension_path", _fail_if_called)
     monkeypatch.setattr(cli, "_probe_interceptor_active", lambda _env: True)
 
     result = runner.invoke(cli.app, ["doctor"])

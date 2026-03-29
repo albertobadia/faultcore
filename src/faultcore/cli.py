@@ -219,8 +219,9 @@ def _configure_record_replay(env: dict[str, str], run_json: Path | None) -> str:
 
 
 def _run_subprocess(command: list[str], env: dict[str, str]) -> tuple[subprocess.CompletedProcess[str], str, str, str]:
+    resolved_command = _resolve_command_for_subprocess(command)
     capture_output = is_pytest_command(command)
-    result = subprocess.run(command, env=env, check=False, capture_output=capture_output, text=capture_output)
+    result = subprocess.run(resolved_command, env=env, check=False, capture_output=capture_output, text=capture_output)
     if not capture_output:
         return result, "", "", ""
 
@@ -232,6 +233,14 @@ def _run_subprocess(command: list[str], env: dict[str, str]) -> tuple[subprocess
         typer.echo(stderr_text, err=True, nl=False)
     combined_output = f"{stdout_text}\n{stderr_text}".strip()
     return result, stdout_text, stderr_text, combined_output
+
+
+def _resolve_command_for_subprocess(command: list[str]) -> list[str]:
+    if not command:
+        return command
+    if command[0].lower().endswith(".py"):
+        return [sys.executable, *command]
+    return command
 
 
 def _build_pytest_additional_events(
@@ -443,9 +452,7 @@ def doctor_command() -> None:
         raise typer.Exit(code=1)
 
     interceptor_path = Path(native.get_interceptor_path())
-    extension_path = Path(native.get_extension_path())
     typer.echo(f"interceptor_path: {interceptor_path}")
-    typer.echo(f"extension_path: {extension_path}")
 
     env = _base_env_for_run(shm_mode="consumer")
     env["LD_PRELOAD"] = _compose_preload(str(interceptor_path))
