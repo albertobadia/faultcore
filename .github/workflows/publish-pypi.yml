@@ -32,7 +32,7 @@ jobs:
         uses: pypa/cibuildwheel@v2.23.3
         env:
           CIBW_ARCHS_LINUX: "x86_64 i686 aarch64"
-          CIBW_REPAIR_WHEEL_COMMAND_LINUX: ""
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: "auditwheel repair -w {dest_dir} {wheel}"
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -84,9 +84,14 @@ jobs:
       - name: Publish to PyPI
         if: ${{ github.event_name == 'push' || github.event.inputs.repository == 'pypi' }}
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+          verbose: true
 
       - name: Publish to TestPyPI
         if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.repository == 'testpypi' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+          verbose: true
