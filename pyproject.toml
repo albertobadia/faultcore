@@ -61,6 +61,7 @@ before-build = [
 [tool.cibuildwheel.linux]
 archs = ["x86_64", "i686", "aarch64"]
 environment = { PATH = "$HOME/.cargo/bin:$PATH" }
+repair-wheel-command = ""
 
 [tool.ruff]
 line-length = 120
