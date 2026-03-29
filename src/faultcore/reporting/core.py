@@ -393,6 +393,9 @@ def build_run_record(
     site_metrics: dict[str, dict[str, Any]] | None = None,
     record_replay_path: str = "",
     policy_sources: list[dict[str, str]] | None = None,
+    record_replay_mode: str | None = None,
+    shm_name: str | None = None,
+    shm_open_mode: str | None = None,
 ) -> dict[str, Any]:
     mode = "ld_preload" if interceptor_path else "none"
     status = status_from_returncode(returncode)
@@ -465,9 +468,11 @@ def build_run_record(
         },
         "faultcore": {
             "seed": int(os.environ.get("FAULTCORE_SEED", "0")),
-            "shm_name": os.environ.get("FAULTCORE_CONFIG_SHM", ""),
-            "shm_open_mode": os.environ.get("FAULTCORE_SHM_OPEN_MODE", ""),
-            "record_replay_mode": os.environ.get("FAULTCORE_RECORD_REPLAY_MODE", "off"),
+            "shm_name": os.environ.get("FAULTCORE_CONFIG_SHM", "") if shm_name is None else shm_name,
+            "shm_open_mode": os.environ.get("FAULTCORE_SHM_OPEN_MODE", "") if shm_open_mode is None else shm_open_mode,
+            "record_replay_mode": os.environ.get("FAULTCORE_RECORD_REPLAY_MODE", "off")
+            if record_replay_mode is None
+            else record_replay_mode,
             "record_replay_path": record_replay_path,
             "policy_sources": policy_sources or [],
         },

@@ -43,6 +43,9 @@ def build_run_record(
     site_metrics: dict[str, dict[str, Any]] | None = None,
     record_replay_path: str = "",
     policy_sources: list[dict[str, str]] | None = None,
+    record_replay_mode: str | None = None,
+    shm_name: str | None = None,
+    shm_open_mode: str | None = None,
 ) -> dict[str, Any]:
     return _core.build_run_record(
         command=command,
@@ -64,6 +67,9 @@ def build_run_record(
         site_metrics=site_metrics,
         record_replay_path=record_replay_path,
         policy_sources=policy_sources,
+        record_replay_mode=record_replay_mode,
+        shm_name=shm_name,
+        shm_open_mode=shm_open_mode,
     )
 
 

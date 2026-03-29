@@ -6,6 +6,7 @@ from faultcore.profile_parsers import (
     build_target_profile,
     build_timeout_profile,
     parse_duration,
+    parse_port,
     parse_rate,
     parse_size,
 )
@@ -124,6 +125,11 @@ def test_build_target_profile_accepts_port_range() -> None:
 def test_build_target_profile_rejects_invalid_port_range_order() -> None:
     with pytest.raises(ValueError, match=r"(?i)port.*<="):
         build_target_profile(host="10.1.2.3", port="9000-8000")
+
+
+def test_parse_port_rejects_comma_separated_port_list() -> None:
+    with pytest.raises(ValueError, match=r"(?i)port"):
+        parse_port("80,443")
 
 
 def test_build_target_profile_rejects_unbracketed_ipv6_target_string() -> None:

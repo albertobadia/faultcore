@@ -1361,12 +1361,17 @@ pub extern "C" fn faultcore_metrics_reset() {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn faultcore_get_policy_name() -> *const std::os::raw::c_char {
+    static LAST_NAME: std::sync::Mutex<Option<std::ffi::CString>> = std::sync::Mutex::new(None);
     match get_current_policy_name() {
         Some(name) => {
-            static LAST_NAME: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
-            let mut guard = LAST_NAME.lock().unwrap();
-            *guard = Some(name);
-            guard.as_ref().unwrap().as_ptr() as *const std::os::raw::c_char
+            let Ok(encoded) = std::ffi::CString::new(name) else {
+                return std::ptr::null();
+            };
+            let mut guard = LAST_NAME.lock().unwrap_or_else(|err| err.into_inner());
+            *guard = Some(encoded);
+            guard
+                .as_ref()
+                .map_or(std::ptr::null(), |value| value.as_ptr())
         }
         None => std::ptr::null(),
     }
@@ -1550,6 +1555,19 @@ mod tests {
             .expect("sendto hook must exist");
         assert!(send_block.contains("handle_uplink_send("));
         assert!(sendto_block.contains("handle_uplink_send("));
+    }
+
+    #[test]
+    fn faultcore_get_policy_name_must_expose_nul_terminated_storage() {
+        let src = include_str!("lib.rs");
+        let block = src
+            .split("pub extern \"C\" fn faultcore_get_policy_name")
+            .nth(1)
+            .expect("faultcore_get_policy_name hook must exist");
+        assert!(
+            block.contains("CString"),
+            "faultcore_get_policy_name should store name in NUL-terminated C-compatible storage"
+        );
     }
 
     #[test]

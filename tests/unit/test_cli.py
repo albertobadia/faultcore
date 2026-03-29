@@ -229,6 +229,25 @@ def test_run_command_replay_mode_populates_metrics_from_record_replay(tmp_path, 
     assert any(event["type"] == "network.delay_ns" for event in data["events"])
 
 
+def test_run_command_run_json_reflects_effective_record_replay_mode(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_is_linux", lambda: False)
+    monkeypatch.delenv("FAULTCORE_RECORD_REPLAY_MODE", raising=False)
+    monkeypatch.delenv("FAULTCORE_RECORD_REPLAY_PATH", raising=False)
+
+    def fake_run(*_args, **_kwargs):
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(cli, "load_record_replay_events", lambda _path: [])
+
+    run_json = tmp_path / "run_record_mode.json"
+    result = runner.invoke(cli.app, ["run", "--run-json", str(run_json), "--", "python", "-V"])
+
+    assert result.exit_code == 0
+    data = json.loads(run_json.read_text(encoding="utf-8"))
+    assert data["faultcore"]["record_replay_mode"] == "record"
+
+
 def test_run_command_merges_metrics_out_json_into_run_record(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(cli, "_is_linux", lambda: False)
 

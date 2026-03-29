@@ -22,6 +22,7 @@ from faultcore.profile_parsers import (
     parse_burst_loss,
     parse_duration,
     parse_packet_loss,
+    parse_port_list,
     parse_rate,
     parse_seed,
 )
@@ -150,23 +151,39 @@ def _require_mapping(value: Any, field_name: str) -> dict[str, Any]:
     return value
 
 
-def _build_target_rule(target: str | dict[str, Any]) -> dict[str, Any]:
+def _build_target_rule(target: str | dict[str, Any]) -> list[dict[str, Any]]:
     if isinstance(target, str):
-        rule = build_target_profile(target=target)
+        return [build_target_profile(target=target)]
     elif isinstance(target, dict):
-        rule = build_target_profile(
-            target=target.get("target"),
-            host=target.get("host"),
-            cidr=target.get("cidr"),
-            hostname=target.get("hostname"),
-            sni=target.get("sni"),
-            port=target.get("port"),
-            protocol=target.get("protocol"),
-            priority=target.get("priority"),
-        )
+        parsed_port_list = parse_port_list(target.get("port"))
+        if parsed_port_list is None:
+            return [
+                build_target_profile(
+                    target=target.get("target"),
+                    host=target.get("host"),
+                    cidr=target.get("cidr"),
+                    hostname=target.get("hostname"),
+                    sni=target.get("sni"),
+                    port=target.get("port"),
+                    protocol=target.get("protocol"),
+                    priority=target.get("priority"),
+                )
+            ]
+        return [
+            build_target_profile(
+                target=target.get("target"),
+                host=target.get("host"),
+                cidr=target.get("cidr"),
+                hostname=target.get("hostname"),
+                sni=target.get("sni"),
+                port=port,
+                protocol=target.get("protocol"),
+                priority=target.get("priority"),
+            )
+            for port in parsed_port_list
+        ]
     else:
         raise ValueError("target must be a string or mapping when provided")
-    return rule
 
 
 def _build_target_profiles(targets: list[str | dict[str, Any]]) -> list[dict[str, Any]]:
@@ -177,7 +194,7 @@ def _build_target_profiles(targets: list[str | dict[str, Any]]) -> list[dict[str
     for entry in targets:
         if not isinstance(entry, (str, dict)):
             raise ValueError("each targets entry must be a string or mapping")
-        rules.append(_build_target_rule(entry))
+        rules.extend(_build_target_rule(entry))
 
     return sorted(
         rules,

@@ -296,14 +296,28 @@ def parse_port(value: str | int) -> tuple[int, int | None, int | None]:
             raise ValueError("port range start must be <= end")
         return 0, start, end
     if "," in normalized:
-        first_port = normalized.split(",", 1)[0]
-        single_port = _parse_single_port(first_port, "port list must contain valid integers")
-        return single_port, None, None
+        raise ValueError("port list format is not supported; use a single port or a range like '80-90'")
     parsed = _parse_single_port(
         normalized,
         "port must be a valid integer, range (e.g., '80-90'), or list (e.g., '80,443')",
     )
     return parsed, None, None
+
+
+def parse_port_list(value: str | int | None) -> list[int] | None:
+    if value is None or isinstance(value, int):
+        return None
+    if not isinstance(value, str):
+        raise TypeError("port must be a string or integer")
+    normalized = _non_empty_normalized(value, "port must be non-empty")
+    if "," not in normalized:
+        return None
+    parts = [part.strip() for part in normalized.split(",")]
+    if any(not part for part in parts):
+        raise ValueError("port list must contain valid integers")
+    parsed_ports = [_parse_single_port(part, "port list must contain valid integers") for part in parts]
+    unique_ports = list(dict.fromkeys(parsed_ports))
+    return unique_ports
 
 
 def build_direction_profile(

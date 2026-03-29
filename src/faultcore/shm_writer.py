@@ -183,6 +183,11 @@ class SHMWriter:
                 mmap_size = 0
             self._mmap = mmap.mmap(self._fd, mmap_size, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
         except OSError:
+            if self._fd is not None:
+                try:
+                    os.close(self._fd)
+                except OSError:
+                    pass
             self._fd = None
             self._mmap = None
 
