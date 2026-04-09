@@ -1,38 +1,29 @@
 #!/usr/bin/env python3
-"""Example 07: Latency and jitter injection.
-
-This example demonstrates how to inject latency and jitter into network operations
-using faultcore decorators.
-"""
-
 import time
 
 import faultcore
 
 
 @faultcore.latency("100ms")
-def slow_request():
-    """Simulate a request with 100ms latency."""
+def slow_request() -> str:
     time.sleep(0.05)
     return "slow response"
 
 
 @faultcore.jitter("50ms")
-def jittery_request():
-    """Simulate a request with 50ms jitter."""
+def jittery_request() -> str:
     time.sleep(0.01)
     return "jittery response"
 
 
 @faultcore.latency("50ms")
 @faultcore.jitter("25ms")
-def latency_plus_jitter():
-    """Combine latency and jitter for realistic network simulation."""
+def latency_plus_jitter() -> str:
     time.sleep(0.02)
     return "latency + jitter response"
 
 
-def main():
+def main() -> None:
     print("=== Latency and Jitter Example ===\n")
 
     print("1. Pure latency (100ms):")

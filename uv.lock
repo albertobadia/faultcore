@@ -724,7 +724,7 @@ wheels = [
 
 [[package]]
 name = "faultcore"
-version = "2026.3.28"
+version = "2026.4.9"
 source = { editable = "." }
 dependencies = [
     { name = "mako" },

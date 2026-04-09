@@ -1,19 +1,47 @@
-# faultcore
+<p align="center">
+  <img src="docs/assets/faultcore-logo.svg" alt="faultcore logo" width="560" />
+</p>
 
-High-performance fault injection and network simulation for Python, backed by Rust.
+<p align="center">
+  <a href="https://www.python.org/downloads/"><img alt="Python 3.10+" src="https://img.shields.io/badge/python-3.10+-blue.svg?style=flat-square&logo=python"></a>
+  <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-green.svg?style=flat-square"></a>
+  <a href="https://pypi.org/project/faultcore/"><img alt="PyPI" src="https://img.shields.io/pypi/v/faultcore?style=flat-square&logo=pypi&logoColor=white"></a>
+  <a href="https://pypi.org/project/faultcore/"><img alt="Downloads" src="https://img.shields.io/pepy/dt/faultcore?style=flat-square&color=blue"></a>
+  <a href="https://github.com/albertobadia/faultcore/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/albertobadia/faultcore/ci.yml?branch=main&style=flat-square&logo=github"></a>
+  <a href="https://faultcore.readthedocs.io/en/latest/"><img alt="ReadTheDocs" src="https://img.shields.io/readthedocs/faultcore?style=flat-square&logo=readthedocs"></a>
+</p>
 
-## Overview
+Helps you test how your application behaves under realistic network failures without rewriting application code or introducing an in-app proxy layer.
 
-`faultcore` provides Python decorators and policy management for:
-- network timeouts (`timeout`);
-- bandwidth throttling (`rate`);
-- latency, jitter, packet loss, and burst loss;
-- `FaultOSI`: OSI-pragmatic L1..L7 fault pipeline in `faultcore_network`;
-- transparent socket interception on Linux via `faultcore run`.
+Core value:
+- non-intrusive Linux socket interception through `LD_PRELOAD`;
+- Python-first ergonomics (decorators, policy APIs, CLI workflows);
+- deterministic and reproducible fault decisions for CI validation;
+- broad fault model coverage across connection, transport, DNS, and payload behavior.
 
-Detailed documentation lives in `docs/`.
+Detailed documentation lives in `docs/` and is published at:
+- https://faultcore.readthedocs.io/en/latest/
+
+Package distribution (PyPI):
+- https://pypi.org/project/faultcore/
+
+## High-level architecture
+
+![Faultcore interceptor flow](docs/assets/faultcore-flow.svg)
+
+Execution model:
+1. Python decorators/policies write effective configuration to shared memory.
+2. Linux interceptor hooks socket syscalls (`send`, `recv`, `connect`, `sendto`, `recvfrom`, `getaddrinfo`).
+3. `faultcore_network` evaluates a deterministic runtime-stage graph (`R0..R8`) with operation-specific applicability.
+4. Runtime applies directives (delay, drop, timeout, error, mutate, reorder, duplicate) and then calls original libc functions when needed.
 
 ## Quick Start
+
+Install from PyPI:
+
+```bash
+pip install faultcore
+```
 
 Requirements:
 - Python 3.10+
@@ -81,10 +109,39 @@ def network_operation():
     return "ok"
 ```
 
+## What you can test
+
+It supports failure scenarios that commonly cause production-only bugs:
+
+- latency and jitter;
+- packet loss and burst loss;
+- bandwidth throttling;
+- connection and receive timeouts;
+- connection error injection;
+- DNS delay, timeout, and NXDOMAIN;
+- correlated loss (Gilbert-Elliott style state behavior);
+- directional profiles (uplink vs downlink);
+- packet duplicate and packet reorder;
+- session budget limits (bytes, ops, duration);
+- payload mutation in stream operations;
+- target-aware rules (hostname/SNI/protocol/address/port based scope);
+- record/replay for reproducible failure timelines.
+
+These can be combined in one run to validate retries, idempotency, fallbacks, parser robustness, and resilience logic under stress.
+
+## Typical CI use cases
+
+- Validate retry/backoff behavior under timeout + packet loss.
+- Validate DNS fallback and graceful degradation under resolver faults.
+- Validate stream parser robustness under payload mutation and reorder.
+- Reproduce flaky integration failures with record/replay evidence.
+- Generate run JSON + HTML report artifacts for post-run analysis.
+
 ## Documentation Index
 
 Primary docs entrypoint:
 - [`docs/index.md`](docs/index.md)
+- Read the Docs: https://faultcore.readthedocs.io/en/latest/
 
 Core documentation paths:
 
@@ -100,7 +157,7 @@ Deep-dive references:
 
 | Document | Scope |
 |---|---|
-| [`docs/architecture.md`](docs/architecture.md) | System architecture with module layout and FaultOSI |
+| [`docs/architecture.md`](docs/architecture.md) | System architecture with runtime-stage graph and module layout |
 | [`docs/policies_and_context.md`](docs/policies_and_context.md) | Policy lifecycle and application patterns |
 | [`docs/interceptor_and_shm.md`](docs/interceptor_and_shm.md) | CLI runtime and SHM/interceptor details |
 | [`docs/testing_and_examples.md`](docs/testing_and_examples.md) | Build/test command details and legacy examples |

@@ -3,12 +3,12 @@ use parking_lot::Mutex;
 use rand::{Rng, SeedableRng, random, rngs::StdRng};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-pub struct L3Routing {
+pub struct R4TimingVariation {
     seeded_rng: Option<Mutex<StdRng>>,
     policy_counter: AtomicU64,
 }
 
-impl L3Routing {
+impl R4TimingVariation {
     pub fn new() -> Self {
         let seeded_rng = std::env::var("FAULTCORE_SEED")
             .ok()
@@ -57,15 +57,15 @@ impl L3Routing {
     }
 }
 
-impl Default for L3Routing {
+impl Default for R4TimingVariation {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Layer for L3Routing {
+impl Layer for R4TimingVariation {
     fn stage(&self) -> LayerStage {
-        LayerStage::L3
+        LayerStage::R4
     }
 
     fn applies_to(&self, ctx: &PacketContext<'_>) -> bool {
@@ -82,7 +82,7 @@ impl Layer for L3Routing {
     }
 
     fn name(&self) -> &str {
-        "L3_Routing"
+        "R4_TimingVariation"
     }
 }
 
@@ -92,7 +92,7 @@ mod tests {
 
     #[test]
     fn jitter_is_bounded_by_config() {
-        let layer = L3Routing::with_seed(7);
+        let layer = R4TimingVariation::with_seed(7);
         let cfg = crate::Config {
             jitter_ns: 5_000,
             ..Default::default()
@@ -122,8 +122,8 @@ mod tests {
             jitter_ns: 10_000,
             ..Default::default()
         };
-        let a = L3Routing::with_seed(123);
-        let b = L3Routing::with_seed(123);
+        let a = R4TimingVariation::with_seed(123);
+        let b = R4TimingVariation::with_seed(123);
         let ctx = PacketContext {
             fd: 1,
             bytes: 1,
@@ -155,8 +155,8 @@ mod tests {
             policy_seed: 777,
             ..Default::default()
         };
-        let a = L3Routing::new();
-        let b = L3Routing::new();
+        let a = R4TimingVariation::new();
+        let b = R4TimingVariation::new();
         let ctx = PacketContext {
             fd: 1,
             bytes: 1,

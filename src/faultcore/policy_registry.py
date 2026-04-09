@@ -22,6 +22,7 @@ from faultcore.profile_parsers import (
     parse_burst_loss,
     parse_duration,
     parse_packet_loss,
+    parse_port_list,
     parse_rate,
     parse_seed,
 )
@@ -150,41 +151,53 @@ def _require_mapping(value: Any, field_name: str) -> dict[str, Any]:
     return value
 
 
-def _build_target_rule_from_mapping(target: dict[str, Any]) -> dict[str, Any]:
-    return build_target_profile(
-        target=target.get("target"),
-        host=target.get("host"),
-        cidr=target.get("cidr"),
-        hostname=target.get("hostname"),
-        sni=target.get("sni"),
-        port=target.get("port"),
-        protocol=target.get("protocol"),
-        priority=target.get("priority"),
-    )
-
-
-def _build_target_rule(target: str | dict[str, Any], *, include_priority: bool) -> dict[str, Any]:
+def _build_target_rule(target: str | dict[str, Any]) -> list[dict[str, Any]]:
     if isinstance(target, str):
-        rule = build_target_profile(target=target)
+        return [build_target_profile(target=target)]
     elif isinstance(target, dict):
-        rule = _build_target_rule_from_mapping(target)
+        parsed_port_list = parse_port_list(target.get("port"))
+        if parsed_port_list is None:
+            return [
+                build_target_profile(
+                    target=target.get("target"),
+                    host=target.get("host"),
+                    cidr=target.get("cidr"),
+                    hostname=target.get("hostname"),
+                    sni=target.get("sni"),
+                    port=target.get("port"),
+                    protocol=target.get("protocol"),
+                    priority=target.get("priority"),
+                )
+            ]
+        return [
+            build_target_profile(
+                target=target.get("target"),
+                host=target.get("host"),
+                cidr=target.get("cidr"),
+                hostname=target.get("hostname"),
+                sni=target.get("sni"),
+                port=port,
+                protocol=target.get("protocol"),
+                priority=target.get("priority"),
+            )
+            for port in parsed_port_list
+        ]
     else:
         raise ValueError("target must be a string or mapping when provided")
-
-    if not include_priority:
-        rule.pop("priority", None)
-    return rule
 
 
 def _build_target_profiles(targets: list[str | dict[str, Any]]) -> list[dict[str, Any]]:
     if not targets:
         raise ValueError("targets must be a non-empty list when provided")
 
-    if not all(isinstance(entry, (str, dict)) for entry in targets):
-        raise ValueError("each targets entry must be a string or mapping")
+    rules: list[dict[str, Any]] = []
+    for entry in targets:
+        if not isinstance(entry, (str, dict)):
+            raise ValueError("each targets entry must be a string or mapping")
+        rules.extend(_build_target_rule(entry))
 
     return sorted(
-        (_build_target_rule(entry, include_priority=True) for entry in targets),
+        rules,
         key=lambda profile: profile.get("priority", 100),
         reverse=True,
     )
@@ -258,8 +271,7 @@ def _set_direction_profile(
     field_name: str,
     policy_key: str,
 ) -> None:
-    direction_config = _as_mapping(raw_value, field_name)
-    if direction_config is not None:
+    if (direction_config := _as_mapping(raw_value, field_name)) is not None:
         policy[policy_key] = _build_direction_policy(direction_config)
 
 

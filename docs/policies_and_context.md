@@ -13,7 +13,7 @@ A policy is a named set of optional fields:
 - `timeout` (dict with `connect` and/or `recv` keys)
 - `dns` (`delay`, `timeout`, `nxdomain`)
 - `session_budget` (max tx/rx, operations, or duration limits with terminal action; action=timeout requires budget_timeout, action=connection_error accepts optional error)
-- `payload_mutation` (L6 mutation profile fields)
+- `payload_mutation` (R7 payload transform profile fields)
 - `targets` (list of target rules for selective fault application)
 - `schedule` (temporal profile: ramp, spike, or flapping)
 - `seed` (optional random seed for deterministic behavior)

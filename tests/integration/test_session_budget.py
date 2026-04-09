@@ -41,9 +41,8 @@ def run_tcp_case(host: str, port: int, action: str, expected_errno: int) -> None
 
     @faultcore.fault()
     def tcp_probe() -> None:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(3.0)
-        try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(3.0)
             sock.connect((host, port))
             sent = sock.send(b"budget-tcp-1\n")
             if sent <= 0:
@@ -57,8 +56,6 @@ def run_tcp_case(host: str, port: int, action: str, expected_errno: int) -> None
                     ) from exc
                 return
             raise RuntimeError(f"tcp action={action} expected an OSError on second send")
-        finally:
-            sock.close()
 
     started = time.perf_counter()
     tcp_probe()
@@ -74,38 +71,34 @@ def run_udp_case(host: str, action: str, expected_errno: int) -> None:
 
     @faultcore.fault()
     def udp_probe() -> None:
-        client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        client.bind((host, 0))
-        client.settimeout(2.0)
-        client_port = client.getsockname()[1]
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
+            client.bind((host, 0))
+            client.settimeout(2.0)
+            client_port = client.getsockname()[1]
 
-        def sender() -> None:
-            tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            def sender() -> None:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as tx:
+                    tx.sendto(b"budget-udp-1", (host, client_port))
+                    time.sleep(0.05)
+                    tx.sendto(b"budget-udp-2", (host, client_port))
+
+            thread = threading.Thread(target=sender)
+            thread.start()
             try:
-                tx.sendto(b"budget-udp-1", (host, client_port))
-                time.sleep(0.05)
-                tx.sendto(b"budget-udp-2", (host, client_port))
+                first, _ = client.recvfrom(64)
+                if first != b"budget-udp-1":
+                    raise RuntimeError(f"udp first packet mismatch: {first!r}")
+                try:
+                    client.recvfrom(64)
+                except OSError as exc:
+                    if exc.errno != expected_errno:
+                        raise RuntimeError(
+                            f"udp action={action} expected errno={expected_errno}, got errno={exc.errno}"
+                        ) from exc
+                    return
+                raise RuntimeError(f"udp action={action} expected an OSError on second recvfrom")
             finally:
-                tx.close()
-
-        thread = threading.Thread(target=sender)
-        thread.start()
-        try:
-            first, _ = client.recvfrom(64)
-            if first != b"budget-udp-1":
-                raise RuntimeError(f"udp first packet mismatch: {first!r}")
-            try:
-                client.recvfrom(64)
-            except OSError as exc:
-                if exc.errno != expected_errno:
-                    raise RuntimeError(
-                        f"udp action={action} expected errno={expected_errno}, got errno={exc.errno}"
-                    ) from exc
-                return
-            raise RuntimeError(f"udp action={action} expected an OSError on second recvfrom")
-        finally:
-            thread.join(timeout=1.0)
-            client.close()
+                thread.join(timeout=1.0)
 
     started = time.perf_counter()
     udp_probe()

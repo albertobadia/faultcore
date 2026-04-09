@@ -9,6 +9,11 @@ _PORT_MIN = 0
 _PORT_MAX = 65535
 
 
+def _require_len_16(values: Sequence[Any] | bytes | bytearray, field: str) -> None:
+    if len(values) != 16:
+        raise ValueError(f"{field} must contain exactly 16 bytes")
+
+
 def _rule_int(rule: dict[str, Any], key: str, default: int, idx: int) -> int:
     try:
         return int(rule.get(key, default))
@@ -22,19 +27,22 @@ def _addr16_from_rule(rule: dict[str, Any], idx: int) -> bytes:
         return b"\x00" * 16
 
     if isinstance(raw, (bytes, bytearray)):
-        if len(raw) != 16:
-            raise ValueError(f"targets[{idx}].addr must contain exactly 16 bytes")
+        _require_len_16(raw, f"targets[{idx}].addr")
         return bytes(raw)
 
     if isinstance(raw, Sequence):
         values = list(raw)
-        if len(values) != 16:
-            raise ValueError(f"targets[{idx}].addr must contain exactly 16 bytes")
+        _require_len_16(values, f"targets[{idx}].addr")
         try:
             return bytes(int(v) & 0xFF for v in values)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"targets[{idx}].addr must contain integer byte values") from exc
     raise ValueError(f"targets[{idx}].addr must be bytes-like or a 16-item sequence")
+
+
+def _validate_port(value: int, idx: int, field_name: str) -> None:
+    if not _PORT_MIN <= value <= _PORT_MAX:
+        raise ValueError(f"targets[{idx}].{field_name} must be between 0 and 65535")
 
 
 def normalize_target_address(rule: dict[str, Any], idx: int) -> tuple[int, bytes]:
@@ -79,10 +87,8 @@ def resolve_port_range(rule: dict[str, Any], idx: int) -> tuple[int, int]:
             return 0, 0
         start, end = port, port
 
-    if not _PORT_MIN <= start <= _PORT_MAX:
-        raise ValueError(f"targets[{idx}].port_start must be between 0 and 65535")
-    if not _PORT_MIN <= end <= _PORT_MAX:
-        raise ValueError(f"targets[{idx}].port_end must be between 0 and 65535")
+    _validate_port(start, idx, "port_start")
+    _validate_port(end, idx, "port_end")
     if start > end:
         raise ValueError(f"targets[{idx}].port_start must be <= port_end")
     return start, end

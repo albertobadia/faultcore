@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import urllib.parse
+from collections.abc import Callable
 from datetime import datetime
 from http.client import HTTPConnection
 from time import perf_counter
@@ -45,7 +46,7 @@ def http_echo(hostname: str, port: int, message: str) -> str:
     return echoed
 
 
-def measure_ms(callable_fn, count: int = 3) -> float:
+def measure_ms(callable_fn: Callable[[str], str], count: int = 3) -> float:
     samples: list[float] = []
     for idx in range(count):
         started = perf_counter()

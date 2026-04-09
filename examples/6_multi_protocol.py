@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import socket
 import time
+from collections.abc import Callable
+from typing import Any
 
 try:
     import requests
@@ -11,24 +13,21 @@ from faultcore import rate, timeout
 
 
 def tcp_echo(host: str, port: int, message: str) -> str:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(5)
-    try:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(5)
         sock.connect((host, port))
         sock.sendall(message.encode())
         response = sock.recv(1024)
         return response.decode().strip()
-    finally:
-        sock.close()
 
 
 @rate("10mbps")
-def rate_limited_tcp(host: str, port: int, message: str):
+def rate_limited_tcp(host: str, port: int, message: str) -> str:
     return tcp_echo(host, port, message)
 
 
 @rate("5mbps")
-def rate_limited_http(url: str):
+def rate_limited_http(url: str) -> int:
     if requests is None:
         raise ImportError("requests is not installed")
     response = requests.get(url, timeout=10)
@@ -36,11 +35,11 @@ def rate_limited_http(url: str):
 
 
 @timeout(connect="250ms")
-def latency_injected_call(callable_func, *args, **kwargs):
+def latency_injected_call(callable_func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     return callable_func(*args, **kwargs)
 
 
-def combined_test_scenario(host: str, tcp_port: int):
+def combined_test_scenario(host: str, tcp_port: int) -> dict[str, str | int]:
     results: dict[str, str | int] = {}
 
     print("\n--- Scenario 1: Rate-limited TCP + HTTP ---")
@@ -59,7 +58,7 @@ def combined_test_scenario(host: str, tcp_port: int):
     return results
 
 
-def latency_scenario(host: str, tcp_port: int):
+def latency_scenario(host: str, tcp_port: int) -> None:
     print("\n--- Scenario 2: Latency injection on multiple protocols ---")
 
     print("TCP with 250ms latency:")
@@ -82,7 +81,7 @@ def latency_scenario(host: str, tcp_port: int):
             print(f"  Error: {type(exc).__name__}: {exc}")
 
 
-def burst_scenario(host: str, tcp_port: int):
+def burst_scenario(host: str, tcp_port: int) -> None:
     print("\n--- Scenario 3: Burst traffic simulation ---")
 
     print("Sending 10 rapid requests (should be rate limited):")
@@ -99,12 +98,12 @@ def burst_scenario(host: str, tcp_port: int):
     print(f"Total: {time.perf_counter() - start:.3f}s")
 
 
-def mixed_policy_scenario(host: str, tcp_port: int):
+def mixed_policy_scenario(host: str, tcp_port: int) -> None:
     print("\n--- Scenario 4: Mixed policies (rate limit + latency) ---")
 
     @rate("3mbps")
     @timeout(connect="150ms")
-    def throttled_and_slow_call(msg: str):
+    def throttled_and_slow_call(msg: str) -> str:
         return tcp_echo(host, tcp_port, msg)
 
     start = time.perf_counter()

@@ -28,6 +28,7 @@ _DECISION_COUNT_FIELDS = (
     ("nxdomain_count", "nxdomain"),
     ("mutate_count", "mutate"),
 )
+_TIMELINE_SEVERITY_BY_DECISION = {"error": "error", "continue": "info"}
 
 
 def _errors_from_returncode(returncode: int) -> int:
@@ -352,13 +353,12 @@ def build_record_replay_timeline_events(
     events: list[dict[str, Any]], *, ts: str, max_items: int = 0
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    severity_by_decision = {"error": "error", "continue": "info"}
     limited_events = events if max_items <= 0 else events[:max_items]
     for item in limited_events:
         decision = str(item.get("decision", ""))
         site = str(item.get("site", ""))
         value = item.get("value", 0)
-        severity = severity_by_decision.get(decision, "warning")
+        severity = _TIMELINE_SEVERITY_BY_DECISION.get(decision, "warning")
         out.append(
             {
                 "ts": ts,
@@ -393,6 +393,9 @@ def build_run_record(
     site_metrics: dict[str, dict[str, Any]] | None = None,
     record_replay_path: str = "",
     policy_sources: list[dict[str, str]] | None = None,
+    record_replay_mode: str | None = None,
+    shm_name: str | None = None,
+    shm_open_mode: str | None = None,
 ) -> dict[str, Any]:
     mode = "ld_preload" if interceptor_path else "none"
     status = status_from_returncode(returncode)
@@ -465,9 +468,11 @@ def build_run_record(
         },
         "faultcore": {
             "seed": int(os.environ.get("FAULTCORE_SEED", "0")),
-            "shm_name": os.environ.get("FAULTCORE_CONFIG_SHM", ""),
-            "shm_open_mode": os.environ.get("FAULTCORE_SHM_OPEN_MODE", ""),
-            "record_replay_mode": os.environ.get("FAULTCORE_RECORD_REPLAY_MODE", "off"),
+            "shm_name": os.environ.get("FAULTCORE_CONFIG_SHM", "") if shm_name is None else shm_name,
+            "shm_open_mode": os.environ.get("FAULTCORE_SHM_OPEN_MODE", "") if shm_open_mode is None else shm_open_mode,
+            "record_replay_mode": os.environ.get("FAULTCORE_RECORD_REPLAY_MODE", "off")
+            if record_replay_mode is None
+            else record_replay_mode,
             "record_replay_path": record_replay_path,
             "policy_sources": policy_sources or [],
         },

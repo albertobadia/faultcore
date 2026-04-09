@@ -13,11 +13,11 @@ struct SessionState {
     ops: u64,
 }
 
-pub struct L5Session {
+pub struct R1SessionGuard {
     state_by_fd: Mutex<HashMap<i32, SessionState>>,
 }
 
-impl L5Session {
+impl R1SessionGuard {
     pub fn new() -> Self {
         Self {
             state_by_fd: Mutex::new(HashMap::new()),
@@ -102,15 +102,15 @@ impl L5Session {
     }
 }
 
-impl Default for L5Session {
+impl Default for R1SessionGuard {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Layer for L5Session {
+impl Layer for R1SessionGuard {
     fn stage(&self) -> LayerStage {
-        LayerStage::L5
+        LayerStage::R1
     }
 
     fn process(&self, ctx: &PacketContext<'_>) -> LayerDecision {
@@ -122,7 +122,7 @@ impl Layer for L5Session {
     }
 
     fn name(&self) -> &str {
-        "L5_Session"
+        "R1_SessionGuard"
     }
 }
 
@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn precheck_enforces_max_ops_with_drop() {
-        let layer = L5Session::new();
+        let layer = R1SessionGuard::new();
         let mut cfg = budget_config(1);
         cfg.session_max_ops = 1;
 
@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn precheck_enforces_max_bytes_with_timeout_action() {
-        let layer = L5Session::new();
+        let layer = R1SessionGuard::new();
         let mut cfg = budget_config(2);
         cfg.session_max_bytes_tx = 3;
         cfg.session_budget_timeout_ms = 55;
@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn precheck_enforces_duration_with_connection_error_action() {
-        let layer = L5Session::new();
+        let layer = R1SessionGuard::new();
         let mut cfg = budget_config(3);
         cfg.session_max_duration_ms = 1;
         cfg.session_error_kind = 2;
@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn clear_fd_state_resets_budget_state() {
-        let layer = L5Session::new();
+        let layer = R1SessionGuard::new();
         let mut cfg = budget_config(1);
         cfg.session_max_ops = 1;
 

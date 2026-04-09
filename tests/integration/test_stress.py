@@ -5,6 +5,7 @@ import socket
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -25,16 +26,13 @@ def read_rss_kb() -> int:
 
 
 def tcp_echo_once(host: str, port: int, payload: str) -> None:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(3.0)
-    try:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(3.0)
         sock.connect((host, port))
         sock.sendall(f"{payload}\n".encode())
         data = sock.recv(4096)
         if not data.startswith(b"ECHO:"):
             raise RuntimeError(f"unexpected response: {data!r}")
-    finally:
-        sock.close()
 
 
 def ensure_shm_ready() -> str:
@@ -68,7 +66,7 @@ class StressStats:
 
 def run_stress_phase(
     label: str,
-    call_fn,
+    call_fn: Callable[[str], None],
     *,
     duration_s: float,
     workers: int,

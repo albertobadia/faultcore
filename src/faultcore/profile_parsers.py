@@ -68,15 +68,15 @@ def parse_duration(t: str) -> int:
 
 def parse_size(t: str) -> int:
     normalized = _non_empty_normalized(t, "size must be non-empty")
-    for suffix, multiplier in _SIZE_SUFFIX_MULTIPLIERS.items():
-        if normalized.endswith(suffix):
-            value_str = normalized[: -len(suffix)]
-            try:
-                value = float(value_str)
-            except ValueError as e:
-                raise ValueError(f"size value '{value_str}' is not a valid number") from e
-            _ensure_range(value, 0, float("inf"), "size must be >= 0")
-            return int(value * multiplier)
+    matched = _match_suffix_multiplier(normalized, _SIZE_SUFFIX_MULTIPLIERS)
+    if matched is not None:
+        value_str, multiplier = matched
+        try:
+            value = float(value_str)
+        except ValueError as e:
+            raise ValueError(f"size value '{value_str}' is not a valid number") from e
+        _ensure_range(value, 0, float("inf"), "size must be >= 0")
+        return int(value * multiplier)
     raise ValueError("size must be in format 'N<suffix>' (e.g., '1kb', '5mb', '1gb', '100mbps', '1gbps')")
 
 
@@ -138,7 +138,14 @@ def _non_empty_normalized(value: str, error_message: str) -> str:
     return normalized
 
 
-def _rate_to_bps(value: float | int, multiplier: int) -> int:
+def _match_suffix_multiplier(value: str, multipliers: dict[str, int]) -> tuple[str, int] | None:
+    for suffix, multiplier in multipliers.items():
+        if value.endswith(suffix):
+            return value[: -len(suffix)], multiplier
+    return None
+
+
+def _rate_to_bps(value: str | float | int, multiplier: int) -> int:
     return int(_as_non_negative_float(float(value), "rate must be >= 0") * multiplier)
 
 
@@ -165,15 +172,6 @@ def _parse_single_port(raw: str, error_message: str) -> int:
 
 def _validate_port_bounds(value: int, field_name: str) -> None:
     _ensure_range(value, _PORT_MIN, _PORT_MAX, f"target {field_name} must be between 0 and 65535")
-
-
-def _as_positive_int(value: int | None, error_message: str) -> int | None:
-    if value is None:
-        return None
-    parsed = int(value)
-    if parsed <= 0:
-        raise ValueError(error_message)
-    return parsed
 
 
 def _target_profile_base(
@@ -229,25 +227,15 @@ def _parse_priority(priority: str | int | None) -> int:
     return parsed_priority
 
 
-def _add_positive_limit(
-    profile: dict[str, int],
-    key: str,
-    value: int | None,
-    error_message: str,
-) -> None:
-    parsed = _as_positive_int(value, error_message)
-    if parsed is not None:
-        profile[key] = parsed
-
-
 def parse_rate(rate: str) -> int:
     if not isinstance(rate, str):
         raise TypeError("rate must be a string with suffix (e.g., '100mbps', '1gbps', '500kbps', '1000bps')")
 
     normalized_rate = _non_empty_normalized(rate, "rate must be non-empty")
-    for suffix, multiplier in _RATE_SUFFIX_MULTIPLIERS.items():
-        if normalized_rate.endswith(suffix):
-            return _rate_to_bps(normalized_rate[: -len(suffix)], multiplier)
+    matched = _match_suffix_multiplier(normalized_rate, _RATE_SUFFIX_MULTIPLIERS)
+    if matched is not None:
+        value, multiplier = matched
+        return _rate_to_bps(value, multiplier)
 
     raise ValueError("rate must include a unit suffix (e.g., '100mbps', '1gbps', '500kbps', '1000bps')")
 
@@ -278,9 +266,7 @@ def parse_burst_loss(value: str) -> int:
 
 def parse_seed(value: str | int) -> int:
     if isinstance(value, int):
-        if value < 0:
-            raise ValueError("seed must be >= 0")
-        return value
+        return _as_non_negative_int(value, "seed must be >= 0")
     if not isinstance(value, str):
         raise TypeError("seed must be a string or integer")
 
@@ -291,10 +277,7 @@ def parse_seed(value: str | int) -> int:
     if normalized.startswith(("0b", "0B")):
         return _parse_prefixed_int(normalized, base=2, error_message=f"invalid binary seed '{value}'")
 
-    parsed = _parse_int_value(normalized, f"invalid seed '{value}'")
-    if parsed < 0:
-        raise ValueError("seed must be >= 0")
-    return parsed
+    return _as_non_negative_int(_parse_int_value(normalized, f"invalid seed '{value}'"), "seed must be >= 0")
 
 
 def parse_port(value: str | int) -> tuple[int, int | None, int | None]:
@@ -313,14 +296,28 @@ def parse_port(value: str | int) -> tuple[int, int | None, int | None]:
             raise ValueError("port range start must be <= end")
         return 0, start, end
     if "," in normalized:
-        first_port, *_ = normalized.split(",")
-        single_port = _parse_single_port(first_port, "port list must contain valid integers")
-        return single_port, None, None
+        raise ValueError("port list format is not supported; use a single port or a range like '80-90'")
     parsed = _parse_single_port(
         normalized,
         "port must be a valid integer, range (e.g., '80-90'), or list (e.g., '80,443')",
     )
     return parsed, None, None
+
+
+def parse_port_list(value: str | int | None) -> list[int] | None:
+    if value is None or isinstance(value, int):
+        return None
+    if not isinstance(value, str):
+        raise TypeError("port must be a string or integer")
+    normalized = _non_empty_normalized(value, "port must be non-empty")
+    if "," not in normalized:
+        return None
+    parts = [part.strip() for part in normalized.split(",")]
+    if any(not part for part in parts):
+        raise ValueError("port list must contain valid integers")
+    parsed_ports = [_parse_single_port(part, "port list must contain valid integers") for part in parts]
+    unique_ports = list(dict.fromkeys(parsed_ports))
+    return unique_ports
 
 
 def build_direction_profile(

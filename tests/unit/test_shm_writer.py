@@ -7,6 +7,7 @@ from contextlib import suppress
 
 import pytest
 
+import faultcore.shm_writer as shm_writer_module
 from faultcore.shm_writer import (
     FAULTCORE_MAGIC,
     MAX_TIDS,
@@ -104,6 +105,35 @@ class TestSHMWriterGracefulDegradation:
         writer = SHMWriter()
         getattr(writer, method_name)(*args)
         assert writer._mmap is None
+
+    def test_try_open_closes_fd_when_mmap_fails(self, monkeypatch):
+        opened: list[int] = []
+        closed: list[int] = []
+        real_open = os.open
+        real_close = os.close
+
+        def fake_open(_path: str, _flags: int, _mode: int = 0o600) -> int:
+            fd = real_open("/dev/null", os.O_RDONLY)
+            opened.append(fd)
+            return fd
+
+        def fake_close(fd: int) -> None:
+            closed.append(fd)
+            real_close(fd)
+
+        def fail_mmap(*_args, **_kwargs):
+            raise OSError("mmap failure")
+
+        monkeypatch.setattr(shm_writer_module.os, "open", fake_open)
+        monkeypatch.setattr(shm_writer_module.os, "close", fake_close)
+        monkeypatch.setattr(shm_writer_module.mmap, "mmap", fail_mmap)
+
+        writer = SHMWriter("faultcore_test_mmap_failure")
+
+        assert writer._mmap is None
+        assert writer._fd is None
+        assert opened
+        assert closed == opened
 
     def test_write_targets_attempts_reopen_when_shm_appears_later(self):
         name = f"faultcore_test_{uuid.uuid4().hex}"

@@ -116,9 +116,9 @@ fn observed_hostname_for_slot_endpoint(tid_slot: usize, endpoint: Endpoint) -> O
     let now_ns = monotonic_now_ns();
     let mut map = observed_hostname_by_endpoint().lock();
 
-    let (selected_key, observed_at_ns) = map
+    let (selected_key, observed_at_ns, hostname) = map
         .get(&key)
-        .map(|item| (key, item.observed_at_ns))
+        .map(|item| (key, item.observed_at_ns, item.hostname.clone()))
         .or_else(|| {
             map.iter()
                 .filter(|(candidate, _)| {
@@ -127,7 +127,7 @@ fn observed_hostname_for_slot_endpoint(tid_slot: usize, endpoint: Endpoint) -> O
                         && candidate.addr == endpoint.addr
                 })
                 .max_by_key(|(_, item)| item.observed_at_ns)
-                .map(|(candidate, item)| (*candidate, item.observed_at_ns))
+                .map(|(candidate, item)| (*candidate, item.observed_at_ns, item.hostname.clone()))
         })?;
 
     if now_ns.saturating_sub(observed_at_ns) > HOSTNAME_OBSERVATION_TTL_NS {
@@ -135,7 +135,7 @@ fn observed_hostname_for_slot_endpoint(tid_slot: usize, endpoint: Endpoint) -> O
         return None;
     }
 
-    map.get(&selected_key).map(|item| item.hostname.clone())
+    Some(hostname)
 }
 
 pub fn observe_sni_for_fd(fd: c_int, sni: &str) {
@@ -160,11 +160,13 @@ pub fn clone_observed_semantic_for_fd(src_fd: c_int, dst_fd: c_int) {
         return;
     }
     let mut map = observed_sni_by_fd().lock();
-    let cloned = map.get(&src_fd).cloned();
-    if let Some(sni) = cloned {
-        map.insert(dst_fd, sni);
-    } else {
-        map.remove(&dst_fd);
+    match map.get(&src_fd).cloned() {
+        Some(sni) => {
+            map.insert(dst_fd, sni);
+        }
+        None => {
+            map.remove(&dst_fd);
+        }
     }
 }
 

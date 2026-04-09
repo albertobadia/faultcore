@@ -32,7 +32,7 @@ def _run_bandwidth_send(host: str, port: int, data_size: int, duration_sec: floa
                     total_sent += data_size
                     ready, _, _ = select.select([sock], [], [], 0)
                     if ready:
-                        _ = sock.recv(4096)
+                        sock.recv(4096)
                 except Exception as exc:
                     print(f"Send error: {exc}")
                     return None
@@ -115,19 +115,19 @@ def _run_throughput(host: str, port: int, num_messages: int) -> float | None:
     return None if successful == 0 else msgs_per_sec
 
 
-def test_bandwidth_send(host: str, port: int, probe_data_size: int, probe_duration_sec: float):
+def test_bandwidth_send(host: str, port: int, probe_data_size: int, probe_duration_sec: float) -> None:
     bytes_per_sec = _run_bandwidth_send(host, port, probe_data_size, probe_duration_sec)
     assert bytes_per_sec is not None
     assert bytes_per_sec > 0
 
 
-def test_bandwidth_recv(host: str, port: int, probe_duration_sec: float):
+def test_bandwidth_recv(host: str, port: int, probe_duration_sec: float) -> None:
     bytes_per_sec = _run_bandwidth_recv(host, port, probe_duration_sec)
     assert bytes_per_sec is not None
     assert bytes_per_sec > 0
 
 
-def test_throughput(host: str, port: int, probe_num_messages: int):
+def test_throughput(host: str, port: int, probe_num_messages: int) -> None:
     msgs_per_sec = _run_throughput(host, port, probe_num_messages)
     assert msgs_per_sec is not None
     assert msgs_per_sec > 0

@@ -10,15 +10,14 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=9001)
     args = parser.parse_args()
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind((args.host, args.port))
-
-    print(f"[{datetime.now().isoformat()}] UDP echo server on {args.host}:{args.port}")
-    while True:
-        data, addr = sock.recvfrom(65535)
-        if not data:
-            continue
-        sock.sendto(data, addr)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.bind((args.host, args.port))
+        print(f"[{datetime.now().isoformat()}] UDP echo server on {args.host}:{args.port}")
+        while True:
+            data, addr = sock.recvfrom(65535)
+            if not data:
+                continue
+            sock.sendto(data, addr)
 
 
 if __name__ == "__main__":

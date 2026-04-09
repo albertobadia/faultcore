@@ -3,23 +3,31 @@ import argparse
 import socket
 import statistics
 import time
+from typing import TypedDict
 
 import faultcore
 
 
+class BenchmarkResult(TypedDict):
+    count: int
+    total_s: float
+    avg_ms: float
+    p95_ms: float
+    min_ms: float
+    max_ms: float
+    throughput_rps: float
+
+
 def tcp_echo(host: str, port: int, message: str) -> str:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(5)
-    try:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(5)
         sock.connect((host, port))
         sock.sendall(f"{message}\n".encode())
         response = sock.recv(4096)
         return response.decode().strip()
-    finally:
-        sock.close()
 
 
-def run_calls(fn, *, count: int) -> dict[str, float]:
+def run_calls(fn, *, count: int) -> BenchmarkResult:
     samples_ms: list[float] = []
     start = time.perf_counter()
     for idx in range(count):
@@ -32,7 +40,7 @@ def run_calls(fn, *, count: int) -> dict[str, float]:
     sorted_samples = sorted(samples_ms)
     p95_idx = max(0, min(len(sorted_samples) - 1, int(len(sorted_samples) * 0.95) - 1))
     return {
-        "count": float(count),
+        "count": count,
         "total_s": elapsed,
         "avg_ms": statistics.fmean(samples_ms),
         "p95_ms": sorted_samples[p95_idx],
@@ -42,10 +50,10 @@ def run_calls(fn, *, count: int) -> dict[str, float]:
     }
 
 
-def print_result(title: str, data: dict[str, float]) -> None:
+def print_result(title: str, data: BenchmarkResult) -> None:
     print(f"{title}:")
     print(
-        f"  count={int(data['count'])} total={data['total_s']:.3f}s "
+        f"  count={data['count']} total={data['total_s']:.3f}s "
         f"avg={data['avg_ms']:.3f}ms p95={data['p95_ms']:.3f}ms "
         f"min={data['min_ms']:.3f}ms max={data['max_ms']:.3f}ms "
         f"throughput={data['throughput_rps']:.2f} rps"

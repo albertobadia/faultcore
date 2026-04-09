@@ -12,23 +12,23 @@ from faultcore import rate, timeout
 
 
 @rate("10mbps")
-async def fetch_url(session: aiohttp.ClientSession, url: str):
+async def fetch_url(session: aiohttp.ClientSession, url: str) -> dict[str, object]:
     async with session.get(url) as response:
         return await response.json()
 
 
 @timeout(connect="300ms")
-async def fetch_with_latency(session: aiohttp.ClientSession, url: str):
+async def fetch_with_latency(session: aiohttp.ClientSession, url: str) -> str:
     async with session.get(url) as response:
         return await response.text()
 
 
-async def fetch_plain(session: aiohttp.ClientSession, url: str):
+async def fetch_plain(session: aiohttp.ClientSession, url: str) -> dict[str, object]:
     async with session.get(url) as response:
         return await response.json()
 
 
-async def main():
+async def main() -> None:
     print("=" * 60)
     print(" Async HTTP Examples with faultcore ".center(60, "="))
     print("=" * 60 + "\n")
@@ -39,8 +39,8 @@ async def main():
         try:
             result = await fetch_plain(session, "https://httpbin.org/get")
             print(f"Status: OK - {result.get('origin', 'N/A')}")
-        except Exception as e:
-            print(f"Error: {e}")
+        except Exception as exc:
+            print(f"Error: {exc}")
         print(f"Time: {time.time() - start:.3f}s\n")
 
         print("--- Rate Setting (10 Mbps equivalent) ---")

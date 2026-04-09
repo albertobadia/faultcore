@@ -1,6 +1,6 @@
 [project]
 name = "faultcore"
-version = "2026.3.28"
+version = "2026.4.9"
 description = "Fault injection and testing core"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -6,6 +6,7 @@ from faultcore.profile_parsers import (
     build_target_profile,
     build_timeout_profile,
     parse_duration,
+    parse_port,
     parse_rate,
     parse_size,
 )
@@ -56,13 +57,13 @@ class TestParseSizeEdgeCases:
         assert parse_size(raw_value) == expected
 
 
-def test_build_target_profile_includes_unified_fields_for_ipv4_host():
+def test_build_target_profile_includes_unified_fields_for_ipv4_host() -> None:
     profile = build_target_profile(host="10.1.2.3", port=443, protocol="tcp")
     assert profile["address_family"] == 1
     assert profile["addr"] == [10, 1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 
 
-def test_build_target_profile_accepts_ipv6_host_parameter():
+def test_build_target_profile_accepts_ipv6_host_parameter() -> None:
     profile = build_target_profile(host="2001:db8::10", port=443, protocol="tcp")
     assert profile == {
         "enabled": 1,
@@ -77,7 +78,7 @@ def test_build_target_profile_accepts_ipv6_host_parameter():
     }
 
 
-def test_build_target_profile_accepts_ipv6_cidr():
+def test_build_target_profile_accepts_ipv6_cidr() -> None:
     profile = build_target_profile(cidr="2001:db8:abcd::/48", protocol="udp")
     assert profile == {
         "enabled": 1,
@@ -92,7 +93,7 @@ def test_build_target_profile_accepts_ipv6_cidr():
     }
 
 
-def test_build_target_profile_accepts_bracketed_ipv6_target_string():
+def test_build_target_profile_accepts_bracketed_ipv6_target_string() -> None:
     profile = build_target_profile(target="tcp://[2001:db8::10]:443")
     assert profile["kind"] == 1
     assert profile["address_family"] == 2
@@ -102,66 +103,71 @@ def test_build_target_profile_accepts_bracketed_ipv6_target_string():
     assert profile["addr"] == [32, 1, 13, 184, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16]
 
 
-def test_build_target_profile_accepts_explicit_any_protocol_parameter():
+def test_build_target_profile_accepts_explicit_any_protocol_parameter() -> None:
     profile = build_target_profile(host="10.1.2.3", port=443, protocol="any")
     assert profile["protocol"] == 0
 
 
-def test_build_target_profile_accepts_any_protocol_in_target_string():
+def test_build_target_profile_accepts_any_protocol_in_target_string() -> None:
     profile = build_target_profile(target="any://10.1.2.3:443")
     assert profile["protocol"] == 0
     assert profile["kind"] == 1
     assert profile["address_family"] == 1
 
 
-def test_build_target_profile_accepts_port_range():
+def test_build_target_profile_accepts_port_range() -> None:
     profile = build_target_profile(host="10.1.2.3", port="8000-9000")
     assert profile["port"] == 0
     assert profile["port_start"] == 8000
     assert profile["port_end"] == 9000
 
 
-def test_build_target_profile_rejects_invalid_port_range_order():
+def test_build_target_profile_rejects_invalid_port_range_order() -> None:
     with pytest.raises(ValueError, match=r"(?i)port.*<="):
         build_target_profile(host="10.1.2.3", port="9000-8000")
 
 
-def test_build_target_profile_rejects_unbracketed_ipv6_target_string():
+def test_parse_port_rejects_comma_separated_port_list() -> None:
+    with pytest.raises(ValueError, match=r"(?i)port"):
+        parse_port("80,443")
+
+
+def test_build_target_profile_rejects_unbracketed_ipv6_target_string() -> None:
     with pytest.raises(ValueError, match=r"(?i)bracket"):
         build_target_profile(target="tcp://2001:db8::10:443")
 
 
-def test_build_target_profile_rejects_invalid_prefix_len_by_family():
+def test_build_target_profile_rejects_invalid_prefix_len_by_family() -> None:
     with pytest.raises(ValueError, match=r"(?i)cidr"):
         build_target_profile(cidr="10.0.0.0/33")
     with pytest.raises(ValueError, match=r"(?i)cidr"):
         build_target_profile(cidr="2001:db8::/129")
 
 
-def test_build_target_profile_accepts_hostname_and_normalizes_punycode_lowercase():
+def test_build_target_profile_accepts_hostname_and_normalizes_punycode_lowercase() -> None:
     profile = build_target_profile(hostname="T\u00e4st.FOO.com")
     assert profile["kind"] == 0
     assert profile["hostname"] == "xn--tst-qla.foo.com"
     assert profile["address_family"] == 0
 
 
-def test_build_target_profile_accepts_sni_wildcard():
+def test_build_target_profile_accepts_sni_wildcard() -> None:
     profile = build_target_profile(sni="*.Foo.com")
     assert profile["kind"] == 0
     assert profile["sni"] == "*.foo.com"
 
 
-def test_build_target_profile_rejects_hostname_and_sni_together():
+def test_build_target_profile_rejects_hostname_and_sni_together() -> None:
     with pytest.raises(ValueError, match=r"(?i)both hostname and sni"):
         build_target_profile(hostname="api.foo.com", sni="api.foo.com")
 
 
-def test_build_target_profile_rejects_mixed_ip_and_semantic_targeting():
+def test_build_target_profile_rejects_mixed_ip_and_semantic_targeting() -> None:
     with pytest.raises(ValueError, match=r"(?i)mix host/cidr with hostname/sni"):
         build_target_profile(host="10.1.2.3", hostname="api.foo.com")
 
 
-def test_build_session_budget_profile_accepts_timeout_action():
+def test_build_session_budget_profile_accepts_timeout_action() -> None:
     profile = build_session_budget_profile(
         max_tx="1kb",
         max_ops=2,
@@ -176,7 +182,7 @@ def test_build_session_budget_profile_accepts_timeout_action():
     }
 
 
-def test_build_session_budget_profile_accepts_connection_error_action():
+def test_build_session_budget_profile_accepts_connection_error_action() -> None:
     profile = build_session_budget_profile(
         max_duration="1s",
         action="connection_error",
@@ -189,7 +195,7 @@ def test_build_session_budget_profile_accepts_connection_error_action():
     }
 
 
-def test_build_session_budget_profile_rejects_invalid_combinations():
+def test_build_session_budget_profile_rejects_invalid_combinations() -> None:
     with pytest.raises(ValueError, match=r"(?i)at least one limit"):
         build_session_budget_profile(action="drop")
     with pytest.raises(ValueError, match=r"(?i)required.*action=timeout"):
@@ -199,7 +205,7 @@ def test_build_session_budget_profile_rejects_invalid_combinations():
 
 
 @pytest.mark.parametrize("value", [10, 10.5])
-def test_parse_rate_rejects_numeric_types(value):
+def test_parse_rate_rejects_numeric_types(value) -> None:
     with pytest.raises(TypeError, match=r"must be a string"):
         parse_rate(value)  # type: ignore[arg-type]
 
@@ -212,7 +218,7 @@ def test_parse_rate_rejects_numeric_types(value):
         ("500kbps", 500_000),
     ],
 )
-def test_parse_rate_accepts_string_with_suffix(raw_value, expected):
+def test_parse_rate_accepts_string_with_suffix(raw_value, expected) -> None:
     assert parse_rate(raw_value) == expected
 
 
@@ -226,12 +232,12 @@ def test_parse_rate_accepts_string_with_suffix(raw_value, expected):
         ("5s", 5000),
     ],
 )
-def test_parse_duration_parses_ms_and_seconds(raw_value, expected):
+def test_parse_duration_parses_ms_and_seconds(raw_value, expected) -> None:
     assert parse_duration(raw_value) == expected
 
 
 @pytest.mark.parametrize("invalid_value", ["200", "invalid"])
-def test_parse_duration_rejects_invalid_format(invalid_value):
+def test_parse_duration_rejects_invalid_format(invalid_value) -> None:
     with pytest.raises(ValueError, match=r"duration must be"):
         parse_duration(invalid_value)
 
@@ -246,7 +252,7 @@ def test_parse_duration_rejects_invalid_format(invalid_value):
         ("1gbps", 1_000_000_000),
     ],
 )
-def test_parse_size_parses_size_and_rate_suffixes(raw_value, expected):
+def test_parse_size_parses_size_and_rate_suffixes(raw_value, expected) -> None:
     assert parse_size(raw_value) == expected
 
 
@@ -257,29 +263,29 @@ def test_parse_size_parses_size_and_rate_suffixes(raw_value, expected):
         ("invalidkb", r"size value"),
     ],
 )
-def test_parse_size_rejects_invalid_format(invalid_value, error_match):
+def test_parse_size_rejects_invalid_format(invalid_value, error_match) -> None:
     with pytest.raises(ValueError, match=error_match):
         parse_size(invalid_value)
 
 
-def test_build_timeout_profile_parses_connect_and_recv():
+def test_build_timeout_profile_parses_connect_and_recv() -> None:
     profile = build_timeout_profile(connect="500ms", recv="1s")
     assert profile == {"connect_ms": 500, "recv_ms": 1000}
 
 
-def test_build_timeout_profile_accepts_partial():
+def test_build_timeout_profile_accepts_partial() -> None:
     profile = build_timeout_profile(connect="200ms")
     assert profile == {"connect_ms": 200}
     profile = build_timeout_profile(recv="300ms")
     assert profile == {"recv_ms": 300}
 
 
-def test_build_timeout_profile_accepts_empty():
+def test_build_timeout_profile_accepts_empty() -> None:
     profile = build_timeout_profile()
     assert profile == {}
 
 
-def test_build_payload_mutation_profile_parses_expected_shape():
+def test_build_payload_mutation_profile_parses_expected_shape() -> None:
     profile = build_payload_mutation_profile(
         enabled=True,
         type="inject_bytes",

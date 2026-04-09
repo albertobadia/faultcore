@@ -4,6 +4,7 @@ import os
 import socket
 import sys
 import time
+from collections.abc import Callable
 from datetime import datetime
 
 import faultcore
@@ -23,19 +24,16 @@ def ensure_shm_ready() -> str:
 
 
 def tcp_echo(host: str, port: int, message: str) -> str:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(5)
-    try:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(5)
         sock.connect((host, port))
         sock.sendall(f"{message}\n".encode())
         data = sock.recv(4096)
         return data.decode("utf-8").strip()
-    finally:
-        sock.close()
 
 
-def measure_ms(callable_fn, count: int = 3) -> float:
-    samples = []
+def measure_ms(callable_fn: Callable[[str], str], count: int = 3) -> float:
+    samples: list[float] = []
     for idx in range(count):
         started = time.perf_counter()
         response = callable_fn(f"target-test-{idx}")

@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="680" viewBox="0 0 1200 680" role="img" aria-labelledby="title desc">
+  <title id="title">Faultcore high-level interceptor flow</title>
+  <desc id="desc">Python application and policies write configuration to shared memory, Linux interceptor hooks socket syscalls, faultcore network engine evaluates runtime stages R0 to R8 and applies directives before calling libc.</desc>
+  <defs>
+    <style>
+      .title { font: 700 34px Arial, sans-serif; fill: #0f172a; }
+      .subtitle { font: 400 16px Arial, sans-serif; fill: #334155; }
+      .h { font: 700 18px Arial, sans-serif; fill: #0f172a; }
+      .p { font: 400 14px Arial, sans-serif; fill: #1e293b; }
+      .small { font: 400 13px Arial, sans-serif; fill: #334155; }
+      .chip { font: 600 12px Arial, sans-serif; fill: #0f172a; }
+      .card { stroke: #cbd5e1; stroke-width: 2; rx: 14; ry: 14; }
+      .arrow { stroke: #334155; stroke-width: 2.5; fill: none; marker-end: url(#arrowhead); }
+      .arrow-soft { stroke: #64748b; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#334155" />
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1200" height="680" fill="#f8fafc" />
+
+  <text x="40" y="54" class="title">Faultcore: non-intrusive network fault testing</text>
+  <text x="40" y="82" class="subtitle">Linux interceptor + shared memory config + deterministic R0..R8 evaluation for Docker and CI workloads</text>
+
+  <rect x="40" y="130" width="290" height="180" class="card" fill="#e0f2fe" />
+  <text x="62" y="162" class="h">Python app</text>
+  <text x="62" y="188" class="p">- decorators and policy API</text>
+  <text x="62" y="210" class="p">- target and context rules</text>
+  <text x="62" y="232" class="p">- CLI run/report orchestration</text>
+  <rect x="62" y="252" width="240" height="34" rx="10" ry="10" fill="#bae6fd" stroke="#7dd3fc" />
+  <text x="74" y="274" class="chip">writes effective policy by thread</text>
+
+  <rect x="390" y="130" width="310" height="180" class="card" fill="#dcfce7" />
+  <text x="412" y="162" class="h">Shared memory contract</text>
+  <text x="412" y="188" class="p">- stable binary layout</text>
+  <text x="412" y="210" class="p">- policy rows + target rules</text>
+  <text x="412" y="232" class="p">- deterministic read path</text>
+  <rect x="412" y="252" width="258" height="34" rx="10" ry="10" fill="#bbf7d0" stroke="#86efac" />
+  <text x="424" y="274" class="chip">single source for runtime config</text>
+
+  <rect x="760" y="130" width="400" height="180" class="card" fill="#ede9fe" />
+  <text x="782" y="162" class="h">Linux interceptor (LD_PRELOAD)</text>
+  <text x="782" y="188" class="p">hooks socket calls</text>
+  <text x="782" y="210" class="p">maps decisions to syscall outcomes</text>
+  <text x="782" y="232" class="p">calls original libc when continue path applies</text>
+  <rect x="782" y="252" width="350" height="34" rx="10" ry="10" fill="#ddd6fe" stroke="#c4b5fd" />
+  <text x="794" y="274" class="chip">non-intrusive to application business code</text>
+
+  <rect x="40" y="370" width="1120" height="250" class="card" fill="#ffffff" />
+  <text x="62" y="404" class="h">Network evaluation pipeline</text>
+  <text x="420" y="404" class="small">R0 config resolve executes before this chain (it prepares context, not a fault decision stage)</text>
+
+  <rect x="62" y="430" width="146" height="62" rx="10" ry="10" fill="#fee2e2" stroke="#fecaca" />
+  <text x="77" y="456" class="chip">R1 session guard</text>
+  <text x="77" y="476" class="small">budget precheck gate</text>
+
+  <rect x="218" y="430" width="146" height="62" rx="10" ry="10" fill="#ffedd5" stroke="#fed7aa" />
+  <text x="233" y="456" class="chip">R2 chaos base</text>
+  <text x="233" y="476" class="small">latency loss burst</text>
+
+  <rect x="374" y="430" width="146" height="62" rx="10" ry="10" fill="#fef9c3" stroke="#fde68a" />
+  <text x="389" y="456" class="chip">R3 flow control</text>
+  <text x="389" y="476" class="small">rate shaping</text>
+
+  <rect x="530" y="430" width="146" height="62" rx="10" ry="10" fill="#dcfce7" stroke="#bbf7d0" />
+  <text x="545" y="456" class="chip">R4 timing variation</text>
+  <text x="545" y="476" class="small">jitter variance</text>
+
+  <rect x="686" y="430" width="146" height="62" rx="10" ry="10" fill="#dbeafe" stroke="#bfdbfe" />
+  <text x="701" y="456" class="chip">R5 transport faults</text>
+  <text x="701" y="476" class="small">timeouts conn errors</text>
+
+  <rect x="842" y="430" width="146" height="62" rx="10" ry="10" fill="#ede9fe" stroke="#ddd6fe" />
+  <text x="857" y="456" class="chip">R7 payload transform</text>
+  <text x="857" y="476" class="small">payload mutation</text>
+
+  <rect x="998" y="430" width="146" height="62" rx="10" ry="10" fill="#fce7f3" stroke="#fbcfe8" />
+  <text x="1013" y="456" class="chip">R8 post effects</text>
+  <text x="1013" y="476" class="small">reorder duplicate</text>
+
+  <text x="62" y="536" class="p">Decision outputs: continue, delay, drop, timeout, connection error, nxdomain, mutate, reorder, duplicate</text>
+  <text x="62" y="562" class="p">Optional record/replay: capture and replay fault decisions for reproducible CI debugging</text>
+  <text x="62" y="592" class="small">R6 resolver faults is DNS-only and evaluated on lookup path (outside stream sequence)</text>
+
+  <path d="M330 220 L390 220" class="arrow" />
+  <path d="M700 220 L760 220" class="arrow" />
+  <path d="M960 310 L960 370" class="arrow" />
+  <path d="M760 520 L1145 520" class="arrow-soft" />
+  <path d="M1145 520 L1145 340" class="arrow-soft" />
+  <path d="M1145 340 L1060 340" class="arrow-soft" />
+  <text x="980" y="360" class="small">apply directive to syscall</text>
+</svg>

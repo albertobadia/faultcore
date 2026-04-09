@@ -311,8 +311,7 @@ def fault(policy_name: str = "auto") -> Callable[[Callable[..., Any]], Callable[
                 return func(*args, **kwargs)
 
             profiles = {field: policy[field] for field in _POLICY_FIELDS if field in policy}
-            wrapped = FaultWrapper(func, policy_name=resolved_policy_name, **profiles)
-            return wrapped(*args, **kwargs)
+            return FaultWrapper(func, policy_name=resolved_policy_name, **profiles)(*args, **kwargs)
 
         return wrapper
 

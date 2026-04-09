@@ -94,32 +94,34 @@ def _extract_scenario_metrics_path(command: list[str], env: dict[str, str]) -> P
         return Path(explicit)
 
     for idx, token in enumerate(command):
-        if token == "--metrics-out" and idx + 1 < len(command):
-            return Path(command[idx + 1])
-        if token.startswith("--metrics-out="):
-            value = token[len("--metrics-out=") :]
-            if value:
-                return Path(value)
+        if token == "--metrics-out":
+            if idx + 1 < len(command):
+                return Path(command[idx + 1])
+            continue
+        if not token.startswith("--metrics-out="):
+            continue
+        value = token[len("--metrics-out=") :]
+        if value:
+            return Path(value)
 
     return None
 
 
-def _coerce_int(value: Any, default: int = 0) -> int:
+def _coerce_numeric(value: Any, convert: Callable[[Any], int | float], default: int | float) -> int | float:
     if isinstance(value, bool):
         return default
     try:
-        return int(float(value))
+        return convert(value)
     except (TypeError, ValueError):
         return default
+
+
+def _coerce_int(value: Any, default: int = 0) -> int:
+    return int(_coerce_numeric(value, lambda raw: int(float(raw)), default))
 
 
 def _coerce_float(value: Any, default: float = 0.0) -> float:
-    if isinstance(value, bool):
-        return default
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
+    return float(_coerce_numeric(value, float, default))
 
 
 _SCENARIO_METRICS = (
@@ -180,6 +182,7 @@ def _write_strict_probe_failure_run_json(
     duration_ms: int,
     interceptor_path: str | None,
     ld_preload_effective: str,
+    effective_env: dict[str, str],
 ) -> None:
     write_run_json(
         run_json,
@@ -193,6 +196,9 @@ def _write_strict_probe_failure_run_json(
             ld_preload_effective=ld_preload_effective,
             interceptor_active=False,
             run_json_path=str(run_json),
+            record_replay_mode=effective_env.get("FAULTCORE_RECORD_REPLAY_MODE", "off"),
+            shm_name=effective_env.get("FAULTCORE_CONFIG_SHM", ""),
+            shm_open_mode=effective_env.get("FAULTCORE_SHM_OPEN_MODE", ""),
         ),
     )
 
@@ -221,7 +227,13 @@ def _configure_record_replay(env: dict[str, str], run_json: Path | None) -> str:
 def _run_subprocess(command: list[str], env: dict[str, str]) -> tuple[subprocess.CompletedProcess[str], str, str, str]:
     resolved_command = _resolve_command_for_subprocess(command)
     capture_output = is_pytest_command(command)
-    result = subprocess.run(resolved_command, env=env, check=False, capture_output=capture_output, text=capture_output)
+    result = subprocess.run(
+        resolved_command,
+        env=env,
+        check=False,
+        capture_output=capture_output,
+        text=capture_output,
+    )
     if not capture_output:
         return result, "", "", ""
 
@@ -376,6 +388,7 @@ def run_command(
                     duration_ms=duration_ms,
                     interceptor_path=interceptor_path,
                     ld_preload_effective=ld_preload_effective,
+                    effective_env=env,
                 )
             typer.echo("error: interceptor probe failed; strict mode requires active interceptor", err=True)
             raise typer.Exit(code=2)
@@ -430,6 +443,9 @@ def run_command(
             site_metrics=site_metrics,
             record_replay_path=record_replay_path,
             policy_sources=policy_sources,
+            record_replay_mode=env.get("FAULTCORE_RECORD_REPLAY_MODE", "off"),
+            shm_name=env.get("FAULTCORE_CONFIG_SHM", ""),
+            shm_open_mode=env.get("FAULTCORE_SHM_OPEN_MODE", ""),
         )
         resolved_scenario_metrics_path, scenario_metrics = _load_scenario_metrics(scenario_metrics_path)
         _merge_scenario_metrics_into_run_record(

@@ -27,9 +27,9 @@ pub use interceptor_bridge::{
     uplink_duplicate_count_for_addr_or_fd, uplink_duplicate_count_for_fd,
 };
 pub use layers::{
-    Direction, L1Chaos, L2QoS, L3Routing, L4Transport, L5Session, L6Presentation, L7Resolver,
-    Layer, LayerDecision, LayerStage, Mutation, MutationKind, MutationOutcome, MutationTarget,
-    Operation, PacketContext,
+    Direction, Layer, LayerDecision, LayerStage, Mutation, MutationKind, MutationOutcome,
+    MutationTarget, Operation, PacketContext, R1SessionGuard, R2ChaosBase, R3FlowControl,
+    R4TimingVariation, R5TransportFaults, R6ResolverFaults, R7PayloadTransform,
 };
 pub use record_replay::{
     RecordReplayCore, RecordReplayEvent, RecordReplayMode, record_replay_evaluate_or_replay,
@@ -57,7 +57,7 @@ pub use socket_runtime::{endpoint_for_addr_or_fd, endpoint_for_fd, monotonic_now
 
 static GLOBAL_ENGINE: OnceLock<ChaosEngine> = OnceLock::new();
 static GLOBAL_RUNTIME: OnceLock<InterceptorRuntime> = OnceLock::new();
-const FAULT_OSI_LAYER_COUNT: usize = 7;
+const RUNTIME_STAGE_COUNT: usize = 9;
 
 pub fn global_fault_osi_engine() -> &'static FaultOsiEngine {
     GLOBAL_ENGINE.get_or_init(ChaosEngine::new)
@@ -89,7 +89,7 @@ pub struct FaultOsiLayerMetricsSnapshot {
 #[derive(Debug, Clone, Copy)]
 pub struct FaultOsiMetricsSnapshot {
     pub len: u64,
-    pub layers: [FaultOsiLayerMetricsSnapshot; FAULT_OSI_LAYER_COUNT],
+    pub layers: [FaultOsiLayerMetricsSnapshot; RUNTIME_STAGE_COUNT],
     pub reload_applied_count: u64,
     pub reload_retry_count: u64,
 }
@@ -98,7 +98,7 @@ impl Default for FaultOsiMetricsSnapshot {
     fn default() -> Self {
         Self {
             len: 0,
-            layers: [FaultOsiLayerMetricsSnapshot::default(); FAULT_OSI_LAYER_COUNT],
+            layers: [FaultOsiLayerMetricsSnapshot::default(); RUNTIME_STAGE_COUNT],
             reload_applied_count: 0,
             reload_retry_count: 0,
         }
@@ -107,13 +107,15 @@ impl Default for FaultOsiMetricsSnapshot {
 
 fn stage_code(stage: LayerStage) -> u8 {
     match stage {
-        LayerStage::L1 => 1,
-        LayerStage::L2 => 2,
-        LayerStage::L3 => 3,
-        LayerStage::L4 => 4,
-        LayerStage::L5 => 5,
-        LayerStage::L6 => 6,
-        LayerStage::L7 => 7,
+        LayerStage::R0 => 0,
+        LayerStage::R1 => 1,
+        LayerStage::R2 => 2,
+        LayerStage::R3 => 3,
+        LayerStage::R4 => 4,
+        LayerStage::R5 => 5,
+        LayerStage::R6 => 6,
+        LayerStage::R7 => 7,
+        LayerStage::R8 => 8,
     }
 }
 
@@ -527,9 +529,9 @@ mod tests {
     #[test]
     fn metrics_snapshot_contract_is_stable() {
         let snapshot = global_fault_osi_metrics_snapshot();
-        assert_eq!(snapshot.len, 7);
-        assert_eq!(snapshot.layers[0].stage, 1);
-        assert_eq!(snapshot.layers[6].stage, 7);
+        assert_eq!(snapshot.len, 9);
+        assert_eq!(snapshot.layers[0].stage, 0);
+        assert_eq!(snapshot.layers[8].stage, 8);
     }
 
     #[test]

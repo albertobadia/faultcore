@@ -1,22 +1,16 @@
 name: Publish PyPI
 
 on:
-  push:
-    tags:
-      - "v*"
+  release:
+    types:
+      - published
   workflow_dispatch:
-    inputs:
-      repository:
-        description: "Target repository"
-        required: true
-        default: "pypi"
-        type: choice
-        options:
-          - pypi
-          - testpypi
 
 permissions:
   contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   build_wheels:
@@ -64,6 +58,7 @@ jobs:
   publish:
     name: Publish distribution
     needs: [build_wheels, build_sdist]
+    if: ${{ github.event_name == 'release' }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -81,16 +76,7 @@ jobs:
           path: dist
 
       - name: Publish to PyPI
-        if: ${{ github.event_name == 'push' || github.event.inputs.repository == 'pypi' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          skip-existing: true
-          verbose: true
-
-      - name: Publish to TestPyPI
-        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.repository == 'testpypi' }}
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          repository-url: https://test.pypi.org/legacy/
           skip-existing: true
           verbose: true

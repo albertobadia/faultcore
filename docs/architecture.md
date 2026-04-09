@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the current `faultcore` architecture after the FaultOSI cleanup.
+This document describes the current `faultcore` architecture using a runtime-stage execution graph (`R0..R8`).
 
 ## Design Goals
 
@@ -11,8 +11,10 @@ This document describes the current `faultcore` architecture after the FaultOSI 
 
 ## High-Level Layout
 
+![Faultcore interceptor flow](assets/faultcore-flow.svg)
+
 - `src/faultcore/`: Python API, decorators, policy registry, SHM writer.
-- `faultcore_network/`: FaultOSI engine, SHM contract/runtime, socket metadata helpers, interceptor bridge.
+- `faultcore_network/`: runtime-stage engine, SHM contract/runtime, socket metadata helpers, interceptor bridge.
 - `faultcore_interceptor/`: syscall hooks and original libc dispatch (`dlsym`/`RTLD_NEXT`).
 - `tests/`: Python unit/integration test suites.
 - Rust tests live in each Rust crate and are executed with `cargo test --manifest-path ...`.
@@ -22,7 +24,7 @@ This document describes the current `faultcore` architecture after the FaultOSI 
 ```mermaid
 flowchart LR
     P["src/faultcore<br/>Python API + SHM writer"]
-    N["faultcore_network<br/>FaultOSI + SHM runtime + bridge"]
+    N["faultcore_network<br/>Runtime stages + SHM runtime + bridge"]
     I["faultcore_interceptor<br/>LD_PRELOAD hooks + libc dispatch"]
     T["tests<br/>Python + Rust coverage"]
 
@@ -40,7 +42,7 @@ Diagram focus: ownership boundaries and primary call/data edges.
 1. Python decorator/policy writes a `FaultcoreConfig` row into SHM (`tid` slot).
 2. Interceptor hook is called (`send`, `recv`, `connect`, `sendto`, `recvfrom`, `getaddrinfo`).
 3. Interceptor asks `faultcore_network::interceptor_bridge` for effective runtime config.
-4. `ChaosEngine` runs FaultOSI stages in strict order (`L1..L7`).
+4. `ChaosEngine` runs runtime stages with operation-specific applicability (`R0..R8`).
 5. `InterceptorRuntime` maps `LayerDecision` to syscall directives (`sleep`, return value, `errno`).
 6. Interceptor applies directive and delegates to original libc function if needed.
 
@@ -52,7 +54,7 @@ sequenceDiagram
     participant SHM as SHM Slot (tid)
     participant Hook as Interceptor Hook
     participant Bridge as interceptor_bridge
-    participant Engine as ChaosEngine (L1..L7)
+    participant Engine as ChaosEngine (R0..R8)
     participant RT as InterceptorRuntime
     participant Libc as Original libc syscall
 
@@ -83,14 +85,14 @@ Diagram focus: runtime interaction order from Python write to syscall result.
 
 - `lib.rs`: public composition and re-exports.
 - `layers/mod.rs`: shared layer contracts (`Layer`, `LayerDecision`, `PacketContext`, `LayerStage`).
-- `layers/l1_chaos.rs`: latency, packet loss, burst loss, correlated loss, reorder/duplicate trigger decisions.
-- `layers/l2_qos.rs`: bandwidth/token-bucket shaping.
-- `layers/l3_routing.rs`: jitter/routing variance.
-- `layers/l4_transport.rs`: connect/recv timeouts and transport-level error injection.
-- `layers/l5_session.rs`: session-level budget pre-checks (`max_bytes_tx/rx`, `max_ops`, `max_duration_ms`) with terminal actions.
-- `layers/l6_presentation.rs`: deterministic payload mutation decisions and buffer-aware mutation for stream operations.
-- `layers/l7_resolver.rs`: DNS delay/timeout/NXDOMAIN decisions.
-- `chaos_engine.rs`: strict L1..L7 orchestration and stage metrics.
+- `layers/r1_session_guard.rs`: session-level budget pre-checks (`max_bytes_tx/rx`, `max_ops`, `max_duration_ms`) with terminal actions.
+- `layers/r2_chaos_base.rs`: latency, packet loss, burst loss, correlated loss, reorder/duplicate trigger decisions.
+- `layers/r3_flow_control.rs`: bandwidth/token-bucket shaping.
+- `layers/r4_timing_variation.rs`: jitter/routing variance.
+- `layers/r5_transport_faults.rs`: connect/recv timeouts and transport-level error injection.
+- `layers/r6_resolver_faults.rs`: DNS delay/timeout/NXDOMAIN decisions.
+- `layers/r7_payload_transform.rs`: deterministic payload mutation decisions and buffer-aware mutation for stream operations.
+- `chaos_engine.rs`: runtime-stage orchestration and stage metrics.
 - `runtime.rs`: interceptor runtime state (non-blocking delay tracking, reorder queues) and decision-to-directive mapping.
 - `shm_contract.rs`: SHM binary schema/constants/validation (`FaultcoreConfig`, offsets, limits).
 - `shm_runtime.rs`: SHM mapping, stable reads, `tid`/`fd` assignment helpers.
@@ -109,17 +111,17 @@ Diagram focus: runtime interaction order from Python write to syscall result.
   - call into `faultcore_network` for config + decision mapping;
   - apply syscall-level behavior.
 
-## FaultOSI Semantics
+## Runtime Stage Semantics
 
-- Stage order is fixed: `L1 -> L2 -> L3 -> L4 -> L5 -> L6 -> L7`.
+- Stage order is canonical: `R0 -> R1 -> R2 -> R3 -> R4 -> R5 -> R6 -> R7 -> R8`.
 - Main pipeline accepts terminal outcomes (`Drop`, `TimeoutMs`, `ConnectionErrorKind`, `NxDomain`) and short-circuits.
 - Delay decisions are accumulated.
-- L6 can emit `LayerDecision::Mutate(Vec<Mutation>)` for payload transformation in stream paths.
+- R7 can emit `LayerDecision::Mutate(Vec<Mutation>)` for payload transformation in stream paths.
 - Reorder and duplicate are post-routing stream behaviors, handled outside main pipeline.
 - DNS path evaluates resolver layer behavior and skips non-DNS effects by layer applicability.
 - Gilbert-Elliott correlated-loss state is tracked per FD in `L1Chaos` to avoid cross-flow coupling.
 
-### L6 Payload Mutation Semantics
+### R7 Payload Mutation Semantics
 
 - Applies only to stream operations (`Send`, `Recv`).
 - Never applies to `Connect` or `DnsLookup`.

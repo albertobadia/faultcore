@@ -109,25 +109,25 @@ def _run_graceful_disconnect(host: str, port: int) -> bool:
         return False
 
 
-def test_connect_timeout(host: str, port: int, probe_timeout_ms: int):
+def test_connect_timeout(host: str, port: int, probe_timeout_ms: int) -> None:
     elapsed_ms = _run_connect_timeout(host, port, probe_timeout_ms)
     assert elapsed_ms is not None
     assert elapsed_ms >= 0
 
 
-def test_recv_timeout(host: str, port: int, probe_timeout_ms: int):
+def test_recv_timeout(host: str, port: int, probe_timeout_ms: int) -> None:
     elapsed_ms = _run_recv_timeout(host, port, probe_timeout_ms)
     assert elapsed_ms is not None
     assert elapsed_ms >= 0
 
 
-def test_send_timeout(host: str, port: int, probe_timeout_ms: int):
+def test_send_timeout(host: str, port: int, probe_timeout_ms: int) -> None:
     elapsed_ms = _run_send_timeout(host, port, probe_timeout_ms)
     assert elapsed_ms is not None
     assert elapsed_ms >= 0
 
 
-def test_graceful_disconnect(host: str, port: int):
+def test_graceful_disconnect(host: str, port: int) -> None:
     assert _run_graceful_disconnect(host, port)
 
 

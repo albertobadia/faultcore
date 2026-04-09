@@ -6,8 +6,7 @@ from faultcore import rate, timeout
 
 
 def send_udp_message(host: str, port: int, message: str) -> str:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.sendto(message.encode(), (host, port))
         sock.settimeout(1)
         try:
@@ -15,17 +14,15 @@ def send_udp_message(host: str, port: int, message: str) -> str:
             return response.decode().strip()
         except TimeoutError:
             return "No response (timeout)"
-    finally:
-        sock.close()
 
 
 @rate("10mbps")
-def rate_limited_udp(host: str, port: int, message: str):
+def rate_limited_udp(host: str, port: int, message: str) -> str:
     return send_udp_message(host, port, message)
 
 
 @timeout(connect="100ms")
-def slow_udp(host: str, port: int, message: str):
+def slow_udp(host: str, port: int, message: str) -> str:
     return send_udp_message(host, port, message)
 
 

@@ -5,6 +5,7 @@ import socket
 import sys
 import threading
 import time
+from collections.abc import Callable
 from contextlib import suppress
 from datetime import datetime
 
@@ -32,31 +33,25 @@ def _resolve(host: str, port: int, socktype: int) -> tuple[int, tuple]:
 
 def tcp_echo(host: str, port: int, message: str) -> str:
     family, sockaddr = _resolve(host, port, socket.SOCK_STREAM)
-    sock = socket.socket(family, socket.SOCK_STREAM)
-    sock.settimeout(5)
-    try:
+    with socket.socket(family, socket.SOCK_STREAM) as sock:
+        sock.settimeout(5)
         sock.connect(sockaddr)
         sock.sendall(f"{message}\n".encode())
         data = sock.recv(4096)
         return data.decode("utf-8").strip()
-    finally:
-        sock.close()
 
 
 def udp_echo(host: str, port: int, message: str) -> str:
     family, sockaddr = _resolve(host, port, socket.SOCK_DGRAM)
-    sock = socket.socket(family, socket.SOCK_DGRAM)
-    sock.settimeout(5)
-    try:
+    with socket.socket(family, socket.SOCK_DGRAM) as sock:
+        sock.settimeout(5)
         sock.sendto(f"{message}\n".encode(), sockaddr)
         data, _ = sock.recvfrom(4096)
         return data.decode("utf-8").strip()
-    finally:
-        sock.close()
 
 
-def measure_ms(callable_fn, count: int = 3) -> float:
-    samples = []
+def measure_ms(callable_fn: Callable[[str], str], count: int = 3) -> float:
+    samples: list[float] = []
     for idx in range(count):
         started = time.perf_counter()
         response = callable_fn(f"target-ipv6-{idx}")

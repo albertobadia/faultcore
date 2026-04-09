@@ -6,15 +6,12 @@ import faultcore
 
 
 def tcp_echo(host: str, port: int, message: str) -> str:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(5)
-    try:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(5)
         sock.connect((host, port))
         sock.sendall(f"{message}\n".encode())
         response = sock.recv(1024)
         return response.decode().strip()
-    finally:
-        sock.close()
 
 
 def run_demo(host: str, port: int) -> None:

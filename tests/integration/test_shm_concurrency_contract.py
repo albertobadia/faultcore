@@ -10,6 +10,7 @@ from collections import Counter
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from faultcore.shm_writer import (
     _OFFSET_BANDWIDTH_BPS,
@@ -132,20 +133,17 @@ class TestTIDHashIntegration:
 
 def tcp_echo_once(host: str, port: int, payload: str) -> float:
     started = time.perf_counter()
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(5.0)
-    try:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(5.0)
         sock.connect((host, port))
         sock.sendall(f"{payload}\n".encode())
         data = sock.recv(4096)
         if not data.startswith(b"ECHO:"):
             raise RuntimeError(f"unexpected response: {data!r}")
-    finally:
-        sock.close()
     return (time.perf_counter() - started) * 1000
 
 
-def publish_profile(writer, tid: int, profile: tuple[int, int, int, int, int, int]) -> None:
+def publish_profile(writer: Any, tid: int, profile: tuple[int, int, int, int, int, int]) -> None:
     latency_ns, jitter_ns, packet_loss_ppm, uplink_latency_ns, uplink_jitter_ns, downlink_latency_ns = profile
 
     def mutate(offset: int) -> None:
@@ -161,7 +159,7 @@ def publish_profile(writer, tid: int, profile: tuple[int, int, int, int, int, in
     writer._write_with_generation_publish(tid, mutate)
 
 
-def read_stable_profile(writer, tid: int, retries: int = 30) -> tuple[int, int, int, int, int, int] | None:
+def read_stable_profile(writer: Any, tid: int, retries: int = 30) -> tuple[int, int, int, int, int, int] | None:
     offset = writer._get_offset(tid)
     for _ in range(retries):
         generation_1 = struct.unpack_from("<Q", writer._mmap, offset + _OFFSET_RULESET_GENERATION)[0]

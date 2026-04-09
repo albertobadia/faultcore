@@ -1,7 +1,7 @@
 from faultcore import reporting
 
 
-def test_build_run_record_sets_required_fields(monkeypatch):
+def test_build_run_record_sets_required_fields(monkeypatch) -> None:
     monkeypatch.setattr(reporting, "_git_value", lambda _args: "git-value")
     monkeypatch.setenv("FAULTCORE_SEED", "123")
     monkeypatch.setenv("FAULTCORE_CONFIG_SHM", "/faultcore_demo")
@@ -32,7 +32,7 @@ def test_build_run_record_sets_required_fields(monkeypatch):
     assert record["summary"]["errors"] == 0
 
 
-def test_build_run_record_applies_summary_override(monkeypatch):
+def test_build_run_record_applies_summary_override(monkeypatch) -> None:
     monkeypatch.setattr(reporting, "_git_value", lambda _args: "git-value")
 
     record = reporting.build_run_record(
@@ -55,7 +55,7 @@ def test_build_run_record_applies_summary_override(monkeypatch):
     assert record["artifacts"] == [{"kind": "run_json", "path": "artifacts/run.json"}]
 
 
-def test_parse_pytest_summary_parses_counts():
+def test_parse_pytest_summary_parses_counts() -> None:
     text = "=================== 3 passed, 1 failed, 2 errors in 0.42s ==================="
     parsed = reporting.parse_pytest_summary(text, returncode=1)
 
@@ -67,7 +67,7 @@ def test_parse_pytest_summary_parses_counts():
     }
 
 
-def test_parse_pytest_summary_parses_quiet_output_line():
+def test_parse_pytest_summary_parses_quiet_output_line() -> None:
     text = "208 passed in 0.39s"
     parsed = reporting.parse_pytest_summary(text, returncode=0)
 
@@ -79,7 +79,7 @@ def test_parse_pytest_summary_parses_quiet_output_line():
     }
 
 
-def test_parse_pytest_summary_handles_no_tests():
+def test_parse_pytest_summary_handles_no_tests() -> None:
     text = "============================ no tests ran in 0.01s ============================"
     parsed = reporting.parse_pytest_summary(text, returncode=0)
 
@@ -91,7 +91,7 @@ def test_parse_pytest_summary_handles_no_tests():
     }
 
 
-def test_parse_pytest_failures_extracts_failed_and_error_lines():
+def test_parse_pytest_failures_extracts_failed_and_error_lines() -> None:
     text = "\n".join(
         [
             "FAILED tests/unit/test_alpha.py::test_a - AssertionError: boom",
@@ -106,7 +106,7 @@ def test_parse_pytest_failures_extracts_failed_and_error_lines():
     ]
 
 
-def test_summarize_record_replay_counts_and_percentiles():
+def test_summarize_record_replay_counts_and_percentiles() -> None:
     metrics = reporting.summarize_record_replay(
         [
             {"site": "a", "decision": "continue", "value": 0},
@@ -128,7 +128,7 @@ def test_summarize_record_replay_counts_and_percentiles():
     assert metrics["decision_counts"] == {"continue": 1, "delay_ns": 2, "drop": 1, "mutate": 1}
 
 
-def test_summarize_record_replay_includes_all_decision_types():
+def test_summarize_record_replay_includes_all_decision_types() -> None:
     metrics = reporting.summarize_record_replay(
         [
             {"site": "a", "decision": "delay_ns", "value": 1_000_000},
@@ -158,7 +158,7 @@ def test_summarize_record_replay_includes_all_decision_types():
     assert metrics["connection_error_count"] == 1
 
 
-def test_build_record_replay_timeline_events_maps_decisions():
+def test_build_record_replay_timeline_events_maps_decisions() -> None:
     events = reporting.build_record_replay_timeline_events(
         [{"site": "stream_uplink_pre", "decision": "delay_ns", "value": 5_000_000}],
         ts="2026-03-12T00:00:01.000Z",
@@ -168,13 +168,13 @@ def test_build_record_replay_timeline_events_maps_decisions():
     assert events[0]["name"] == "stream_uplink_pre"
 
 
-def test_build_record_replay_timeline_events_no_limit():
+def test_build_record_replay_timeline_events_no_limit() -> None:
     all_events = [{"site": f"site_{i}", "decision": "delay_ns", "value": i} for i in range(100)]
     events = reporting.build_record_replay_timeline_events(all_events, ts="2026-03-12T00:00:01.000Z", max_items=0)
     assert len(events) == 100
 
 
-def test_build_record_replay_series_and_sites():
+def test_build_record_replay_series_and_sites() -> None:
     raw = [
         {"site": "connect_pre", "decision": "continue", "value": 0},
         {"site": "stream_uplink_pre", "decision": "delay_ns", "value": 5_000_000},
@@ -189,7 +189,7 @@ def test_build_record_replay_series_and_sites():
     assert sites == ["connect_pre", "stream_uplink_pre"]
 
 
-def test_build_record_replay_site_metrics_groups_by_site():
+def test_build_record_replay_site_metrics_groups_by_site() -> None:
     raw = [
         {"site": "connect_pre", "decision": "continue", "value": 0},
         {"site": "stream_uplink_pre", "decision": "delay_ns", "value": 5_000_000},
@@ -205,7 +205,7 @@ def test_build_record_replay_site_metrics_groups_by_site():
     assert site_metrics["stream_uplink_pre"]["inferred_config"]["mutate_active"] is True
 
 
-def test_is_pytest_command_detects_path_and_python_module_forms():
+def test_is_pytest_command_detects_path_and_python_module_forms() -> None:
     assert reporting.is_pytest_command(["pytest", "-q"]) is True
     assert reporting.is_pytest_command([".venv/bin/pytest", "-q"]) is True
     assert reporting.is_pytest_command(["/usr/bin/python3", "-m", "pytest", "-q"]) is True
@@ -213,7 +213,7 @@ def test_is_pytest_command_detects_path_and_python_module_forms():
     assert reporting.is_pytest_command(["sh", "tests.sh"]) is False
 
 
-def test_apply_event_view_truncates_head_tail_and_reverses():
+def test_apply_event_view_truncates_head_tail_and_reverses() -> None:
     events = [{"id": i} for i in range(1, 7)]
     viewed, truncated, original_count, order = reporting.apply_event_view(events, max_events=4, reverse_events=True)
 
@@ -223,7 +223,7 @@ def test_apply_event_view_truncates_head_tail_and_reverses():
     assert [item["id"] for item in viewed] == [6, 5, 2, 1]
 
 
-def test_render_report_html_embeds_event_metadata():
+def test_render_report_html_embeds_event_metadata() -> None:
     html_text = reporting.render_report_html(
         {
             "run_id": "demo",
@@ -280,14 +280,14 @@ def test_render_report_html_embeds_event_metadata():
     assert "charts-loading" in html_text
 
 
-def test_normalize_chart_series_trims_leading_zeros_when_followed_by_data():
+def test_normalize_chart_series_trims_leading_zeros_when_followed_by_data() -> None:
     assert reporting._normalize_chart_series([0, 0, 12, 13]) == [12, 13]
     assert reporting._normalize_chart_series([0, 0, 0]) == [0, 0, 0]
 
 
-def test_trim_initial_warmup_outlier_drops_first_when_tail_is_stable():
+def test_trim_initial_warmup_outlier_drops_first_when_tail_is_stable() -> None:
     assert reporting._normalize_chart_series([9, 10, 10, 10, 10, 10]) == [10, 10, 10, 10, 10]
 
 
-def test_trim_initial_warmup_outlier_keeps_first_when_tail_is_variable():
+def test_trim_initial_warmup_outlier_keeps_first_when_tail_is_variable() -> None:
     assert reporting._normalize_chart_series([100, 120, 80, 130, 70, 125]) == [100, 120, 80, 130, 70, 125]
